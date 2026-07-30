@@ -1,6 +1,12 @@
 const STORAGE_KEY = 'flying-thoughts:v1';
+const AUTH_STORAGE_KEY = 'flying-thoughts:auth:v1';
 const MAX_THOUGHTS = 50;
 const RESERVED_BOTTOM_SPACE = 132;
+const LOCAL_API_URL = 'http://127.0.0.1:8000/api/v1';
+const PRODUCTION_API_URL = 'https://mxllwords.pythonanywhere.com/api/v1';
+const API_URL = ['localhost', '127.0.0.1'].includes(window.location.hostname)
+  ? LOCAL_API_URL
+  : PRODUCTION_API_URL;
 
 const canvas = document.querySelector('#canvas');
 const form = document.querySelector('#thought-form');
@@ -8,12 +14,36 @@ const input = document.querySelector('#thought-input');
 const emptyState = document.querySelector('#empty-state');
 const template = document.querySelector('#thought-template');
 const announcer = document.querySelector('#announcer');
+const accountButton = document.querySelector('#account-button');
+const authDialog = document.querySelector('#auth-dialog');
+const authForm = document.querySelector('#auth-form');
+const authEmail = document.querySelector('#auth-email');
+const authPassword = document.querySelector('#auth-password');
+const authMessage = document.querySelector('#auth-message');
+const authClose = document.querySelector('#auth-close');
+const registerButton = document.querySelector('#register-button');
+const loginButton = document.querySelector('#login-button');
 
+let auth = loadAuth();
 let thoughts = loadThoughts();
 let draggedThought = null;
 let dragOffset = { x: 0, y: 0 };
 let lastTimestamp = performance.now();
 let saveTimer;
+
+function loadAuth() {
+  try {
+    const savedAuth = JSON.parse(sessionStorage.getItem(AUTH_STORAGE_KEY));
+    if (!savedAuth?.access || !savedAuth?.refresh || !savedAuth?.email) return null;
+    return savedAuth;
+  } catch {
+    return null;
+  }
+}
+
+function storeAuth() {
+  if (auth) sessionStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify(auth));
+}
 
 function loadThoughts() {
   try {
@@ -26,6 +56,7 @@ function loadThoughts() {
       .map((thought) => ({
         id: thought.id || crypto.randomUUID(),
         text: thought.text.slice(0, 280),
+        color: thought.color || 'purple',
         x: Number.isFinite(thought.x) ? thought.x : 100,
         y: Number.isFinite(thought.y) ? thought.y : 100,
         vx: Number.isFinite(thought.vx) ? thought.vx : randomVelocity(),
@@ -33,9 +64,6 @@ function loadThoughts() {
         rotation: Number.isFinite(thought.rotation) ? thought.rotation : randomBetween(-2.5, 2.5),
         pinned: Boolean(thought.pinned),
         createdAt: thought.createdAt || Date.now(),
-        element: null,
-        width: 0,
-        height: 0,
       }));
   } catch {
     return [];
@@ -43,6 +71,8 @@ function loadThoughts() {
 }
 
 function saveThoughts() {
+  if (auth) return;
+
   const serializableThoughts = thoughts.map(({ element, width, height, ...thought }) => thought);
   localStorage.setItem(STORAGE_KEY, JSON.stringify(serializableThoughts));
 }
@@ -61,31 +91,36 @@ function randomVelocity() {
   return Math.random() > 0.5 ? velocity : -velocity;
 }
 
-function makeThought(text, restoredThought) {
+function makeThought(text, restoredThought = {}) {
   const fragment = template.content.cloneNode(true);
   const element = fragment.querySelector('.thought-card');
   const textElement = fragment.querySelector('.thought-text');
   const pinButton = fragment.querySelector('.pin-button');
   const deleteButton = fragment.querySelector('.delete-button');
-  textElement.textContent = text;
-
   const rect = canvas.getBoundingClientRect();
-  const thought = restoredThought ?? {
-    id: crypto.randomUUID(),
+  const thought = {
+    id: restoredThought.id || crypto.randomUUID(),
     text,
-    x: Math.max(20, rect.width / 2 - 100 + randomBetween(-40, 40)),
-    y: Math.max(40, rect.height * 0.56 + randomBetween(-40, 40)),
-    vx: randomVelocity(),
-    vy: randomVelocity(),
-    rotation: randomBetween(-2.5, 2.5),
-    pinned: false,
-    createdAt: Date.now(),
-    element: null,
+    color: restoredThought.color || 'purple',
+    x: Number.isFinite(restoredThought.x)
+      ? restoredThought.x
+      : Math.max(20, rect.width / 2 - 100 + randomBetween(-40, 40)),
+    y: Number.isFinite(restoredThought.y)
+      ? restoredThought.y
+      : Math.max(40, rect.height * 0.56 + randomBetween(-40, 40)),
+    vx: Number.isFinite(restoredThought.vx) ? restoredThought.vx : randomVelocity(),
+    vy: Number.isFinite(restoredThought.vy) ? restoredThought.vy : randomVelocity(),
+    rotation: Number.isFinite(restoredThought.rotation)
+      ? restoredThought.rotation
+      : randomBetween(-2.5, 2.5),
+    pinned: Boolean(restoredThought.pinned),
+    createdAt: restoredThought.createdAt || Date.now(),
+    element,
     width: 0,
     height: 0,
   };
 
-  thought.element = element;
+  textElement.textContent = text;
   canvas.append(element);
   measureThought(thought);
   constrainThought(thought);
@@ -99,28 +134,141 @@ function makeThought(text, restoredThought) {
   return thought;
 }
 
+function replaceThoughts(nextThoughts) {
+  stopDrag();
+  thoughts.forEach((thought) => thought.element?.remove());
+  thoughts = nextThoughts.map((thought) => makeThought(thought.text, thought));
+  updateUi();
+  saveThoughts();
+}
+
 function measureThought(thought) {
   thought.width = thought.element.offsetWidth;
   thought.height = thought.element.offsetHeight;
 }
 
-function addThought(rawText) {
+function apiThoughtToClientThought(record, layout = {}) {
+  return {
+    id: record.id,
+    text: record.text,
+    color: record.color,
+    pinned: record.is_pinned,
+    x: layout.x,
+    y: layout.y,
+    vx: layout.vx,
+    vy: layout.vy,
+    rotation: layout.rotation,
+    createdAt: Date.parse(record.created_at) || Date.now(),
+  };
+}
+
+async function requestApi(path, { method = 'GET', body, retry = true } = {}) {
+  const headers = { Accept: 'application/json' };
+  if (auth?.access) headers.Authorization = `Bearer ${auth.access}`;
+  if (body !== undefined) headers['Content-Type'] = 'application/json';
+
+  let response = await fetch(`${API_URL}${path}`, {
+    method,
+    headers,
+    body: body === undefined ? undefined : JSON.stringify(body),
+  });
+
+  if (response.status === 401 && retry && await refreshAccessToken()) {
+    response = await requestApi(path, { method, body, retry: false });
+  }
+
+  const payload = await response.json().catch(() => null);
+  if (!response.ok) throw new Error(apiErrorMessage(payload));
+  return payload;
+}
+
+function apiErrorMessage(payload) {
+  if (!payload) return 'The server could not complete that request.';
+  if (typeof payload.detail === 'string') return payload.detail;
+
+  for (const value of Object.values(payload)) {
+    if (Array.isArray(value) && value[0]) return value[0];
+    if (typeof value === 'string') return value;
+  }
+
+  return 'The server could not complete that request.';
+}
+
+async function refreshAccessToken() {
+  if (!auth?.refresh) return false;
+
+  const response = await fetch(`${API_URL}/auth/refresh/`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+    body: JSON.stringify({ refresh: auth.refresh }),
+  });
+  const payload = await response.json().catch(() => null);
+
+  if (!response.ok || !payload?.access) {
+    signOut('Your session ended. Please sign in again.');
+    return false;
+  }
+
+  auth.access = payload.access;
+  storeAuth();
+  return true;
+}
+
+async function loadServerThoughts() {
+  if (!auth) return;
+
+  try {
+    const layouts = new Map(thoughts.map((thought) => [thought.id, thought]));
+    const records = await requestApi('/thoughts/');
+    replaceThoughts(records.slice(0, MAX_THOUGHTS).map((record) => (
+      apiThoughtToClientThought(record, layouts.get(record.id))
+    )));
+    announce('Your saved thoughts are ready.');
+  } catch (error) {
+    announce(`Could not load saved thoughts: ${error.message}`);
+  }
+}
+
+async function addThought(rawText) {
   const text = rawText.trim();
-  if (!text) return;
+  if (!text) return false;
 
   if (thoughts.length >= MAX_THOUGHTS) {
     announce(`You can keep up to ${MAX_THOUGHTS} thoughts. Delete one to add a new thought.`);
-    return;
+    return false;
   }
 
-  const thought = makeThought(text);
-  thoughts.push(thought);
+  if (auth) {
+    try {
+      const record = await requestApi('/thoughts/', {
+        method: 'POST',
+        body: { text, color: 'purple' },
+      });
+      thoughts.push(makeThought(record.text, apiThoughtToClientThought(record)));
+      updateUi();
+      announce('Thought saved.');
+      return true;
+    } catch (error) {
+      announce(`Could not save thought: ${error.message}`);
+      return false;
+    }
+  }
+
+  thoughts.push(makeThought(text));
   updateUi();
   scheduleSave();
-  announce('Thought added.');
+  announce('Thought added locally. Sign in to save thoughts to your account.');
+  return true;
 }
 
 function togglePinned(thought) {
+  const previous = {
+    pinned: thought.pinned,
+    vx: thought.vx,
+    vy: thought.vy,
+    rotation: thought.rotation,
+  };
+
   thought.pinned = !thought.pinned;
   if (thought.pinned) {
     thought.vx = 0;
@@ -135,14 +283,48 @@ function togglePinned(thought) {
   renderThought(thought);
   scheduleSave();
   announce(thought.pinned ? 'Thought pinned.' : 'Thought unpinned.');
+
+  if (auth) void persistPinnedState(thought, previous);
+}
+
+async function persistPinnedState(thought, previous) {
+  try {
+    const record = await requestApi(`/thoughts/${thought.id}/`, {
+      method: 'PATCH',
+      body: { is_pinned: thought.pinned },
+    });
+    thought.pinned = record.is_pinned;
+    renderThought(thought);
+  } catch (error) {
+    Object.assign(thought, previous);
+    renderThought(thought);
+    announce(`Could not update thought: ${error.message}`);
+  }
 }
 
 function removeThought(thought) {
+  if (auth) {
+    void deleteServerThought(thought);
+    return;
+  }
+  removeThoughtElement(thought);
+}
+
+async function deleteServerThought(thought) {
+  try {
+    await requestApi(`/thoughts/${thought.id}/`, { method: 'DELETE' });
+    removeThoughtElement(thought);
+  } catch (error) {
+    announce(`Could not delete thought: ${error.message}`);
+  }
+}
+
+function removeThoughtElement(thought) {
   if (draggedThought === thought) stopDrag();
   thought.element.classList.add('is-removing');
   window.setTimeout(() => {
     thought.element.remove();
-    thoughts = thoughts.filter((item) => item.id !== thought.id);
+    thoughts = thoughts.filter((item) => item !== thought);
     updateUi();
     saveThoughts();
     announce('Thought deleted.');
@@ -213,7 +395,6 @@ function announce(message) {
 }
 
 function resolveCollisions() {
-  // Two passes remove deep intersections when multiple cards collide at once.
   for (let pass = 0; pass < 2; pass += 1) {
     for (let firstIndex = 0; firstIndex < thoughts.length; firstIndex += 1) {
       for (let secondIndex = firstIndex + 1; secondIndex < thoughts.length; secondIndex += 1) {
@@ -235,8 +416,6 @@ function resolveCollisions() {
         const firstCenterY = first.y + first.height / 2;
         const secondCenterX = second.x + second.width / 2;
         const secondCenterY = second.y + second.height / 2;
-
-        // Push along the smallest overlap axis so rectangular cards do not stick diagonally.
         const collisionOnHorizontalAxis = overlapX < overlapY;
         const normalX = collisionOnHorizontalAxis ? (firstCenterX < secondCenterX ? -1 : 1) : 0;
         const normalY = collisionOnHorizontalAxis ? 0 : (firstCenterY < secondCenterY ? -1 : 1);
@@ -254,7 +433,6 @@ function resolveCollisions() {
           constrainThought(second);
         }
 
-        // Apply an impulse only when cards move towards one another.
         const relativeSpeed = (first.vx - second.vx) * normalX + (first.vy - second.vy) * normalY;
         if (relativeSpeed >= 0) continue;
 
@@ -308,13 +486,83 @@ function animate(timestamp) {
   window.requestAnimationFrame(animate);
 }
 
-form.addEventListener('submit', (event) => {
+function updateAccountButton() {
+  accountButton.textContent = auth ? 'Sign out' : 'Sign in';
+  accountButton.title = auth ? `Signed in as ${auth.email}. Sign out` : 'Sign in or create an account';
+}
+
+function openAuthDialog() {
+  authMessage.textContent = '';
+  authDialog.showModal();
+  authEmail.focus();
+}
+
+function setAuthBusy(isBusy) {
+  loginButton.disabled = isBusy;
+  registerButton.disabled = isBusy;
+  authEmail.disabled = isBusy;
+  authPassword.disabled = isBusy;
+}
+
+async function authenticate(mode) {
+  const email = authEmail.value.trim();
+  const password = authPassword.value;
+  if (!email || !password) return;
+
+  setAuthBusy(true);
+  authMessage.textContent = '';
+  try {
+    const response = await fetch(`${API_URL}/auth/${mode}/`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+      body: JSON.stringify({ email, password }),
+    });
+    const payload = await response.json().catch(() => null);
+    if (!response.ok) throw new Error(apiErrorMessage(payload));
+
+    auth = {
+      access: payload.access,
+      refresh: payload.refresh,
+      email: payload.user?.email || email,
+    };
+    storeAuth();
+    updateAccountButton();
+    authPassword.value = '';
+    authDialog.close();
+    await loadServerThoughts();
+    announce(mode === 'register' ? 'Account created. Your thoughts are now synced.' : 'Signed in.');
+  } catch (error) {
+    authMessage.textContent = error.message;
+  } finally {
+    setAuthBusy(false);
+  }
+}
+
+function signOut(message = 'Signed out. Local thoughts stay on this browser.') {
+  auth = null;
+  sessionStorage.removeItem(AUTH_STORAGE_KEY);
+  updateAccountButton();
+  replaceThoughts(loadThoughts());
+  announce(message);
+}
+
+form.addEventListener('submit', async (event) => {
   event.preventDefault();
-  addThought(input.value);
-  if (input.value.trim()) input.value = '';
+  const added = await addThought(input.value);
+  if (added) input.value = '';
   input.focus();
 });
 
+accountButton.addEventListener('click', () => {
+  if (auth) signOut();
+  else openAuthDialog();
+});
+authClose.addEventListener('click', () => authDialog.close());
+authForm.addEventListener('submit', (event) => {
+  event.preventDefault();
+  void authenticate('login');
+});
+registerButton.addEventListener('click', () => void authenticate('register'));
 canvas.addEventListener('pointermove', moveDrag);
 canvas.addEventListener('pointerup', stopDrag);
 canvas.addEventListener('pointercancel', stopDrag);
@@ -328,6 +576,7 @@ window.addEventListener('resize', () => {
 });
 window.addEventListener('beforeunload', saveThoughts);
 
-thoughts = thoughts.map((thought) => makeThought(thought.text, thought));
-updateUi();
+replaceThoughts(thoughts);
+updateAccountButton();
+if (auth) void loadServerThoughts();
 window.requestAnimationFrame(animate);
