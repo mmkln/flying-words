@@ -13,7 +13,7 @@ Open the address shown by Vite (usually `http://localhost:5173`).
 
 ## GitHub Pages
 
-The repository is configured to deploy from `master` to GitHub Pages through GitHub Actions. After pushing, set **Settings → Pages → Source** to **GitHub Actions**. The site will be available at `https://mmkln.github.io/flying-words/` after the workflow finishes.
+The repository is configured to deploy from `main` to GitHub Pages through GitHub Actions. After pushing, set **Settings → Pages → Source** to **GitHub Actions**. The site will be available at `https://mmkln.github.io/flying-words/` after the workflow finishes.
 
 ## Features
 
