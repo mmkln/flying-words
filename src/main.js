@@ -31,7 +31,9 @@ let thoughts = initialPendingThoughts.length ? initialPendingThoughts : loadThou
 let syncPending = Boolean(auth && thoughts.length);
 let syncInFlight = false;
 let syncOperationId = 0;
+const positionSaveStates = new Map();
 let draggedThought = null;
+let dragStartPosition = null;
 let dragOffset = { x: 0, y: 0 };
 let lastTimestamp = performance.now();
 let saveTimer;
@@ -54,21 +56,96 @@ function isCloudMode() {
   return Boolean(auth) && !syncPending;
 }
 
+function blockEditsDuringAccountSync() {
+  if (!auth || (!syncPending && !syncInFlight)) return false;
+
+  announce('Your local thoughts are being synced. Please try again in a moment.');
+  return true;
+}
+
+function positionSaveIsRunning(thought) {
+  return Boolean(positionSaveStates.get(thought.id)?.running);
+}
+
 function pendingSyncStorageKey(accountId) {
   return `${PENDING_SYNC_STORAGE_PREFIX}${accountId}`;
 }
 
 function serializableThoughts(source = thoughts) {
-  return source.map(({ element, width, height, ...thought }) => thought);
+  return source.map(({ element, width, height, pinSaveInFlight, ...thought }) => thought);
+}
+
+function cloneMeta(meta = {}) {
+  return JSON.parse(JSON.stringify(meta));
+}
+
+function normalizedLayout(thought) {
+  const bounds = canvas.getBoundingClientRect();
+  const availableWidth = Math.max(1, bounds.width - thought.width);
+  const availableHeight = Math.max(
+    1,
+    bounds.height - RESERVED_BOTTOM_SPACE - thought.height,
+  );
+  const normalize = (value) => Math.round(Math.min(1, Math.max(0, value)) * 1e6) / 1e6;
+
+  return {
+    version: 1,
+    mode: 'normalized',
+    x: normalize(thought.x / availableWidth),
+    y: normalize(thought.y / availableHeight),
+  };
+}
+
+function updatePinnedLayoutMeta(thought) {
+  if (!thought.pinned) return;
+
+  thought.meta = {
+    ...(thought.meta || {}),
+    layout: normalizedLayout(thought),
+  };
+}
+
+function applyPinnedLayout(thought) {
+  const layout = thought.meta?.layout;
+  if (
+    !thought.pinned
+    || layout?.version !== 1
+    || layout?.mode !== 'normalized'
+    || !Number.isFinite(layout.x)
+    || !Number.isFinite(layout.y)
+  ) {
+    return false;
+  }
+
+  const bounds = canvas.getBoundingClientRect();
+  const availableWidth = Math.max(0, bounds.width - thought.width);
+  const availableHeight = Math.max(
+    0,
+    bounds.height - RESERVED_BOTTOM_SPACE - thought.height,
+  );
+
+  thought.x = Math.min(1, Math.max(0, layout.x)) * availableWidth;
+  thought.y = Math.min(1, Math.max(0, layout.y)) * availableHeight;
+  return true;
 }
 
 function serializeThoughtsForSync(source = thoughts) {
-  return source.map(({ id, text, color, pinned }) => ({
-    id,
-    text,
-    color,
-    is_pinned: pinned,
-  }));
+  const renderedThoughts = new Map(thoughts.map((thought) => [thought.id, thought]));
+
+  return source.map((storedThought) => {
+    const thought = renderedThoughts.get(storedThought.id) || storedThought;
+    if (thought.pinned && thought.width && thought.height) {
+      updatePinnedLayoutMeta(thought);
+    }
+
+    return {
+      id: thought.id,
+      text: thought.text,
+      color: thought.color,
+      is_pinned: thought.pinned,
+      meta: thought.meta || {},
+    };
+  });
 }
 
 function normalizeThoughts(data) {
@@ -87,6 +164,9 @@ function normalizeThoughts(data) {
       vy: Number.isFinite(thought.vy) ? thought.vy : randomVelocity(),
       rotation: Number.isFinite(thought.rotation) ? thought.rotation : randomBetween(-2.5, 2.5),
       pinned: Boolean(thought.pinned),
+      meta: thought.meta && typeof thought.meta === 'object' && !Array.isArray(thought.meta)
+        ? thought.meta
+        : {},
       createdAt: thought.createdAt || Date.now(),
     }));
 }
@@ -168,6 +248,10 @@ function makeThought(text, restoredThought = {}) {
       ? restoredThought.rotation
       : randomBetween(-2.5, 2.5),
     pinned: Boolean(restoredThought.pinned),
+    meta: restoredThought.meta && typeof restoredThought.meta === 'object'
+      ? cloneMeta(restoredThought.meta)
+      : {},
+    pinSaveInFlight: false,
     createdAt: restoredThought.createdAt || Date.now(),
     element,
     width: 0,
@@ -177,6 +261,10 @@ function makeThought(text, restoredThought = {}) {
   textElement.textContent = text;
   canvas.append(element);
   measureThought(thought);
+  const hasLocalPosition = (
+    Number.isFinite(restoredThought.x) && Number.isFinite(restoredThought.y)
+  );
+  if (!hasLocalPosition) applyPinnedLayout(thought);
   constrainThought(thought);
   renderThought(thought);
 
@@ -207,6 +295,7 @@ function apiThoughtToClientThought(record, layout = {}) {
     text: record.text,
     color: record.color,
     pinned: record.is_pinned,
+    meta: record.meta || {},
     x: layout.x,
     y: layout.y,
     vx: layout.vx,
@@ -369,10 +458,7 @@ async function addThought(rawText) {
   const text = rawText.trim();
   if (!text) return false;
 
-  if (syncInFlight) {
-    announce('Your local thoughts are being synced. Please try again in a moment.');
-    return false;
-  }
+  if (blockEditsDuringAccountSync()) return false;
 
   if (thoughts.length >= MAX_THOUGHTS) {
     announce(`You can keep up to ${MAX_THOUGHTS} thoughts. Delete one to add a new thought.`);
@@ -403,8 +489,9 @@ async function addThought(rawText) {
 }
 
 function togglePinned(thought) {
-  if (syncInFlight) {
-    announce('Your local thoughts are being synced. Please try again in a moment.');
+  if (blockEditsDuringAccountSync()) return;
+  if (thought.pinSaveInFlight || positionSaveIsRunning(thought)) {
+    announce('This thought is still saving. Please try again in a moment.');
     return;
   }
 
@@ -413,6 +500,7 @@ function togglePinned(thought) {
     vx: thought.vx,
     vy: thought.vy,
     rotation: thought.rotation,
+    meta: cloneMeta(thought.meta),
   };
 
   thought.pinned = !thought.pinned;
@@ -426,6 +514,8 @@ function togglePinned(thought) {
     thought.rotation = randomBetween(-2.5, 2.5);
   }
 
+  if (thought.pinned) updatePinnedLayoutMeta(thought);
+
   renderThought(thought);
   scheduleSave();
   announce(thought.pinned ? 'Thought pinned.' : 'Thought unpinned.');
@@ -434,23 +524,97 @@ function togglePinned(thought) {
 }
 
 async function persistPinnedState(thought, previous) {
+  thought.pinSaveInFlight = true;
   try {
+    const body = { is_pinned: thought.pinned };
+    if (thought.pinned) {
+      body.meta = { layout: thought.meta.layout };
+    }
+
     const record = await requestApi(`/thoughts/${thought.id}/`, {
       method: 'PATCH',
-      body: { is_pinned: thought.pinned },
+      body,
     });
     thought.pinned = record.is_pinned;
+    thought.meta = record.meta || thought.meta;
+    const positionState = positionSaveStates.get(thought.id);
+    if (positionState && record.meta?.layout) {
+      positionState.confirmedLayout = cloneMeta(record.meta.layout);
+    }
     renderThought(thought);
   } catch (error) {
     Object.assign(thought, previous);
     renderThought(thought);
     announce(`Could not update thought: ${error.message}`);
+  } finally {
+    thought.pinSaveInFlight = false;
+  }
+}
+
+async function persistPinnedPosition(thought, previousLayout, previousPosition) {
+  let state = positionSaveStates.get(thought.id);
+  if (!state) {
+    state = {
+      running: false,
+      pendingLayout: null,
+      confirmedLayout: previousLayout ? cloneMeta(previousLayout) : null,
+      confirmedPosition: previousPosition ? { ...previousPosition } : null,
+    };
+    positionSaveStates.set(thought.id, state);
+  }
+
+  state.pendingLayout = cloneMeta(thought.meta.layout);
+  if (state.running) return;
+
+  state.running = true;
+  try {
+    while (state.pendingLayout && thought.pinned && isCloudMode()) {
+      const layout = state.pendingLayout;
+      state.pendingLayout = null;
+
+      try {
+        const record = await requestApi(`/thoughts/${thought.id}/`, {
+          method: 'PATCH',
+          body: { meta: { layout } },
+        });
+        state.confirmedLayout = cloneMeta(record.meta?.layout || layout);
+
+        if (state.pendingLayout) {
+          thought.meta = {
+            ...(record.meta || {}),
+            layout: thought.meta.layout,
+          };
+        } else {
+          thought.meta = record.meta || thought.meta;
+        }
+      } catch (error) {
+        state.pendingLayout = null;
+        if (state.confirmedLayout) {
+          thought.meta = {
+            ...(thought.meta || {}),
+            layout: cloneMeta(state.confirmedLayout),
+          };
+          applyPinnedLayout(thought);
+          constrainThought(thought);
+          renderThought(thought);
+        } else if (state.confirmedPosition) {
+          thought.x = state.confirmedPosition.x;
+          thought.y = state.confirmedPosition.y;
+          constrainThought(thought);
+          renderThought(thought);
+        }
+        announce(`Could not save position: ${error.message}`);
+      }
+    }
+  } finally {
+    state.running = false;
   }
 }
 
 function removeThought(thought) {
-  if (syncInFlight) {
-    announce('Your local thoughts are being synced. Please try again in a moment.');
+  if (blockEditsDuringAccountSync()) return;
+  if (thought.pinSaveInFlight || positionSaveIsRunning(thought)) {
+    announce('This thought is still saving. Please try again in a moment.');
     return;
   }
 
@@ -491,8 +655,14 @@ function removeThoughtElement(thought) {
 
 function beginDrag(event, thought) {
   if (event.target.closest('button')) return;
+  if (blockEditsDuringAccountSync()) return;
+  if (thought.pinSaveInFlight) {
+    announce('This thought is still saving. Please try again in a moment.');
+    return;
+  }
   event.preventDefault();
   draggedThought = thought;
+  dragStartPosition = { x: thought.x, y: thought.y };
   const bounds = thought.element.getBoundingClientRect();
   dragOffset = { x: event.clientX - bounds.left, y: event.clientY - bounds.top };
   thought.vx = 0;
@@ -514,12 +684,22 @@ function moveDrag(event) {
 function stopDrag() {
   if (!draggedThought) return;
   const thought = draggedThought;
+  const previousPosition = dragStartPosition;
   thought.element.classList.remove('is-dragging');
   if (!thought.pinned) {
     thought.vx = randomVelocity();
     thought.vy = randomVelocity();
+  } else {
+    const previousLayout = thought.meta?.layout
+      ? cloneMeta(thought.meta.layout)
+      : null;
+    updatePinnedLayoutMeta(thought);
+    if (isCloudMode()) {
+      void persistPinnedPosition(thought, previousLayout, previousPosition);
+    }
   }
   draggedThought = null;
+  dragStartPosition = null;
   scheduleSave();
 }
 
@@ -747,6 +927,7 @@ canvas.addEventListener('pointercancel', stopDrag);
 window.addEventListener('resize', () => {
   thoughts.forEach((thought) => {
     measureThought(thought);
+    if (thought.pinned) applyPinnedLayout(thought);
     constrainThought(thought);
     renderThought(thought);
   });
