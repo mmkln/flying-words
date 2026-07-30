@@ -1,0 +1,71 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#f7f5ff" />
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+    <link rel="icon" href="/favicon-96x96.png" sizes="96x96" type="image/png" />
+    <link rel="shortcut icon" href="/favicon.ico" />
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png" sizes="180x180" />
+    <link rel="manifest" href="/site.webmanifest" />
+    <meta
+      name="description"
+      content="Flying Thoughts — a space for thoughts that move freely."
+    />
+    <title>Flying Thoughts</title>
+  </head>
+  <body>
+    <main class="app-shell">
+      <section class="thought-space" id="canvas" aria-label="Thought space">
+        <div class="empty-state" id="empty-state">
+          <span class="empty-orbit orbit-one" aria-hidden="true"></span>
+          <span class="empty-orbit orbit-two" aria-hidden="true"></span>
+          <div class="empty-icon" aria-hidden="true">✦</div>
+          <h1>Let your thought take flight</h1>
+          <p>Write it below. Drag cards, pin what matters — the rest will move on their own.</p>
+        </div>
+      </section>
+
+      <div class="composer-wrap">
+        <form class="composer" id="thought-form">
+          <label class="sr-only" for="thought-input">New thought</label>
+          <input
+            id="thought-input"
+            name="thought"
+            type="text"
+            maxlength="280"
+            placeholder="Enter a thought…"
+            autocomplete="off"
+            required
+          />
+          <button class="send-button" type="submit" aria-label="Add thought" title="Add thought">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m21 3-7.6 18-3.15-7.25L3 10.6 21 3Zm-10.75 10.75L21 3" /></svg>
+          </button>
+        </form>
+        <p class="composer-tip"><kbd>Enter</kbd> to add a thought · drag a card to move it</p>
+      </div>
+
+      <p class="announcer sr-only" id="announcer" aria-live="polite"></p>
+    </main>
+
+    <template id="thought-template">
+      <article class="thought-card">
+        <p class="thought-text"></p>
+        <button class="pin-btn pin-button" type="button" title="Pin thought" aria-label="Pin thought">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <line x1="12" y1="17" x2="12" y2="22"></line>
+            <path d="M5 17h14v-1.76a2 2 0 0 0-.59-1.41L16 11.41V4h1a1 1 0 0 0 0-2H7a1 1 0 0 0 0 2h1v7.41L5.59 13.83A2 2 0 0 0 5 15.24V17z"></path>
+          </svg>
+        </button>
+        <button class="delete-btn delete-button" type="button" title="Delete thought" aria-label="Delete thought">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" aria-hidden="true">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18 18 6M6 6l12 12" />
+          </svg>
+        </button>
+      </article>
+    </template>
+
+    <script type="module" src="/src/main.js"></script>
+  </body>
+</html>
