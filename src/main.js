@@ -1,5 +1,3 @@
-import './styles.css';
-
 const STORAGE_KEY = 'flying-thoughts:v1';
 const MAX_THOUGHTS = 50;
 const RESERVED_BOTTOM_SPACE = 132;
