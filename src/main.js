@@ -1,5 +1,6 @@
 const STORAGE_KEY = 'flying-thoughts:v1';
 const AUTH_STORAGE_KEY = 'flying-thoughts:auth:v1';
+const PENDING_SYNC_STORAGE_PREFIX = 'flying-thoughts:pending-sync:v1:';
 const MAX_THOUGHTS = 50;
 const RESERVED_BOTTOM_SPACE = 132;
 const LOCAL_API_URL = 'http://127.0.0.1:8000/api/v1';
@@ -25,7 +26,11 @@ const registerButton = document.querySelector('#register-button');
 const loginButton = document.querySelector('#login-button');
 
 let auth = loadAuth();
-let thoughts = loadThoughts();
+const initialPendingThoughts = auth ? loadPendingThoughts(auth.id) : [];
+let thoughts = initialPendingThoughts.length ? initialPendingThoughts : loadThoughts();
+let syncPending = Boolean(auth && thoughts.length);
+let syncInFlight = false;
+let syncOperationId = 0;
 let draggedThought = null;
 let dragOffset = { x: 0, y: 0 };
 let lastTimestamp = performance.now();
@@ -34,7 +39,7 @@ let saveTimer;
 function loadAuth() {
   try {
     const savedAuth = JSON.parse(sessionStorage.getItem(AUTH_STORAGE_KEY));
-    if (!savedAuth?.access || !savedAuth?.refresh || !savedAuth?.email) return null;
+    if (!savedAuth?.access || !savedAuth?.refresh || !savedAuth?.email || !savedAuth?.id) return null;
     return savedAuth;
   } catch {
     return null;
@@ -45,36 +50,85 @@ function storeAuth() {
   if (auth) sessionStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify(auth));
 }
 
+function isCloudMode() {
+  return Boolean(auth) && !syncPending;
+}
+
+function pendingSyncStorageKey(accountId) {
+  return `${PENDING_SYNC_STORAGE_PREFIX}${accountId}`;
+}
+
+function serializableThoughts(source = thoughts) {
+  return source.map(({ element, width, height, ...thought }) => thought);
+}
+
+function serializeThoughtsForSync(source = thoughts) {
+  return source.map(({ id, text, color, pinned }) => ({
+    id,
+    text,
+    color,
+    is_pinned: pinned,
+  }));
+}
+
+function normalizeThoughts(data) {
+  if (!Array.isArray(data)) return [];
+
+  return data
+    .filter((thought) => typeof thought?.text === 'string')
+    .slice(0, MAX_THOUGHTS)
+    .map((thought) => ({
+      id: thought.id || crypto.randomUUID(),
+      text: thought.text.slice(0, 280),
+      color: thought.color || 'purple',
+      x: Number.isFinite(thought.x) ? thought.x : 100,
+      y: Number.isFinite(thought.y) ? thought.y : 100,
+      vx: Number.isFinite(thought.vx) ? thought.vx : randomVelocity(),
+      vy: Number.isFinite(thought.vy) ? thought.vy : randomVelocity(),
+      rotation: Number.isFinite(thought.rotation) ? thought.rotation : randomBetween(-2.5, 2.5),
+      pinned: Boolean(thought.pinned),
+      createdAt: thought.createdAt || Date.now(),
+    }));
+}
+
 function loadThoughts() {
   try {
-    const data = JSON.parse(localStorage.getItem(STORAGE_KEY));
-    if (!Array.isArray(data)) return [];
-
-    return data
-      .filter((thought) => typeof thought?.text === 'string')
-      .slice(0, MAX_THOUGHTS)
-      .map((thought) => ({
-        id: thought.id || crypto.randomUUID(),
-        text: thought.text.slice(0, 280),
-        color: thought.color || 'purple',
-        x: Number.isFinite(thought.x) ? thought.x : 100,
-        y: Number.isFinite(thought.y) ? thought.y : 100,
-        vx: Number.isFinite(thought.vx) ? thought.vx : randomVelocity(),
-        vy: Number.isFinite(thought.vy) ? thought.vy : randomVelocity(),
-        rotation: Number.isFinite(thought.rotation) ? thought.rotation : randomBetween(-2.5, 2.5),
-        pinned: Boolean(thought.pinned),
-        createdAt: thought.createdAt || Date.now(),
-      }));
+    return normalizeThoughts(JSON.parse(localStorage.getItem(STORAGE_KEY)));
   } catch {
     return [];
   }
 }
 
-function saveThoughts() {
-  if (auth) return;
+function loadPendingThoughts(accountId) {
+  try {
+    return normalizeThoughts(JSON.parse(localStorage.getItem(pendingSyncStorageKey(accountId))));
+  } catch {
+    return [];
+  }
+}
 
-  const serializableThoughts = thoughts.map(({ element, width, height, ...thought }) => thought);
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(serializableThoughts));
+function storePendingThoughts(accountId, source = thoughts) {
+  localStorage.setItem(
+    pendingSyncStorageKey(accountId),
+    JSON.stringify(serializableThoughts(source)),
+  );
+}
+
+function mergeThoughts(...groups) {
+  const merged = new Map();
+  groups.flat().forEach((thought) => merged.set(thought.id, thought));
+  return [...merged.values()];
+}
+
+function saveThoughts() {
+  if (isCloudMode()) return;
+
+  if (auth && syncPending) {
+    storePendingThoughts(auth.id);
+    return;
+  }
+
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(serializableThoughts()));
 }
 
 function scheduleSave() {
@@ -162,9 +216,11 @@ function apiThoughtToClientThought(record, layout = {}) {
   };
 }
 
-async function requestApi(path, { method = 'GET', body, retry = true } = {}) {
+async function requestApi(path, {
+  method = 'GET', body, retry = true, authSnapshot = auth,
+} = {}) {
   const headers = { Accept: 'application/json' };
-  if (auth?.access) headers.Authorization = `Bearer ${auth.access}`;
+  if (authSnapshot?.access) headers.Authorization = `Bearer ${authSnapshot.access}`;
   if (body !== undefined) headers['Content-Type'] = 'application/json';
 
   let response = await fetch(`${API_URL}${path}`, {
@@ -173,8 +229,18 @@ async function requestApi(path, { method = 'GET', body, retry = true } = {}) {
     body: body === undefined ? undefined : JSON.stringify(body),
   });
 
-  if (response.status === 401 && retry && await refreshAccessToken()) {
-    response = await requestApi(path, { method, body, retry: false });
+  if (
+    response.status === 401
+    && retry
+    && authSnapshot?.id === auth?.id
+    && await refreshAccessToken(authSnapshot)
+  ) {
+    response = await requestApi(path, {
+      method,
+      body,
+      retry: false,
+      authSnapshot: auth,
+    });
   }
 
   const payload = await response.json().catch(() => null);
@@ -194,15 +260,17 @@ function apiErrorMessage(payload) {
   return 'The server could not complete that request.';
 }
 
-async function refreshAccessToken() {
-  if (!auth?.refresh) return false;
+async function refreshAccessToken(authSnapshot = auth) {
+  if (!authSnapshot?.refresh || authSnapshot.id !== auth?.id) return false;
 
   const response = await fetch(`${API_URL}/auth/refresh/`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
-    body: JSON.stringify({ refresh: auth.refresh }),
+    body: JSON.stringify({ refresh: authSnapshot.refresh }),
   });
   const payload = await response.json().catch(() => null);
+
+  if (authSnapshot.id !== auth?.id) return false;
 
   if (!response.ok || !payload?.access) {
     signOut('Your session ended. Please sign in again.');
@@ -214,31 +282,104 @@ async function refreshAccessToken() {
   return true;
 }
 
+function applyServerThoughts(records) {
+  const layouts = new Map(thoughts.map((thought) => [thought.id, thought]));
+  replaceThoughts(records.slice(0, MAX_THOUGHTS).map((record) => (
+    apiThoughtToClientThought(record, layouts.get(record.id))
+  )));
+}
+
 async function loadServerThoughts() {
-  if (!auth) return;
+  if (!isCloudMode()) return false;
 
   try {
-    const layouts = new Map(thoughts.map((thought) => [thought.id, thought]));
     const records = await requestApi('/thoughts/');
-    replaceThoughts(records.slice(0, MAX_THOUGHTS).map((record) => (
-      apiThoughtToClientThought(record, layouts.get(record.id))
-    )));
+    applyServerThoughts(records);
     announce('Your saved thoughts are ready.');
+    return true;
   } catch (error) {
     announce(`Could not load saved thoughts: ${error.message}`);
+    return false;
   }
+}
+
+async function syncGuestThoughts({ keepServerView = false } = {}) {
+  if (!auth || syncInFlight) return false;
+
+  const accountId = auth.id;
+  let pending = loadPendingThoughts(accountId);
+  if (!pending.length && thoughts.length) {
+    storePendingThoughts(accountId);
+    localStorage.removeItem(STORAGE_KEY);
+    pending = loadPendingThoughts(accountId);
+  }
+
+  if (!pending.length) {
+    syncPending = false;
+    return true;
+  }
+
+  const operationId = ++syncOperationId;
+  syncInFlight = true;
+  try {
+    const response = await requestApi('/thoughts/sync/', {
+      method: 'POST',
+      body: { thoughts: serializeThoughtsForSync(pending) },
+    });
+
+    if (auth?.id !== accountId || operationId !== syncOperationId) return false;
+
+    localStorage.removeItem(STORAGE_KEY);
+    localStorage.removeItem(pendingSyncStorageKey(accountId));
+    syncPending = false;
+    applyServerThoughts(response.thoughts);
+    return true;
+  } catch (error) {
+    if (auth?.id !== accountId || operationId !== syncOperationId) return false;
+
+    if (error.message.includes('up to 50 thoughts')) {
+      syncPending = false;
+      const loaded = await loadServerThoughts();
+      if (loaded) {
+        announce('Your account is full. Delete saved thoughts to import the local ones.');
+      } else {
+        syncPending = true;
+      }
+      return false;
+    }
+
+    syncPending = !keepServerView;
+    announce(`Could not sync local thoughts. They are still safe on this device: ${error.message}`);
+    return false;
+  } finally {
+    if (operationId === syncOperationId) syncInFlight = false;
+  }
+}
+
+async function restoreAuthenticatedThoughts() {
+  if (syncPending) {
+    await syncGuestThoughts();
+    return;
+  }
+
+  await loadServerThoughts();
 }
 
 async function addThought(rawText) {
   const text = rawText.trim();
   if (!text) return false;
 
+  if (syncInFlight) {
+    announce('Your local thoughts are being synced. Please try again in a moment.');
+    return false;
+  }
+
   if (thoughts.length >= MAX_THOUGHTS) {
     announce(`You can keep up to ${MAX_THOUGHTS} thoughts. Delete one to add a new thought.`);
     return false;
   }
 
-  if (auth) {
+  if (isCloudMode()) {
     try {
       const record = await requestApi('/thoughts/', {
         method: 'POST',
@@ -262,6 +403,11 @@ async function addThought(rawText) {
 }
 
 function togglePinned(thought) {
+  if (syncInFlight) {
+    announce('Your local thoughts are being synced. Please try again in a moment.');
+    return;
+  }
+
   const previous = {
     pinned: thought.pinned,
     vx: thought.vx,
@@ -284,7 +430,7 @@ function togglePinned(thought) {
   scheduleSave();
   announce(thought.pinned ? 'Thought pinned.' : 'Thought unpinned.');
 
-  if (auth) void persistPinnedState(thought, previous);
+  if (isCloudMode()) void persistPinnedState(thought, previous);
 }
 
 async function persistPinnedState(thought, previous) {
@@ -303,7 +449,12 @@ async function persistPinnedState(thought, previous) {
 }
 
 function removeThought(thought) {
-  if (auth) {
+  if (syncInFlight) {
+    announce('Your local thoughts are being synced. Please try again in a moment.');
+    return;
+  }
+
+  if (isCloudMode()) {
     void deleteServerThought(thought);
     return;
   }
@@ -311,9 +462,16 @@ function removeThought(thought) {
 }
 
 async function deleteServerThought(thought) {
+  const accountId = auth?.id;
   try {
     await requestApi(`/thoughts/${thought.id}/`, { method: 'DELETE' });
     removeThoughtElement(thought);
+    if (accountId && loadPendingThoughts(accountId).length) {
+      window.setTimeout(() => {
+        if (auth?.id !== accountId || !loadPendingThoughts(accountId).length) return;
+        void syncGuestThoughts({ keepServerView: true });
+      }, 200);
+    }
   } catch (error) {
     announce(`Could not delete thought: ${error.message}`);
   }
@@ -520,17 +678,34 @@ async function authenticate(mode) {
     const payload = await response.json().catch(() => null);
     if (!response.ok) throw new Error(apiErrorMessage(payload));
 
+    if (!payload.user?.id) {
+      throw new Error('The server did not return an account identity. Please try again.');
+    }
+
     auth = {
+      id: payload.user.id,
       access: payload.access,
       refresh: payload.refresh,
       email: payload.user?.email || email,
     };
     storeAuth();
+    const pendingForAccount = loadPendingThoughts(auth.id);
+    const thoughtsToSync = mergeThoughts(pendingForAccount, thoughts);
+    syncPending = thoughtsToSync.length > 0;
+    if (syncPending) {
+      storePendingThoughts(auth.id, thoughtsToSync);
+      localStorage.removeItem(STORAGE_KEY);
+      replaceThoughts(thoughtsToSync);
+    }
     updateAccountButton();
     authPassword.value = '';
+    const ready = syncPending
+      ? await syncGuestThoughts()
+      : await loadServerThoughts();
     authDialog.close();
-    await loadServerThoughts();
-    announce(mode === 'register' ? 'Account created. Your thoughts are now synced.' : 'Signed in.');
+    if (ready) {
+      announce(mode === 'register' ? 'Account created. Your thoughts are synced.' : 'Signed in.');
+    }
   } catch (error) {
     authMessage.textContent = error.message;
   } finally {
@@ -540,6 +715,9 @@ async function authenticate(mode) {
 
 function signOut(message = 'Signed out. Local thoughts stay on this browser.') {
   auth = null;
+  syncPending = false;
+  syncOperationId += 1;
+  syncInFlight = false;
   sessionStorage.removeItem(AUTH_STORAGE_KEY);
   updateAccountButton();
   replaceThoughts(loadThoughts());
@@ -578,5 +756,8 @@ window.addEventListener('beforeunload', saveThoughts);
 
 replaceThoughts(thoughts);
 updateAccountButton();
-if (auth) void loadServerThoughts();
+if (auth) void restoreAuthenticatedThoughts();
+window.addEventListener('online', () => {
+  if (auth && syncPending) void syncGuestThoughts();
+});
 window.requestAnimationFrame(animate);
