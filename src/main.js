@@ -1,7 +1,7 @@
 const STORAGE_KEY = 'flying-thoughts:v1';
 const AUTH_STORAGE_KEY = 'flying-thoughts:auth:v1';
 const PENDING_SYNC_STORAGE_PREFIX = 'flying-thoughts:pending-sync:v1:';
-const MAX_THOUGHTS = 50;
+const MAX_THOUGHTS = 200;
 const RESERVED_BOTTOM_SPACE = 132;
 const LOCAL_API_URL = 'http://127.0.0.1:8000/api/v1';
 const PRODUCTION_API_URL = 'https://mxllwords.pythonanywhere.com/api/v1';
@@ -426,7 +426,7 @@ async function syncGuestThoughts({ keepServerView = false } = {}) {
   } catch (error) {
     if (auth?.id !== accountId || operationId !== syncOperationId) return false;
 
-    if (error.message.includes('up to 50 thoughts')) {
+    if (/up to \d+ thoughts/i.test(error.message)) {
       syncPending = false;
       const loaded = await loadServerThoughts();
       if (loaded) {
