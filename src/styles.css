@@ -183,6 +183,8 @@ kbd { padding: 1px 4px; border: 1px solid rgba(114,104,143,.25); border-bottom-w
   transition: box-shadow .18s ease, border-color .18s ease, background .18s ease, opacity .18s ease;
 }
 
+.thought-card[hidden] { display: none; }
+
 .thought-card:hover { border-color: rgba(99, 78, 171, .34); box-shadow: 0 15px 32px rgba(68, 50, 124, .15), inset 0 1px rgba(255,255,255,.9); }
 .thought-card.is-dragging { z-index: 100 !important; cursor: grabbing; box-shadow: 0 22px 42px rgba(56, 38, 111, .23); transition: none; }
 .thought-card.is-pinned { border-color: #d1d5db; background: #f3f4f6; cursor: pointer; }

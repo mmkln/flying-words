@@ -3,6 +3,12 @@ const AUTH_STORAGE_KEY = 'flying-thoughts:auth:v1';
 const PENDING_SYNC_STORAGE_PREFIX = 'flying-thoughts:pending-sync:v1:';
 const MAX_THOUGHTS = 200;
 const RESERVED_BOTTOM_SPACE = 132;
+const MIN_VISIBLE_THOUGHTS = 4;
+const MAX_VISIBLE_THOUGHTS = 30;
+const TARGET_VISIBLE_DENSITY = 0.35;
+const RESPAWN_DELAY_MIN = 800;
+const RESPAWN_DELAY_MAX = 1400;
+const SPAWN_MARGIN = 20;
 const LOCAL_API_URL = 'http://127.0.0.1:8000/api/v1';
 const PRODUCTION_API_URL = 'https://mxllwords.pythonanywhere.com/api/v1';
 const API_URL = ['localhost', '127.0.0.1'].includes(window.location.hostname)
@@ -32,10 +38,12 @@ let syncPending = Boolean(auth && thoughts.length);
 let syncInFlight = false;
 let syncOperationId = 0;
 const positionSaveStates = new Map();
+const visibilityStates = new Map();
 let draggedThought = null;
 let dragStartPosition = null;
 let dragOffset = { x: 0, y: 0 };
 let lastTimestamp = performance.now();
+let nextSpawnAt = 0;
 let saveTimer;
 
 function loadAuth() {
@@ -225,6 +233,193 @@ function randomVelocity() {
   return Math.random() > 0.5 ? velocity : -velocity;
 }
 
+function getVisibilityState(thought) {
+  let state = visibilityStates.get(thought.id);
+  if (!state) {
+    state = { status: 'visible', lastVisibleAt: 0 };
+    visibilityStates.set(thought.id, state);
+  }
+  return state;
+}
+
+function isThoughtActive(thought) {
+  return thought.pinned || getVisibilityState(thought).status !== 'dormant';
+}
+
+function getActiveThoughts() {
+  return thoughts.filter(isThoughtActive);
+}
+
+function getPlayfieldBounds() {
+  const bounds = canvas.getBoundingClientRect();
+  return {
+    width: bounds.width,
+    height: Math.max(0, bounds.height - RESERVED_BOTTOM_SPACE),
+  };
+}
+
+function calculateVisibleTarget() {
+  const bounds = getPlayfieldBounds();
+  const usableArea = bounds.width * bounds.height;
+  const measuredThoughts = thoughts.filter(
+    (thought) => thought.width > 0 && thought.height > 0,
+  );
+  const averageCardArea = measuredThoughts.length
+    ? measuredThoughts.reduce(
+      (total, thought) => total + (thought.width + 24) * (thought.height + 24),
+      0,
+    ) / measuredThoughts.length
+    : 220 * 84;
+  const calculatedTarget = Math.floor(
+    (usableArea * TARGET_VISIBLE_DENSITY) / averageCardArea,
+  );
+  const limitedTarget = Math.max(
+    MIN_VISIBLE_THOUGHTS,
+    Math.min(MAX_VISIBLE_THOUGHTS, calculatedTarget),
+  );
+  const pinnedCount = thoughts.filter((thought) => thought.pinned).length;
+
+  return Math.max(pinnedCount, Math.min(thoughts.length, limitedTarget));
+}
+
+function showThought(thought) {
+  getVisibilityState(thought).status = 'visible';
+  thought.element.hidden = false;
+}
+
+function hideThought(thought) {
+  if (thought.pinned || thought === draggedThought) return;
+
+  const state = getVisibilityState(thought);
+  state.status = 'dormant';
+  state.lastVisibleAt = Date.now();
+  thought.element.hidden = true;
+}
+
+function intersectsPlayfield(thought, bounds) {
+  return (
+    thought.x < bounds.width
+    && thought.x + thought.width > 0
+    && thought.y < bounds.height
+    && thought.y + thought.height > 0
+  );
+}
+
+function isFullyOutside(thought, bounds) {
+  return (
+    thought.x + thought.width < 0
+    || thought.x > bounds.width
+    || thought.y + thought.height < 0
+    || thought.y > bounds.height
+  );
+}
+
+function spawnThoughtFromEdge(thought, reducedMotion = false) {
+  const bounds = getPlayfieldBounds();
+  const state = getVisibilityState(thought);
+
+  thought.element.hidden = false;
+  measureThought(thought);
+
+  if (reducedMotion) {
+    state.status = 'visible';
+    thought.x = randomBetween(0, Math.max(0, bounds.width - thought.width));
+    thought.y = randomBetween(0, Math.max(0, bounds.height - thought.height));
+    thought.vx = 0;
+    thought.vy = 0;
+    renderThought(thought);
+    return;
+  }
+
+  state.status = 'entering';
+  const edge = Math.floor(Math.random() * 4);
+  const speed = randomBetween(14, 23);
+  const drift = randomBetween(-8, 8);
+
+  if (edge === 0) {
+    thought.x = -thought.width - SPAWN_MARGIN;
+    thought.y = randomBetween(0, Math.max(0, bounds.height - thought.height));
+    thought.vx = speed;
+    thought.vy = drift;
+  } else if (edge === 1) {
+    thought.x = bounds.width + SPAWN_MARGIN;
+    thought.y = randomBetween(0, Math.max(0, bounds.height - thought.height));
+    thought.vx = -speed;
+    thought.vy = drift;
+  } else if (edge === 2) {
+    thought.x = randomBetween(0, Math.max(0, bounds.width - thought.width));
+    thought.y = -thought.height - SPAWN_MARGIN;
+    thought.vx = drift;
+    thought.vy = speed;
+  } else {
+    thought.x = randomBetween(0, Math.max(0, bounds.width - thought.width));
+    thought.y = bounds.height + SPAWN_MARGIN;
+    thought.vx = drift;
+    thought.vy = -speed;
+  }
+
+  thought.rotation = randomBetween(-2.5, 2.5);
+  renderThought(thought);
+}
+
+function spawnNextDormantThought(reducedMotion) {
+  const thought = thoughts
+    .filter((item) => (
+      !item.pinned && getVisibilityState(item).status === 'dormant'
+    ))
+    .sort((first, second) => (
+      getVisibilityState(first).lastVisibleAt
+      - getVisibilityState(second).lastVisibleAt
+    ))[0];
+
+  if (!thought) return false;
+  spawnThoughtFromEdge(thought, reducedMotion);
+  return true;
+}
+
+function maybeSpawnThought(timestamp, reducedMotion) {
+  if (getActiveThoughts().length >= calculateVisibleTarget()) {
+    nextSpawnAt = 0;
+    return;
+  }
+
+  if (!nextSpawnAt) {
+    nextSpawnAt = timestamp + randomBetween(RESPAWN_DELAY_MIN, RESPAWN_DELAY_MAX);
+    return;
+  }
+
+  if (timestamp < nextSpawnAt) return;
+
+  if (spawnNextDormantThought(reducedMotion)) {
+    nextSpawnAt = timestamp + randomBetween(RESPAWN_DELAY_MIN, RESPAWN_DELAY_MAX);
+  } else {
+    nextSpawnAt = 0;
+  }
+}
+
+function initializeThoughtVisibility() {
+  visibilityStates.clear();
+
+  const target = calculateVisibleTarget();
+  const pinnedThoughts = thoughts.filter((thought) => thought.pinned);
+  const availableSlots = Math.max(0, target - pinnedThoughts.length);
+  const initialUnpinned = thoughts
+    .filter((thought) => !thought.pinned)
+    .sort((first, second) => second.createdAt - first.createdAt)
+    .slice(0, availableSlots);
+  const visibleIds = new Set([
+    ...pinnedThoughts.map((thought) => thought.id),
+    ...initialUnpinned.map((thought) => thought.id),
+  ]);
+
+  thoughts.forEach((thought) => {
+    if (visibleIds.has(thought.id)) showThought(thought);
+    else hideThought(thought);
+  });
+
+  nextSpawnAt = 0;
+}
+
 function makeThought(text, restoredThought = {}) {
   const fragment = template.content.cloneNode(true);
   const element = fragment.querySelector('.thought-card');
@@ -280,6 +475,7 @@ function replaceThoughts(nextThoughts) {
   stopDrag();
   thoughts.forEach((thought) => thought.element?.remove());
   thoughts = nextThoughts.map((thought) => makeThought(thought.text, thought));
+  initializeThoughtVisibility();
   updateUi();
   saveThoughts();
 }
@@ -505,6 +701,8 @@ function togglePinned(thought) {
 
   thought.pinned = !thought.pinned;
   if (thought.pinned) {
+    showThought(thought);
+    constrainThought(thought);
     thought.vx = 0;
     thought.vy = 0;
     thought.rotation = 0;
@@ -646,6 +844,7 @@ function removeThoughtElement(thought) {
   thought.element.classList.add('is-removing');
   window.setTimeout(() => {
     thought.element.remove();
+    visibilityStates.delete(thought.id);
     thoughts = thoughts.filter((item) => item !== thought);
     updateUi();
     saveThoughts();
@@ -732,12 +931,12 @@ function announce(message) {
   window.setTimeout(() => { announcer.textContent = message; }, 10);
 }
 
-function resolveCollisions() {
+function resolveCollisions(activeThoughts) {
   for (let pass = 0; pass < 2; pass += 1) {
-    for (let firstIndex = 0; firstIndex < thoughts.length; firstIndex += 1) {
-      for (let secondIndex = firstIndex + 1; secondIndex < thoughts.length; secondIndex += 1) {
-        const first = thoughts[firstIndex];
-        const second = thoughts[secondIndex];
+    for (let firstIndex = 0; firstIndex < activeThoughts.length; firstIndex += 1) {
+      for (let secondIndex = firstIndex + 1; secondIndex < activeThoughts.length; secondIndex += 1) {
+        const first = activeThoughts[firstIndex];
+        const second = activeThoughts[secondIndex];
         const firstCanMove = !first.pinned && first !== draggedThought;
         const secondCanMove = !second.pinned && second !== draggedThought;
         const inverseMassFirst = firstCanMove ? 1 : 0;
@@ -763,12 +962,10 @@ function resolveCollisions() {
         if (firstCanMove) {
           first.x += normalX * correction * inverseMassFirst;
           first.y += normalY * correction * inverseMassFirst;
-          constrainThought(first);
         }
         if (secondCanMove) {
           second.x -= normalX * correction * inverseMassSecond;
           second.y -= normalY * correction * inverseMassSecond;
-          constrainThought(second);
         }
 
         const relativeSpeed = (first.vx - second.vx) * normalX + (first.vy - second.vy) * normalY;
@@ -795,32 +992,31 @@ function animate(timestamp) {
   const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 
   if (!reducedMotion) {
-    const bounds = canvas.getBoundingClientRect();
+    const bounds = getPlayfieldBounds();
 
-    thoughts.forEach((thought) => {
+    getActiveThoughts().forEach((thought) => {
       if (thought.pinned || thought === draggedThought) return;
       const speed = thought.element.matches(':hover') ? 0.35 : 1;
       thought.x += thought.vx * delta * speed;
       thought.y += thought.vy * delta * speed;
 
-      const maxX = Math.max(0, bounds.width - thought.width);
-      const maxY = Math.max(0, bounds.height - RESERVED_BOTTOM_SPACE - thought.height);
-      if (thought.x <= 0 || thought.x >= maxX) {
-        thought.x = Math.min(Math.max(0, thought.x), maxX);
-        thought.vx *= -1;
-        thought.rotation = randomBetween(-2.5, 2.5);
-      }
-      if (thought.y <= 0 || thought.y >= maxY) {
-        thought.y = Math.min(Math.max(0, thought.y), maxY);
-        thought.vy *= -1;
-        thought.rotation = randomBetween(-2.5, 2.5);
+      const state = getVisibilityState(thought);
+      if (state.status === 'entering' && intersectsPlayfield(thought, bounds)) {
+        state.status = 'visible';
+      } else if (state.status === 'visible' && isFullyOutside(thought, bounds)) {
+        hideThought(thought);
       }
     });
 
-    resolveCollisions();
-    thoughts.forEach(renderThought);
+    const activeThoughts = getActiveThoughts();
+    const collisionThoughts = activeThoughts.filter((thought) => (
+      thought.pinned || getVisibilityState(thought).status === 'visible'
+    ));
+    resolveCollisions(collisionThoughts);
+    activeThoughts.forEach(renderThought);
   }
 
+  maybeSpawnThought(timestamp, reducedMotion);
   window.requestAnimationFrame(animate);
 }
 
@@ -925,12 +1121,15 @@ canvas.addEventListener('pointermove', moveDrag);
 canvas.addEventListener('pointerup', stopDrag);
 canvas.addEventListener('pointercancel', stopDrag);
 window.addEventListener('resize', () => {
-  thoughts.forEach((thought) => {
+  getActiveThoughts().forEach((thought) => {
     measureThought(thought);
-    if (thought.pinned) applyPinnedLayout(thought);
-    constrainThought(thought);
+    if (thought.pinned) {
+      applyPinnedLayout(thought);
+      constrainThought(thought);
+    }
     renderThought(thought);
   });
+  nextSpawnAt = 0;
   scheduleSave();
 });
 window.addEventListener('beforeunload', saveThoughts);
