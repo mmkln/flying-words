@@ -46,9 +46,9 @@ let lastTimestamp = performance.now();
 let nextSpawnAt = 0;
 let saveTimer;
 
-function loadAuth() {
+function loadAuthFrom(storage) {
   try {
-    const savedAuth = JSON.parse(sessionStorage.getItem(AUTH_STORAGE_KEY));
+    const savedAuth = JSON.parse(storage.getItem(AUTH_STORAGE_KEY));
     if (!savedAuth?.access || !savedAuth?.refresh || !savedAuth?.email || !savedAuth?.id) return null;
     return savedAuth;
   } catch {
@@ -56,8 +56,22 @@ function loadAuth() {
   }
 }
 
+function loadAuth() {
+  const savedAuth = loadAuthFrom(localStorage);
+  if (savedAuth) return savedAuth;
+
+  const legacyAuth = loadAuthFrom(sessionStorage);
+  if (!legacyAuth) return null;
+
+  localStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify(legacyAuth));
+  sessionStorage.removeItem(AUTH_STORAGE_KEY);
+  return legacyAuth;
+}
+
 function storeAuth() {
-  if (auth) sessionStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify(auth));
+  if (!auth) return;
+  localStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify(auth));
+  sessionStorage.removeItem(AUTH_STORAGE_KEY);
 }
 
 function isCloudMode() {
@@ -1094,6 +1108,7 @@ function signOut(message = 'Signed out. Local thoughts stay on this browser.') {
   syncPending = false;
   syncOperationId += 1;
   syncInFlight = false;
+  localStorage.removeItem(AUTH_STORAGE_KEY);
   sessionStorage.removeItem(AUTH_STORAGE_KEY);
   updateAccountButton();
   replaceThoughts(loadThoughts());
