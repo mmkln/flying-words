@@ -21,6 +21,11 @@ const input = document.querySelector('#thought-input');
 const emptyState = document.querySelector('#empty-state');
 const template = document.querySelector('#thought-template');
 const announcer = document.querySelector('#announcer');
+const historyButton = document.querySelector('#history-button');
+const historyDialog = document.querySelector('#history-dialog');
+const historyClose = document.querySelector('#history-close');
+const historySearch = document.querySelector('#history-search');
+const historyList = document.querySelector('#history-list');
 const accountButton = document.querySelector('#account-button');
 const authDialog = document.querySelector('#auth-dialog');
 const authForm = document.querySelector('#auth-form');
@@ -166,8 +171,14 @@ function serializeThoughtsForSync(source = thoughts) {
       color: thought.color,
       is_pinned: thought.pinned,
       meta: thought.meta || {},
+      created_at: validCreatedAt(thought.createdAt).toISOString(),
     };
   });
+}
+
+function validCreatedAt(value) {
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? new Date() : date;
 }
 
 function normalizeThoughts(data) {
@@ -936,8 +947,139 @@ function renderThought(thought) {
   pinButton.setAttribute('aria-label', pinButton.title);
 }
 
+function historyGroup(createdAt) {
+  const date = validCreatedAt(createdAt);
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const thoughtDay = new Date(date);
+  thoughtDay.setHours(0, 0, 0, 0);
+  const daysAgo = Math.round((today - thoughtDay) / 86_400_000);
+
+  if (daysAgo === 0) return 'Today';
+  if (daysAgo === 1) return 'Yesterday';
+  if (daysAgo > 1 && daysAgo < 7) return 'Previous 7 Days';
+
+  return new Intl.DateTimeFormat(undefined, {
+    month: 'long',
+    year: 'numeric',
+  }).format(date);
+}
+
+function formatHistoryDate(createdAt) {
+  const date = validCreatedAt(createdAt);
+  const group = historyGroup(date);
+  const options = group === 'Today' || group === 'Yesterday'
+    ? { hour: 'numeric', minute: '2-digit' }
+    : {
+      weekday: 'short',
+      day: 'numeric',
+      month: 'short',
+      hour: 'numeric',
+      minute: '2-digit',
+    };
+
+  return new Intl.DateTimeFormat(undefined, options).format(date);
+}
+
+function focusThoughtFromHistory(thought) {
+  historyDialog.close();
+  showThought(thought);
+  measureThought(thought);
+
+  if (!thought.pinned) {
+    const bounds = getPlayfieldBounds();
+    thought.x = Math.max(0, (bounds.width - thought.width) / 2);
+    thought.y = Math.max(0, (bounds.height - thought.height) / 2);
+    thought.vx = randomVelocity();
+    thought.vy = randomVelocity();
+    getVisibilityState(thought).status = 'visible';
+  }
+
+  thought.element.style.zIndex = String(topZIndex() + 1);
+  constrainThought(thought);
+  renderThought(thought);
+  thought.element.classList.add('is-history-focused');
+  window.setTimeout(() => thought.element.classList.remove('is-history-focused'), 900);
+  announce('Thought shown on the canvas.');
+}
+
+function renderHistory() {
+  const query = historySearch.value.trim().toLocaleLowerCase();
+  const matchingThoughts = [...thoughts]
+    .filter((thought) => thought.text.toLocaleLowerCase().includes(query))
+    .sort((first, second) => (
+      validCreatedAt(second.createdAt) - validCreatedAt(first.createdAt)
+    ));
+
+  historyList.replaceChildren();
+  if (!matchingThoughts.length) {
+    const empty = document.createElement('p');
+    empty.className = 'history-empty';
+    empty.textContent = thoughts.length ? 'No matching thoughts.' : 'No thoughts yet.';
+    historyList.append(empty);
+    return;
+  }
+
+  const groups = new Map();
+  matchingThoughts.forEach((thought) => {
+    const label = historyGroup(thought.createdAt);
+    if (!groups.has(label)) groups.set(label, []);
+    groups.get(label).push(thought);
+  });
+
+  groups.forEach((groupThoughts, label) => {
+    const section = document.createElement('section');
+    section.className = 'history-group';
+
+    const heading = document.createElement('h3');
+    heading.textContent = label;
+    section.append(heading);
+
+    const list = document.createElement('ul');
+    groupThoughts.forEach((thought) => {
+      const item = document.createElement('li');
+      const button = document.createElement('button');
+      const text = document.createElement('span');
+      const details = document.createElement('span');
+      const time = document.createElement('time');
+
+      button.type = 'button';
+      button.className = 'history-item';
+      text.className = 'history-item-text';
+      text.textContent = thought.text;
+      details.className = 'history-item-details';
+      time.dateTime = validCreatedAt(thought.createdAt).toISOString();
+      time.textContent = formatHistoryDate(thought.createdAt);
+      details.append(time);
+
+      if (thought.pinned) {
+        const pinned = document.createElement('span');
+        pinned.className = 'history-pinned';
+        pinned.textContent = 'Pinned';
+        details.append(pinned);
+      }
+
+      button.append(text, details);
+      button.addEventListener('click', () => focusThoughtFromHistory(thought));
+      item.append(button);
+      list.append(item);
+    });
+
+    section.append(list);
+    historyList.append(section);
+  });
+}
+
+function openHistory() {
+  historySearch.value = '';
+  renderHistory();
+  historyDialog.showModal();
+  historySearch.focus();
+}
+
 function updateUi() {
   emptyState.hidden = thoughts.length > 0;
+  if (historyDialog.open) renderHistory();
 }
 
 function announce(message) {
@@ -1004,6 +1146,11 @@ function animate(timestamp) {
   const delta = Math.min((timestamp - lastTimestamp) / 1000, 0.05);
   lastTimestamp = timestamp;
   const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+  if (historyDialog.open) {
+    window.requestAnimationFrame(animate);
+    return;
+  }
 
   if (!reducedMotion) {
     const bounds = getPlayfieldBounds();
@@ -1125,6 +1272,12 @@ form.addEventListener('submit', async (event) => {
 accountButton.addEventListener('click', () => {
   if (auth) signOut();
   else openAuthDialog();
+});
+historyButton.addEventListener('click', openHistory);
+historyClose.addEventListener('click', () => historyDialog.close());
+historySearch.addEventListener('input', renderHistory);
+historyDialog.addEventListener('click', (event) => {
+  if (event.target === historyDialog) historyDialog.close();
 });
 authClose.addEventListener('click', () => authDialog.close());
 authForm.addEventListener('submit', (event) => {
