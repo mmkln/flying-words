@@ -1,6 +1,8 @@
 const STORAGE_KEY = 'flying-thoughts:v1';
 const AUTH_STORAGE_KEY = 'flying-thoughts:auth:v1';
 const PENDING_SYNC_STORAGE_PREFIX = 'flying-thoughts:pending-sync:v1:';
+const ACCOUNT_STORAGE_PREFIX = 'flying-thoughts:account:v1:';
+const OUTBOX_STORAGE_PREFIX = 'flying-thoughts:outbox:v1:';
 const MAX_THOUGHTS = 200;
 const RESERVED_BOTTOM_SPACE = 132;
 const MIN_VISIBLE_THOUGHTS = 4;
@@ -38,18 +40,32 @@ const loginButton = document.querySelector('#login-button');
 
 let auth = loadAuth();
 const initialPendingThoughts = auth ? loadPendingThoughts(auth.id) : [];
-let thoughts = initialPendingThoughts.length ? initialPendingThoughts : loadThoughts();
-let syncPending = Boolean(auth && thoughts.length);
+const initialGuestThoughts = initialPendingThoughts.length
+  ? initialPendingThoughts
+  : loadStoredThoughts(STORAGE_KEY);
+const initialAccountThoughts = auth ? loadAccountThoughts(auth.id) : [];
+let thoughts = auth
+  ? applyOutboxOperations(
+    mergeThoughts(initialAccountThoughts, initialGuestThoughts),
+    loadOutbox(auth.id),
+  )
+  : initialGuestThoughts;
+let syncPending = Boolean(auth && initialGuestThoughts.length);
+if (auth && !initialPendingThoughts.length && initialGuestThoughts.length) {
+  storePendingThoughts(auth.id, initialGuestThoughts);
+}
 let syncInFlight = false;
 let syncOperationId = 0;
-const positionSaveStates = new Map();
 const visibilityStates = new Map();
 let draggedThought = null;
-let dragStartPosition = null;
 let dragOffset = { x: 0, y: 0 };
 let lastTimestamp = performance.now();
 let nextSpawnAt = 0;
 let saveTimer;
+let handlingThoughtSubmit = false;
+let outboxFlushInFlight = false;
+let outboxRetryTimer;
+let outboxRetryDelay = 2000;
 
 function loadAuthFrom(storage) {
   try {
@@ -90,16 +106,49 @@ function blockEditsDuringAccountSync() {
   return true;
 }
 
-function positionSaveIsRunning(thought) {
-  return Boolean(positionSaveStates.get(thought.id)?.running);
-}
-
 function pendingSyncStorageKey(accountId) {
   return `${PENDING_SYNC_STORAGE_PREFIX}${accountId}`;
 }
 
+function accountStorageKey(accountId) {
+  return `${ACCOUNT_STORAGE_PREFIX}${accountId}`;
+}
+
+function outboxStorageKey(accountId) {
+  return `${OUTBOX_STORAGE_PREFIX}${accountId}`;
+}
+
+function currentThoughtStorageKey() {
+  return auth ? accountStorageKey(auth.id) : STORAGE_KEY;
+}
+
+function loadOutbox(accountId) {
+  try {
+    const operations = JSON.parse(localStorage.getItem(outboxStorageKey(accountId)));
+    if (!Array.isArray(operations)) return [];
+
+    return operations.filter((operation) => (
+      typeof operation?.operationId === 'string'
+      && typeof operation?.thoughtId === 'string'
+      && (operation.type === 'upsert' || operation.type === 'delete')
+      && (operation.type === 'delete' || typeof operation.payload?.text === 'string')
+    ));
+  } catch {
+    return [];
+  }
+}
+
+function saveOutbox(accountId, operations) {
+  if (!operations.length) {
+    localStorage.removeItem(outboxStorageKey(accountId));
+    return;
+  }
+
+  localStorage.setItem(outboxStorageKey(accountId), JSON.stringify(operations));
+}
+
 function serializableThoughts(source = thoughts) {
-  return source.map(({ element, width, height, pinSaveInFlight, ...thought }) => thought);
+  return source.map(({ element, width, height, ...thought }) => thought);
 }
 
 function cloneMeta(meta = {}) {
@@ -204,12 +253,16 @@ function normalizeThoughts(data) {
     }));
 }
 
-function loadThoughts() {
+function loadStoredThoughts(storageKey) {
   try {
-    return normalizeThoughts(JSON.parse(localStorage.getItem(STORAGE_KEY)));
+    return normalizeThoughts(JSON.parse(localStorage.getItem(storageKey)));
   } catch {
     return [];
   }
+}
+
+function loadAccountThoughts(accountId) {
+  return loadStoredThoughts(accountStorageKey(accountId));
 }
 
 function loadPendingThoughts(accountId) {
@@ -234,14 +287,10 @@ function mergeThoughts(...groups) {
 }
 
 function saveThoughts() {
-  if (isCloudMode()) return;
-
-  if (auth && syncPending) {
-    storePendingThoughts(auth.id);
-    return;
-  }
-
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(serializableThoughts()));
+  localStorage.setItem(
+    currentThoughtStorageKey(),
+    JSON.stringify(serializableThoughts()),
+  );
 }
 
 function scheduleSave() {
@@ -471,7 +520,6 @@ function makeThought(text, restoredThought = {}) {
     meta: restoredThought.meta && typeof restoredThought.meta === 'object'
       ? cloneMeta(restoredThought.meta)
       : {},
-    pinSaveInFlight: false,
     createdAt: restoredThought.createdAt || Date.now(),
     element,
     width: 0,
@@ -526,6 +574,64 @@ function apiThoughtToClientThought(record, layout = {}) {
   };
 }
 
+function applyOutboxOperations(source, operations) {
+  const merged = new Map(source.map((thought) => [thought.id, thought]));
+
+  operations.forEach((operation) => {
+    if (operation.type === 'delete') {
+      merged.delete(operation.thoughtId);
+      return;
+    }
+
+    const existing = merged.get(operation.thoughtId) || {};
+    merged.set(operation.thoughtId, apiThoughtToClientThought(
+      {
+        ...operation.payload,
+        id: operation.thoughtId,
+      },
+      existing,
+    ));
+  });
+
+  return [...merged.values()];
+}
+
+function enqueueThoughtUpsert(thought) {
+  if (!isCloudMode()) return;
+
+  const accountId = auth.id;
+  const operations = loadOutbox(accountId).filter(
+    (operation) => operation.thoughtId !== thought.id,
+  );
+  const payload = serializeThoughtsForSync([thought])[0];
+
+  operations.push({
+    operationId: crypto.randomUUID(),
+    thoughtId: thought.id,
+    type: 'upsert',
+    payload,
+  });
+  saveOutbox(accountId, operations);
+  void flushOutbox();
+}
+
+function enqueueThoughtDelete(thoughtId) {
+  if (!isCloudMode()) return;
+
+  const accountId = auth.id;
+  const operations = loadOutbox(accountId).filter(
+    (operation) => operation.thoughtId !== thoughtId,
+  );
+
+  operations.push({
+    operationId: crypto.randomUUID(),
+    thoughtId,
+    type: 'delete',
+  });
+  saveOutbox(accountId, operations);
+  void flushOutbox();
+}
+
 async function requestApi(path, {
   method = 'GET', body, retry = true, authSnapshot = auth,
 } = {}) {
@@ -533,7 +639,7 @@ async function requestApi(path, {
   if (authSnapshot?.access) headers.Authorization = `Bearer ${authSnapshot.access}`;
   if (body !== undefined) headers['Content-Type'] = 'application/json';
 
-  let response = await fetch(`${API_URL}${path}`, {
+  const response = await fetch(`${API_URL}${path}`, {
     method,
     headers,
     body: body === undefined ? undefined : JSON.stringify(body),
@@ -545,7 +651,7 @@ async function requestApi(path, {
     && authSnapshot?.id === auth?.id
     && await refreshAccessToken(authSnapshot)
   ) {
-    response = await requestApi(path, {
+    return requestApi(path, {
       method,
       body,
       retry: false,
@@ -592,11 +698,69 @@ async function refreshAccessToken(authSnapshot = auth) {
   return true;
 }
 
+function scheduleOutboxRetry(accountId) {
+  window.clearTimeout(outboxRetryTimer);
+  const delay = outboxRetryDelay;
+  outboxRetryDelay = Math.min(outboxRetryDelay * 2, 30_000);
+  outboxRetryTimer = window.setTimeout(() => {
+    if (auth?.id === accountId) void flushOutbox();
+  }, delay);
+}
+
+async function flushOutbox() {
+  if (!isCloudMode() || outboxFlushInFlight || !navigator.onLine) return;
+
+  const accountId = auth.id;
+  outboxFlushInFlight = true;
+  window.clearTimeout(outboxRetryTimer);
+
+  try {
+    while (auth?.id === accountId && navigator.onLine) {
+      const operation = loadOutbox(accountId)[0];
+      if (!operation) break;
+
+      if (operation.type === 'upsert') {
+        await requestApi(`/thoughts/${operation.thoughtId}/sync/`, {
+          method: 'PUT',
+          body: operation.payload,
+        });
+      } else {
+        await requestApi(`/thoughts/${operation.thoughtId}/sync/`, {
+          method: 'DELETE',
+        });
+      }
+
+      if (auth?.id !== accountId) return;
+
+      const remaining = loadOutbox(accountId).filter(
+        (item) => item.operationId !== operation.operationId,
+      );
+      saveOutbox(accountId, remaining);
+      outboxRetryDelay = 2000;
+    }
+  } catch (error) {
+    if (auth?.id === accountId) {
+      announce(`Changes are safe on this device and will sync later: ${error.message}`);
+      scheduleOutboxRetry(accountId);
+    }
+  } finally {
+    outboxFlushInFlight = false;
+    if (auth?.id && auth.id !== accountId && isCloudMode()) {
+      void flushOutbox();
+    }
+  }
+}
+
 function applyServerThoughts(records) {
   const layouts = new Map(thoughts.map((thought) => [thought.id, thought]));
-  replaceThoughts(records.slice(0, MAX_THOUGHTS).map((record) => (
+  const serverThoughts = records.slice(0, MAX_THOUGHTS).map((record) => (
     apiThoughtToClientThought(record, layouts.get(record.id))
-  )));
+  ));
+  const visibleThoughts = auth
+    ? applyOutboxOperations(serverThoughts, loadOutbox(auth.id))
+    : serverThoughts;
+
+  replaceThoughts(visibleThoughts);
 }
 
 async function loadServerThoughts() {
@@ -613,7 +777,7 @@ async function loadServerThoughts() {
   }
 }
 
-async function syncGuestThoughts({ keepServerView = false } = {}) {
+async function syncGuestThoughts() {
   if (!auth || syncInFlight) return false;
 
   const accountId = auth.id;
@@ -658,7 +822,7 @@ async function syncGuestThoughts({ keepServerView = false } = {}) {
       return false;
     }
 
-    syncPending = !keepServerView;
+    syncPending = true;
     announce(`Could not sync local thoughts. They are still safe on this device: ${error.message}`);
     return false;
   } finally {
@@ -667,15 +831,18 @@ async function syncGuestThoughts({ keepServerView = false } = {}) {
 }
 
 async function restoreAuthenticatedThoughts() {
+  let ready;
   if (syncPending) {
-    await syncGuestThoughts();
-    return;
+    ready = await syncGuestThoughts();
+  } else {
+    ready = await loadServerThoughts();
   }
 
-  await loadServerThoughts();
+  if (isCloudMode()) void flushOutbox();
+  return ready;
 }
 
-async function addThought(rawText) {
+function addThought(rawText) {
   const text = rawText.trim();
   if (!text) return false;
 
@@ -686,43 +853,26 @@ async function addThought(rawText) {
     return false;
   }
 
+  const thought = makeThought(text, {
+    id: crypto.randomUUID(),
+    createdAt: Date.now(),
+  });
+  thoughts.push(thought);
+  updateUi();
+  saveThoughts();
+
   if (isCloudMode()) {
-    try {
-      const record = await requestApi('/thoughts/', {
-        method: 'POST',
-        body: { text, color: 'purple' },
-      });
-      thoughts.push(makeThought(record.text, apiThoughtToClientThought(record)));
-      updateUi();
-      announce('Thought saved.');
-      return true;
-    } catch (error) {
-      announce(`Could not save thought: ${error.message}`);
-      return false;
-    }
+    enqueueThoughtUpsert(thought);
+    announce('Thought added.');
+  } else {
+    announce('Thought added locally. Sign in to save thoughts to your account.');
   }
 
-  thoughts.push(makeThought(text));
-  updateUi();
-  scheduleSave();
-  announce('Thought added locally. Sign in to save thoughts to your account.');
   return true;
 }
 
 function togglePinned(thought) {
   if (blockEditsDuringAccountSync()) return;
-  if (thought.pinSaveInFlight || positionSaveIsRunning(thought)) {
-    announce('This thought is still saving. Please try again in a moment.');
-    return;
-  }
-
-  const previous = {
-    pinned: thought.pinned,
-    vx: thought.vx,
-    vy: thought.vy,
-    rotation: thought.rotation,
-    meta: cloneMeta(thought.meta),
-  };
 
   thought.pinned = !thought.pinned;
   if (thought.pinned) {
@@ -740,128 +890,16 @@ function togglePinned(thought) {
   if (thought.pinned) updatePinnedLayoutMeta(thought);
 
   renderThought(thought);
-  scheduleSave();
+  saveThoughts();
   announce(thought.pinned ? 'Thought pinned.' : 'Thought unpinned.');
 
-  if (isCloudMode()) void persistPinnedState(thought, previous);
-}
-
-async function persistPinnedState(thought, previous) {
-  thought.pinSaveInFlight = true;
-  try {
-    const body = { is_pinned: thought.pinned };
-    if (thought.pinned) {
-      body.meta = { layout: thought.meta.layout };
-    }
-
-    const record = await requestApi(`/thoughts/${thought.id}/`, {
-      method: 'PATCH',
-      body,
-    });
-    thought.pinned = record.is_pinned;
-    thought.meta = record.meta || thought.meta;
-    const positionState = positionSaveStates.get(thought.id);
-    if (positionState && record.meta?.layout) {
-      positionState.confirmedLayout = cloneMeta(record.meta.layout);
-    }
-    renderThought(thought);
-  } catch (error) {
-    Object.assign(thought, previous);
-    renderThought(thought);
-    announce(`Could not update thought: ${error.message}`);
-  } finally {
-    thought.pinSaveInFlight = false;
-  }
-}
-
-async function persistPinnedPosition(thought, previousLayout, previousPosition) {
-  let state = positionSaveStates.get(thought.id);
-  if (!state) {
-    state = {
-      running: false,
-      pendingLayout: null,
-      confirmedLayout: previousLayout ? cloneMeta(previousLayout) : null,
-      confirmedPosition: previousPosition ? { ...previousPosition } : null,
-    };
-    positionSaveStates.set(thought.id, state);
-  }
-
-  state.pendingLayout = cloneMeta(thought.meta.layout);
-  if (state.running) return;
-
-  state.running = true;
-  try {
-    while (state.pendingLayout && thought.pinned && isCloudMode()) {
-      const layout = state.pendingLayout;
-      state.pendingLayout = null;
-
-      try {
-        const record = await requestApi(`/thoughts/${thought.id}/`, {
-          method: 'PATCH',
-          body: { meta: { layout } },
-        });
-        state.confirmedLayout = cloneMeta(record.meta?.layout || layout);
-
-        if (state.pendingLayout) {
-          thought.meta = {
-            ...(record.meta || {}),
-            layout: thought.meta.layout,
-          };
-        } else {
-          thought.meta = record.meta || thought.meta;
-        }
-      } catch (error) {
-        state.pendingLayout = null;
-        if (state.confirmedLayout) {
-          thought.meta = {
-            ...(thought.meta || {}),
-            layout: cloneMeta(state.confirmedLayout),
-          };
-          applyPinnedLayout(thought);
-          constrainThought(thought);
-          renderThought(thought);
-        } else if (state.confirmedPosition) {
-          thought.x = state.confirmedPosition.x;
-          thought.y = state.confirmedPosition.y;
-          constrainThought(thought);
-          renderThought(thought);
-        }
-        announce(`Could not save position: ${error.message}`);
-      }
-    }
-  } finally {
-    state.running = false;
-  }
+  if (isCloudMode()) enqueueThoughtUpsert(thought);
 }
 
 function removeThought(thought) {
   if (blockEditsDuringAccountSync()) return;
-  if (thought.pinSaveInFlight || positionSaveIsRunning(thought)) {
-    announce('This thought is still saving. Please try again in a moment.');
-    return;
-  }
-
-  if (isCloudMode()) {
-    void deleteServerThought(thought);
-    return;
-  }
+  if (isCloudMode()) enqueueThoughtDelete(thought.id);
   removeThoughtElement(thought);
-}
-
-async function deleteServerThought(thought) {
-  const accountId = auth?.id;
-  try {
-    await requestApi(`/thoughts/${thought.id}/`, { method: 'DELETE' });
-    removeThoughtElement(thought);
-    if (accountId && loadPendingThoughts(accountId).length) {
-      window.setTimeout(() => {
-        if (auth?.id !== accountId || !loadPendingThoughts(accountId).length) return;
-        void syncGuestThoughts({ keepServerView: true });
-      }, 200);
-    }
-  } catch (error) {
-    announce(`Could not delete thought: ${error.message}`);
-  }
 }
 
 function removeThoughtElement(thought) {
@@ -880,13 +918,8 @@ function removeThoughtElement(thought) {
 function beginDrag(event, thought) {
   if (event.target.closest('button')) return;
   if (blockEditsDuringAccountSync()) return;
-  if (thought.pinSaveInFlight) {
-    announce('This thought is still saving. Please try again in a moment.');
-    return;
-  }
   event.preventDefault();
   draggedThought = thought;
-  dragStartPosition = { x: thought.x, y: thought.y };
   const bounds = thought.element.getBoundingClientRect();
   dragOffset = { x: event.clientX - bounds.left, y: event.clientY - bounds.top };
   thought.vx = 0;
@@ -908,22 +941,15 @@ function moveDrag(event) {
 function stopDrag() {
   if (!draggedThought) return;
   const thought = draggedThought;
-  const previousPosition = dragStartPosition;
   thought.element.classList.remove('is-dragging');
   if (!thought.pinned) {
     thought.vx = randomVelocity();
     thought.vy = randomVelocity();
   } else {
-    const previousLayout = thought.meta?.layout
-      ? cloneMeta(thought.meta.layout)
-      : null;
     updatePinnedLayoutMeta(thought);
-    if (isCloudMode()) {
-      void persistPinnedPosition(thought, previousLayout, previousPosition);
-    }
+    if (isCloudMode()) enqueueThoughtUpsert(thought);
   }
   draggedThought = null;
-  dragStartPosition = null;
   scheduleSave();
 }
 
@@ -1204,6 +1230,7 @@ async function authenticate(mode) {
   const password = authPassword.value;
   if (!email || !password) return;
 
+  const guestThoughts = thoughts;
   setAuthBusy(true);
   authMessage.textContent = '';
   try {
@@ -1226,19 +1253,21 @@ async function authenticate(mode) {
       email: payload.user?.email || email,
     };
     storeAuth();
+    const cachedAccountThoughts = applyOutboxOperations(
+      loadAccountThoughts(auth.id),
+      loadOutbox(auth.id),
+    );
     const pendingForAccount = loadPendingThoughts(auth.id);
-    const thoughtsToSync = mergeThoughts(pendingForAccount, thoughts);
+    const thoughtsToSync = mergeThoughts(pendingForAccount, guestThoughts);
     syncPending = thoughtsToSync.length > 0;
     if (syncPending) {
       storePendingThoughts(auth.id, thoughtsToSync);
       localStorage.removeItem(STORAGE_KEY);
-      replaceThoughts(thoughtsToSync);
     }
+    replaceThoughts(mergeThoughts(cachedAccountThoughts, thoughtsToSync));
     updateAccountButton();
     authPassword.value = '';
-    const ready = syncPending
-      ? await syncGuestThoughts()
-      : await loadServerThoughts();
+    const ready = await restoreAuthenticatedThoughts();
     authDialog.close();
     if (ready) {
       announce(mode === 'register' ? 'Account created. Your thoughts are synced.' : 'Signed in.');
@@ -1251,6 +1280,9 @@ async function authenticate(mode) {
 }
 
 function signOut(message = 'Signed out. Local thoughts stay on this browser.') {
+  saveThoughts();
+  window.clearTimeout(outboxRetryTimer);
+  outboxRetryDelay = 2000;
   auth = null;
   syncPending = false;
   syncOperationId += 1;
@@ -1258,15 +1290,26 @@ function signOut(message = 'Signed out. Local thoughts stay on this browser.') {
   localStorage.removeItem(AUTH_STORAGE_KEY);
   sessionStorage.removeItem(AUTH_STORAGE_KEY);
   updateAccountButton();
-  replaceThoughts(loadThoughts());
+  replaceThoughts(loadStoredThoughts(STORAGE_KEY));
   announce(message);
 }
 
-form.addEventListener('submit', async (event) => {
+form.addEventListener('submit', (event) => {
   event.preventDefault();
-  const added = await addThought(input.value);
-  if (added) input.value = '';
-  input.focus();
+  if (handlingThoughtSubmit) return;
+
+  const submittedText = input.value;
+  if (!submittedText.trim()) return;
+
+  handlingThoughtSubmit = true;
+  input.value = '';
+  try {
+    const added = addThought(submittedText);
+    if (!added && !input.value) input.value = submittedText;
+  } finally {
+    handlingThoughtSubmit = false;
+    input.focus();
+  }
 });
 
 accountButton.addEventListener('click', () => {
@@ -1306,6 +1349,13 @@ replaceThoughts(thoughts);
 updateAccountButton();
 if (auth) void restoreAuthenticatedThoughts();
 window.addEventListener('online', () => {
-  if (auth && syncPending) void syncGuestThoughts();
+  if (!auth) return;
+  if (syncPending) {
+    void syncGuestThoughts().then(() => {
+      if (isCloudMode()) void flushOutbox();
+    });
+  } else {
+    void flushOutbox();
+  }
 });
 window.requestAnimationFrame(animate);
