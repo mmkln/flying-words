@@ -773,17 +773,20 @@ function renderMagnetThoughtState(thought) {
   if (!button) return;
 
   const storedParents = getPersistedMagnetParents(thought);
+  const hasParents = storedParents.length > 0;
+  const hasChildren = isPersistedMagnetParent(thought);
   const isEditingParent = magnetEditor?.parentId === thought.id;
-  const isParent = isEditingParent || isPersistedMagnetParent(thought);
+  const isHybrid = hasParents && hasChildren;
+  const isParent = isEditingParent || hasChildren;
   const isSelected = magnetEditor
     ? magnetEditor.selectedChildIds.has(thought.id)
-    : storedParents.length > 0;
+    : hasParents;
   const isChild = !isEditingParent && (
     magnetEditor
       ? isSelected || storedParents.some(
         (relation) => relation.parentId !== magnetEditor.parentId,
       )
-      : storedParents.length > 0
+      : hasParents
   );
   const disabled = Boolean(magnetEditor && (
     isEditingParent || magnetCandidateDisabled(thought)
@@ -791,6 +794,8 @@ function renderMagnetThoughtState(thought) {
 
   thought.element.classList.toggle('is-magnet-parent', isParent);
   thought.element.classList.toggle('is-magnet-child', isChild);
+  thought.element.classList.toggle('is-magnet-hybrid', isHybrid);
+  thought.element.classList.toggle('is-magnet-editor-parent', isEditingParent);
   thought.element.classList.toggle('is-magnet-disabled', disabled && !isEditingParent);
   button.classList.toggle('is-selected', isSelected);
   button.disabled = disabled;
@@ -800,7 +805,8 @@ function renderMagnetThoughtState(thought) {
   else if (disabled) button.title = 'This thought cannot join this group';
   else if (magnetEditor && isSelected) button.title = 'Remove from magnetic group';
   else if (magnetEditor) button.title = 'Add to magnetic group';
-  else if (storedParents.length) button.title = 'Use as a parent or edit its children';
+  else if (isHybrid) button.title = 'Parent and child — edit its children';
+  else if (hasParents) button.title = 'Use as a parent or edit its children';
   else if (isParent) button.title = 'Edit magnetic group';
   else button.title = 'Create magnetic group';
   button.setAttribute('aria-label', button.title);

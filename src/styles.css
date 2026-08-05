@@ -315,24 +315,10 @@ kbd { padding: 1px 4px; border: 1px solid rgba(114,104,143,.25); border-bottom-w
   pointer-events: auto;
 }
 
-.thought-space.is-magnet-editing .magnet-btn {
-  color: #0a84ff;
-  border-color: rgba(10, 132, 255, .34);
-}
-
-.thought-space.is-magnet-editing .thought-card.is-magnet-parent {
-  border-color: rgba(255, 69, 58, .68);
-  box-shadow: 0 0 0 3px rgba(255, 69, 58, .1), 0 15px 32px rgba(68, 50, 124, .15);
-}
-
 .thought-card.is-magnet-parent .magnet-btn {
   color: #fff;
   border-color: #ff453a;
   background: #ff453a;
-}
-
-.thought-space.is-magnet-editing .thought-card.is-magnet-child:not(.is-magnet-parent) {
-  border-color: rgba(10, 132, 255, .58);
 }
 
 .thought-card.is-magnet-child:not(.is-magnet-parent) .magnet-btn {
@@ -346,10 +332,44 @@ kbd { padding: 1px 4px; border: 1px solid rgba(114,104,143,.25); border-bottom-w
   background: #0a84ff;
 }
 
+.thought-card.is-magnet-hybrid .magnet-btn {
+  color: #fff;
+  border-color: #af52de;
+  background: #af52de;
+}
+
+.thought-space.is-magnet-editing .thought-card.is-magnet-editor-parent {
+  border-color: rgba(255, 69, 58, .68);
+  box-shadow: 0 0 0 3px rgba(255, 69, 58, .1), 0 15px 32px rgba(68, 50, 124, .15);
+}
+
+.thought-space.is-magnet-editing .thought-card.is-magnet-editor-parent .magnet-btn {
+  color: #fff;
+  border-color: #ff453a;
+  background: #ff453a;
+}
+
+.thought-space.is-magnet-editing .thought-card.is-magnet-child:not(.is-magnet-editor-parent) {
+  border-color: rgba(10, 132, 255, .58);
+}
+
+.thought-space.is-magnet-editing .thought-card:not(.is-magnet-editor-parent) .magnet-btn {
+  color: #0a84ff;
+  border-color: rgba(10, 132, 255, .38);
+  background: rgba(255, 255, 255, .97);
+}
+
+.thought-space.is-magnet-editing .thought-card:not(.is-magnet-editor-parent) .magnet-btn.is-selected {
+  color: #fff;
+  border-color: #0a84ff;
+  background: #0a84ff;
+}
+
 .thought-card.is-magnet-disabled {
   opacity: .42;
 }
 
+.thought-space.is-magnet-editing .thought-card.is-magnet-disabled .magnet-btn,
 .thought-card.is-magnet-disabled .magnet-btn {
   cursor: not-allowed;
   color: #8e8e93;
