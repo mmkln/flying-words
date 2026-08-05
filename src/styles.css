@@ -331,16 +331,16 @@ kbd { padding: 1px 4px; border: 1px solid rgba(114,104,143,.25); border-bottom-w
   background: #ff453a;
 }
 
-.thought-space.is-magnet-editing .thought-card.is-magnet-child {
+.thought-space.is-magnet-editing .thought-card.is-magnet-child:not(.is-magnet-parent) {
   border-color: rgba(10, 132, 255, .58);
 }
 
-.thought-card.is-magnet-child .magnet-btn {
+.thought-card.is-magnet-child:not(.is-magnet-parent) .magnet-btn {
   color: #0a84ff;
   border-color: rgba(10, 132, 255, .38);
 }
 
-.thought-card.is-magnet-child .magnet-btn.is-selected {
+.thought-card.is-magnet-child:not(.is-magnet-parent) .magnet-btn.is-selected {
   color: #fff;
   border-color: #0a84ff;
   background: #0a84ff;

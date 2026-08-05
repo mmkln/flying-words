@@ -1,3 +1,11 @@
+import {
+  buildHierarchyComponents,
+  magnetMetaFromParents,
+  normalizeMagnetParents,
+  wouldCreateHierarchyCycle,
+} from './magnet-hierarchy.js';
+import { createMagnetPhysics } from './magnet-physics.js';
+
 const STORAGE_KEY = 'flying-thoughts:v1';
 const AUTH_STORAGE_KEY = 'flying-thoughts:auth:v1';
 const PENDING_SYNC_STORAGE_PREFIX = 'flying-thoughts:pending-sync:v1:';
@@ -11,10 +19,6 @@ const TARGET_VISIBLE_DENSITY = 0.35;
 const RESPAWN_DELAY_MIN = 800;
 const RESPAWN_DELAY_MAX = 1400;
 const SPAWN_MARGIN = 20;
-const MAGNET_VERSION = 1;
-const MAGNET_SPRING = 12;
-const MAGNET_DAMPING = 6;
-const MAGNET_MAX_SPEED = 130;
 const LOCAL_API_URL = 'http://127.0.0.1:8000/api/v1';
 const PRODUCTION_API_URL = 'https://mxllwords.pythonanywhere.com/api/v1';
 const API_URL = ['localhost', '127.0.0.1'].includes(window.location.hostname)
@@ -65,6 +69,9 @@ if (auth && !initialPendingThoughts.length && initialGuestThoughts.length) {
 let syncInFlight = false;
 let syncOperationId = 0;
 const visibilityStates = new Map();
+const componentByThoughtId = new Map();
+const magnetPhysics = createMagnetPhysics();
+let magnetComponents = [];
 let draggedThought = null;
 let dragOffset = { x: 0, y: 0 };
 let lastTimestamp = performance.now();
@@ -164,79 +171,116 @@ function cloneMeta(meta = {}) {
   return JSON.parse(JSON.stringify(meta));
 }
 
-function persistedMagnet(thought) {
-  const magnet = thought.meta?.magnet;
-  if (
-    magnet?.version !== MAGNET_VERSION
-    || typeof magnet.parentId !== 'string'
-    || !Number.isInteger(magnet.slot)
-    || magnet.slot < 0
-    || magnet.slot >= MAX_THOUGHTS
-  ) {
-    return null;
-  }
-  return magnet;
-}
-
 function getThoughtById(thoughtId) {
   return thoughts.find((thought) => thought.id === thoughtId) || null;
 }
 
-function getPersistedMagnetParentId(thought) {
-  return persistedMagnet(thought)?.parentId || null;
+function getPersistedMagnetParents(thought) {
+  return normalizeMagnetParents(thought.meta?.magnet, MAX_THOUGHTS);
 }
 
 function getPersistedMagnetChildren(parentId) {
   return thoughts.filter(
-    (thought) => getPersistedMagnetParentId(thought) === parentId,
+    (thought) => getPersistedMagnetParents(thought).some(
+      (relation) => relation.parentId === parentId,
+    ),
   );
 }
 
 function isPersistedMagnetParent(thought) {
-  return thoughts.some(
-    (candidate) => getPersistedMagnetParentId(candidate) === thought.id,
-  );
+  return getPersistedMagnetChildren(thought.id).length > 0;
 }
 
-function effectiveMagnet(thought) {
-  const stored = persistedMagnet(thought);
+function writeMagnetParents(thought, parents) {
+  thought.meta = { ...(thought.meta || {}) };
+  const magnet = magnetMetaFromParents(parents);
+  if (magnet) thought.meta.magnet = magnet;
+  else delete thought.meta.magnet;
+}
+
+function getEffectiveMagnetParents(thought) {
+  const stored = getPersistedMagnetParents(thought);
   if (!magnetEditor || thought.id === magnetEditor.parentId) return stored;
 
+  const otherParents = stored.filter(
+    (relation) => relation.parentId !== magnetEditor.parentId,
+  );
+
   if (magnetEditor.selectedChildIds.has(thought.id)) {
-    return {
-      version: MAGNET_VERSION,
+    return [...otherParents, {
       parentId: magnetEditor.parentId,
       slot: magnetEditor.slots.get(thought.id) ?? 0,
-    };
+    }];
   }
 
-  return stored?.parentId === magnetEditor.parentId ? null : stored;
+  return otherParents;
 }
 
-function getEffectiveMagnetParentId(thought) {
-  return effectiveMagnet(thought)?.parentId || null;
+function getEffectiveMagnetRelations() {
+  return thoughts.flatMap((child) => getEffectiveMagnetParents(child).map(
+    (relation) => ({ ...relation, childId: child.id }),
+  )).filter((relation) => getThoughtById(relation.parentId));
 }
 
-function getMagnetRoot(thought) {
-  const parentId = getEffectiveMagnetParentId(thought);
-  return parentId ? getThoughtById(parentId) || thought : thought;
+function rebuildMagnetComponents({ preserveVisibility = true } = {}) {
+  const previousStateByThoughtId = new Map();
+  if (preserveVisibility) {
+    componentByThoughtId.forEach((component, thoughtId) => {
+      const state = visibilityStates.get(component.id);
+      if (state) previousStateByThoughtId.set(thoughtId, { ...state });
+    });
+  }
+
+  magnetComponents = buildHierarchyComponents(
+    thoughts.map((thought) => thought.id),
+    getEffectiveMagnetRelations(),
+  );
+  componentByThoughtId.clear();
+  magnetComponents.forEach((component) => {
+    component.memberIds.forEach((thoughtId) => {
+      componentByThoughtId.set(thoughtId, component);
+    });
+  });
+  magnetPhysics.syncTopology({
+    thoughts,
+    relations: getEffectiveMagnetRelations(),
+    hierarchyComponents: magnetComponents,
+  });
+
+  if (!preserveVisibility) return;
+  visibilityStates.clear();
+  magnetComponents.forEach((component) => {
+    const previousStates = component.memberIds
+      .map((thoughtId) => previousStateByThoughtId.get(thoughtId))
+      .filter(Boolean);
+    if (!previousStates.length) return;
+
+    visibilityStates.set(component.id, {
+      status: previousStates.some((state) => state.status !== 'dormant')
+        ? 'visible'
+        : 'dormant',
+      lastVisibleAt: Math.min(...previousStates.map((state) => state.lastVisibleAt || 0)),
+    });
+  });
 }
 
-function getMagnetGroupMembers(root) {
-  return [
-    root,
-    ...thoughts.filter(
-      (thought) => getEffectiveMagnetParentId(thought) === root.id,
-    ),
-  ];
+function getMagnetComponent(thought) {
+  return componentByThoughtId.get(thought.id) || null;
 }
 
-function getMagnetRoots() {
-  return thoughts.filter((thought) => !getEffectiveMagnetParentId(thought));
+function getMagnetComponentMembers(component) {
+  return component?.memberIds.map(getThoughtById).filter(Boolean) || [];
 }
 
-function belongToSameMagnetGroup(first, second) {
-  return getMagnetRoot(first).id === getMagnetRoot(second).id;
+function isMagnetComponentPinned(component) {
+  return getMagnetComponentMembers(component).some((thought) => thought.pinned);
+}
+
+function wouldCreateMagnetCycle(parentId, childId) {
+  return wouldCreateHierarchyCycle(parentId, childId, (thoughtId) => {
+    const thought = getThoughtById(thoughtId);
+    return thought ? getEffectiveMagnetParents(thought) : [];
+  });
 }
 
 function firstAvailableMagnetSlot(selectedIds, slots) {
@@ -252,62 +296,44 @@ function firstAvailableMagnetSlot(selectedIds, slots) {
 
 function repairMagnetRelations() {
   const byId = new Map(thoughts.map((thought) => [thought.id, thought]));
+  const acceptedParentsByChild = new Map();
+  const usedSlotsByParent = new Map();
   const changed = new Set();
 
-  thoughts.forEach((thought) => {
-    if (!Object.prototype.hasOwnProperty.call(thought.meta || {}, 'magnet')) return;
-    const magnet = persistedMagnet(thought);
-    const parent = magnet ? byId.get(magnet.parentId) : null;
-    if (
-      !magnet
-      || !parent
-      || parent === thought
-      || parent.pinned
-      || thought.pinned
-    ) {
-      thought.meta = { ...(thought.meta || {}) };
-      delete thought.meta.magnet;
-      changed.add(thought);
-    }
-  });
+  [...thoughts]
+    .sort((first, second) => validCreatedAt(first.createdAt) - validCreatedAt(second.createdAt))
+    .forEach((thought) => {
+      const previousMagnet = thought.meta?.magnet || null;
+      const acceptedParents = [];
 
-  const parentIds = new Set(
-    thoughts.map(getPersistedMagnetParentId).filter(Boolean),
-  );
-  thoughts.forEach((thought) => {
-    if (!parentIds.has(thought.id) || !getPersistedMagnetParentId(thought)) return;
-    thought.meta = { ...(thought.meta || {}) };
-    delete thought.meta.magnet;
-    changed.add(thought);
-  });
+      getPersistedMagnetParents(thought).forEach((relation) => {
+        const parent = byId.get(relation.parentId);
+        if (!parent || parent === thought || parent.pinned || thought.pinned) return;
 
-  const childrenByParent = new Map();
-  thoughts.forEach((thought) => {
-    const parentId = getPersistedMagnetParentId(thought);
-    if (!parentId) return;
-    if (!childrenByParent.has(parentId)) childrenByParent.set(parentId, []);
-    childrenByParent.get(parentId).push(thought);
-  });
-  childrenByParent.forEach((children) => {
-    const usedSlots = new Set();
-    children
-      .sort((first, second) => validCreatedAt(first.createdAt) - validCreatedAt(second.createdAt))
-      .forEach((child) => {
-        const currentSlot = persistedMagnet(child).slot;
-        if (!usedSlots.has(currentSlot)) {
-          usedSlots.add(currentSlot);
-          return;
+        const createsCycle = wouldCreateHierarchyCycle(
+          relation.parentId,
+          thought.id,
+          (thoughtId) => acceptedParentsByChild.get(thoughtId) || [],
+        );
+        if (createsCycle) return;
+
+        if (!usedSlotsByParent.has(relation.parentId)) {
+          usedSlotsByParent.set(relation.parentId, new Set());
         }
-        let nextSlot = 0;
-        while (usedSlots.has(nextSlot)) nextSlot += 1;
-        child.meta = {
-          ...child.meta,
-          magnet: { ...child.meta.magnet, slot: nextSlot },
-        };
-        usedSlots.add(nextSlot);
-        changed.add(child);
+        const usedSlots = usedSlotsByParent.get(relation.parentId);
+        let slot = relation.slot;
+        while (usedSlots.has(slot)) slot += 1;
+        if (slot >= MAX_THOUGHTS) return;
+        usedSlots.add(slot);
+        acceptedParents.push({ parentId: relation.parentId, slot });
       });
-  });
+
+      acceptedParentsByChild.set(thought.id, acceptedParents);
+      const nextMagnet = magnetMetaFromParents(acceptedParents);
+      if (JSON.stringify(previousMagnet) === JSON.stringify(nextMagnet)) return;
+      writeMagnetParents(thought, acceptedParents);
+      changed.add(thought);
+    });
 
   return [...changed];
 }
@@ -464,19 +490,22 @@ function randomVelocity() {
   return Math.random() > 0.5 ? velocity : -velocity;
 }
 
-function getVisibilityState(thought) {
-  const root = getMagnetRoot(thought);
-  let state = visibilityStates.get(root.id);
+function getVisibilityState(value) {
+  const component = value?.memberIds ? value : getMagnetComponent(value);
+  if (!component) return { status: 'dormant', lastVisibleAt: Date.now() };
+
+  let state = visibilityStates.get(component.id);
   if (!state) {
     state = { status: 'visible', lastVisibleAt: 0 };
-    visibilityStates.set(root.id, state);
+    visibilityStates.set(component.id, state);
   }
   return state;
 }
 
 function isThoughtActive(thought) {
-  const root = getMagnetRoot(thought);
-  return root.pinned || getVisibilityState(root).status !== 'dormant';
+  const component = getMagnetComponent(thought);
+  return isMagnetComponentPinned(component)
+    || getVisibilityState(component).status !== 'dormant';
 }
 
 function getActiveThoughts() {
@@ -516,19 +545,21 @@ function calculateVisibleTarget() {
 }
 
 function showThought(thought) {
-  const root = getMagnetRoot(thought);
-  getVisibilityState(root).status = 'visible';
-  getMagnetGroupMembers(root).forEach((member) => {
+  const component = getMagnetComponent(thought);
+  if (!component) return;
+  getVisibilityState(component).status = 'visible';
+  getMagnetComponentMembers(component).forEach((member) => {
     member.element.hidden = false;
   });
 }
 
 function hideThought(thought) {
-  const root = getMagnetRoot(thought);
-  const members = getMagnetGroupMembers(root);
+  const component = getMagnetComponent(thought);
+  if (!component) return;
+  const members = getMagnetComponentMembers(component);
   if (members.some((member) => member.pinned || member === draggedThought)) return;
 
-  const state = getVisibilityState(root);
+  const state = getVisibilityState(component);
   state.status = 'dormant';
   state.lastVisibleAt = Date.now();
   members.forEach((member) => {
@@ -554,50 +585,8 @@ function isFullyOutside(thought, bounds) {
   );
 }
 
-function getMagnetSlotPosition(parent, child, slot) {
-  let ring = 1;
-  let ringStart = 0;
-  let slotsInRing = 6;
-  while (slot >= ringStart + slotsInRing) {
-    ringStart += slotsInRing;
-    ring += 1;
-    slotsInRing = ring * 6;
-  }
-
-  const index = slot - ringStart;
-  const angle = -Math.PI / 2 + (index / slotsInRing) * Math.PI * 2;
-  const radiusX = (
-    parent.width / 2
-    + child.width / 2
-    + 28
-    + (ring - 1) * (child.width + 24)
-  );
-  const radiusY = (
-    parent.height / 2
-    + child.height / 2
-    + 24
-    + (ring - 1) * (child.height + 24)
-  );
-
-  return {
-    x: parent.x + parent.width / 2 + Math.cos(angle) * radiusX - child.width / 2,
-    y: parent.y + parent.height / 2 + Math.sin(angle) * radiusY - child.height / 2,
-  };
-}
-
-function placeMagnetChildren(root) {
-  getMagnetGroupMembers(root).slice(1).forEach((child) => {
-    const magnet = effectiveMagnet(child);
-    const target = getMagnetSlotPosition(root, child, magnet.slot);
-    child.x = target.x;
-    child.y = target.y;
-    child.vx = root.vx;
-    child.vy = root.vy;
-  });
-}
-
-function groupBounds(root) {
-  const members = getMagnetGroupMembers(root);
+function componentBounds(component) {
+  const members = getMagnetComponentMembers(component);
   return {
     minX: Math.min(...members.map((member) => member.x)),
     minY: Math.min(...members.map((member) => member.y)),
@@ -606,22 +595,22 @@ function groupBounds(root) {
   };
 }
 
-function shiftMagnetGroup(root, shiftX, shiftY) {
-  getMagnetGroupMembers(root).forEach((member) => {
-    member.x += shiftX;
-    member.y += shiftY;
-  });
+function shiftMagnetComponent(component, shiftX, shiftY) {
+  magnetPhysics.translateComponent(component.id, shiftX, shiftY);
 }
 
-function isMagnetGroupFullyOutside(root, bounds) {
-  return getMagnetGroupMembers(root).every((member) => isFullyOutside(member, bounds));
+function isMagnetComponentFullyOutside(component, bounds) {
+  return getMagnetComponentMembers(component).every(
+    (member) => isFullyOutside(member, bounds),
+  );
 }
 
 function spawnThoughtFromEdge(thought, reducedMotion = false) {
-  const root = getMagnetRoot(thought);
+  const component = getMagnetComponent(thought);
+  if (!component) return;
   const bounds = getPlayfieldBounds();
-  const state = getVisibilityState(root);
-  const members = getMagnetGroupMembers(root);
+  const state = getVisibilityState(component);
+  const members = getMagnetComponentMembers(component);
 
   members.forEach((member) => {
     member.element.hidden = false;
@@ -630,11 +619,15 @@ function spawnThoughtFromEdge(thought, reducedMotion = false) {
 
   if (reducedMotion) {
     state.status = 'visible';
-    root.x = randomBetween(0, Math.max(0, bounds.width - root.width));
-    root.y = randomBetween(0, Math.max(0, bounds.height - root.height));
-    root.vx = 0;
-    root.vy = 0;
-    placeMagnetChildren(root);
+    const group = componentBounds(component);
+    const groupWidth = group.maxX - group.minX;
+    const groupHeight = group.maxY - group.minY;
+    shiftMagnetComponent(
+      component,
+      randomBetween(0, Math.max(0, bounds.width - groupWidth)) - group.minX,
+      randomBetween(0, Math.max(0, bounds.height - groupHeight)) - group.minY,
+    );
+    magnetPhysics.setComponentVelocity(component.id, 0, 0);
     members.forEach(renderThought);
     return;
   }
@@ -643,54 +636,65 @@ function spawnThoughtFromEdge(thought, reducedMotion = false) {
   const edge = Math.floor(Math.random() * 4);
   const speed = randomBetween(14, 23);
   const drift = randomBetween(-8, 8);
+  const group = componentBounds(component);
+  const groupWidth = group.maxX - group.minX;
+  const groupHeight = group.maxY - group.minY;
+  let vx = 0;
+  let vy = 0;
 
   if (edge === 0) {
-    root.x = -root.width - SPAWN_MARGIN;
-    root.y = randomBetween(0, Math.max(0, bounds.height - root.height));
-    root.vx = speed;
-    root.vy = drift;
+    shiftMagnetComponent(
+      component,
+      -SPAWN_MARGIN - group.maxX,
+      randomBetween(0, Math.max(0, bounds.height - groupHeight)) - group.minY,
+    );
+    vx = speed;
+    vy = drift;
   } else if (edge === 1) {
-    root.x = bounds.width + SPAWN_MARGIN;
-    root.y = randomBetween(0, Math.max(0, bounds.height - root.height));
-    root.vx = -speed;
-    root.vy = drift;
+    shiftMagnetComponent(
+      component,
+      bounds.width + SPAWN_MARGIN - group.minX,
+      randomBetween(0, Math.max(0, bounds.height - groupHeight)) - group.minY,
+    );
+    vx = -speed;
+    vy = drift;
   } else if (edge === 2) {
-    root.x = randomBetween(0, Math.max(0, bounds.width - root.width));
-    root.y = -root.height - SPAWN_MARGIN;
-    root.vx = drift;
-    root.vy = speed;
+    shiftMagnetComponent(
+      component,
+      randomBetween(0, Math.max(0, bounds.width - groupWidth)) - group.minX,
+      -SPAWN_MARGIN - group.maxY,
+    );
+    vx = drift;
+    vy = speed;
   } else {
-    root.x = randomBetween(0, Math.max(0, bounds.width - root.width));
-    root.y = bounds.height + SPAWN_MARGIN;
-    root.vx = drift;
-    root.vy = -speed;
+    shiftMagnetComponent(
+      component,
+      randomBetween(0, Math.max(0, bounds.width - groupWidth)) - group.minX,
+      bounds.height + SPAWN_MARGIN - group.minY,
+    );
+    vx = drift;
+    vy = -speed;
   }
 
-  root.rotation = randomBetween(-2.5, 2.5);
-  placeMagnetChildren(root);
-  const positionedBounds = groupBounds(root);
-  if (edge === 0) shiftMagnetGroup(root, -SPAWN_MARGIN - positionedBounds.maxX, 0);
-  if (edge === 1) shiftMagnetGroup(root, bounds.width + SPAWN_MARGIN - positionedBounds.minX, 0);
-  if (edge === 2) shiftMagnetGroup(root, 0, -SPAWN_MARGIN - positionedBounds.maxY);
-  if (edge === 3) shiftMagnetGroup(root, 0, bounds.height + SPAWN_MARGIN - positionedBounds.minY);
-  members.slice(1).forEach((member) => {
-    member.vx = root.vx;
-    member.vy = root.vy;
+  magnetPhysics.setComponentVelocity(component.id, vx, vy);
+  members.forEach((member) => {
+    member.rotation = randomBetween(-2.5, 2.5);
   });
   members.forEach(renderThought);
 }
 
 function spawnNextDormantThought(reducedMotion) {
-  const thought = getMagnetRoots()
+  const component = magnetComponents
     .filter((item) => (
-      !item.pinned && getVisibilityState(item).status === 'dormant'
+      !isMagnetComponentPinned(item) && getVisibilityState(item).status === 'dormant'
     ))
     .sort((first, second) => (
       getVisibilityState(first).lastVisibleAt
       - getVisibilityState(second).lastVisibleAt
     ))[0];
 
-  if (!thought) return false;
+  if (!component) return false;
+  const thought = getMagnetComponentMembers(component)[0];
   spawnThoughtFromEdge(thought, reducedMotion);
   return true;
 }
@@ -719,31 +723,38 @@ function initializeThoughtVisibility() {
   visibilityStates.clear();
 
   const target = calculateVisibleTarget();
-  const roots = getMagnetRoots();
-  const pinnedRoots = roots.filter((thought) => thought.pinned);
-  const visibleRootIds = new Set(pinnedRoots.map((thought) => thought.id));
-  let visibleCardCount = pinnedRoots.reduce(
-    (count, root) => count + getMagnetGroupMembers(root).length,
+  const pinnedComponents = magnetComponents.filter(isMagnetComponentPinned);
+  const visibleComponentIds = new Set(pinnedComponents.map((component) => component.id));
+  let visibleCardCount = pinnedComponents.reduce(
+    (count, component) => count + component.memberIds.length,
     0,
   );
 
-  roots
-    .filter((thought) => !thought.pinned)
-    .sort((first, second) => second.createdAt - first.createdAt)
-    .some((root) => {
+  magnetComponents
+    .filter((component) => !isMagnetComponentPinned(component))
+    .sort((first, second) => {
+      const firstCreatedAt = Math.max(
+        ...getMagnetComponentMembers(first).map((thought) => validCreatedAt(thought.createdAt)),
+      );
+      const secondCreatedAt = Math.max(
+        ...getMagnetComponentMembers(second).map((thought) => validCreatedAt(thought.createdAt)),
+      );
+      return secondCreatedAt - firstCreatedAt;
+    })
+    .some((component) => {
       if (visibleCardCount >= target) return true;
-      visibleRootIds.add(root.id);
-      visibleCardCount += getMagnetGroupMembers(root).length;
+      visibleComponentIds.add(component.id);
+      visibleCardCount += component.memberIds.length;
       return false;
     });
 
-  roots.forEach((root) => {
-    const visible = visibleRootIds.has(root.id);
-    visibilityStates.set(root.id, {
+  magnetComponents.forEach((component) => {
+    const visible = visibleComponentIds.has(component.id);
+    visibilityStates.set(component.id, {
       status: visible ? 'visible' : 'dormant',
       lastVisibleAt: visible ? 0 : Date.now(),
     });
-    getMagnetGroupMembers(root).forEach((member) => {
+    getMagnetComponentMembers(component).forEach((member) => {
       member.element.hidden = !visible;
     });
   });
@@ -753,27 +764,27 @@ function initializeThoughtVisibility() {
 
 function magnetCandidateDisabled(thought) {
   if (!magnetEditor || thought.id === magnetEditor.parentId) return false;
-  const currentParentId = getPersistedMagnetParentId(thought);
-  return Boolean(
-    thought.pinned
-    || isPersistedMagnetParent(thought)
-    || (currentParentId && currentParentId !== magnetEditor.parentId)
-  );
+  if (magnetEditor.selectedChildIds.has(thought.id)) return false;
+  return thought.pinned || wouldCreateMagnetCycle(magnetEditor.parentId, thought.id);
 }
 
 function renderMagnetThoughtState(thought) {
   const button = thought.element.querySelector('.magnet-button');
   if (!button) return;
 
-  const storedParentId = getPersistedMagnetParentId(thought);
+  const storedParents = getPersistedMagnetParents(thought);
   const isEditingParent = magnetEditor?.parentId === thought.id;
   const isParent = isEditingParent || isPersistedMagnetParent(thought);
   const isSelected = magnetEditor
     ? magnetEditor.selectedChildIds.has(thought.id)
-    : Boolean(storedParentId);
-  const isChild = magnetEditor
-    ? isSelected || Boolean(storedParentId && storedParentId !== magnetEditor.parentId)
-    : Boolean(storedParentId);
+    : storedParents.length > 0;
+  const isChild = !isEditingParent && (
+    magnetEditor
+      ? isSelected || storedParents.some(
+        (relation) => relation.parentId !== magnetEditor.parentId,
+      )
+      : storedParents.length > 0
+  );
   const disabled = Boolean(magnetEditor && (
     isEditingParent || magnetCandidateDisabled(thought)
   ));
@@ -789,7 +800,7 @@ function renderMagnetThoughtState(thought) {
   else if (disabled) button.title = 'This thought cannot join this group';
   else if (magnetEditor && isSelected) button.title = 'Remove from magnetic group';
   else if (magnetEditor) button.title = 'Add to magnetic group';
-  else if (storedParentId) button.title = 'Edit magnetic group';
+  else if (storedParents.length) button.title = 'Use as a parent or edit its children';
   else if (isParent) button.title = 'Edit magnetic group';
   else button.title = 'Create magnetic group';
   button.setAttribute('aria-label', button.title);
@@ -805,17 +816,21 @@ function renderMagnetUi() {
 
 function openMagnetEditor(parent) {
   if (blockEditsDuringAccountSync()) return;
-  if (parent.pinned || getPersistedMagnetParentId(parent)) {
-    announce('Disconnect or unpin this thought first.');
+  if (parent.pinned) {
+    announce('Unpin this thought first.');
     return;
   }
 
   const children = getPersistedMagnetChildren(parent.id);
   magnetEditor = {
     parentId: parent.id,
-    originalChildIds: new Set(children.map((child) => child.id)),
     selectedChildIds: new Set(children.map((child) => child.id)),
-    slots: new Map(children.map((child) => [child.id, persistedMagnet(child).slot])),
+    slots: new Map(children.map((child) => [
+      child.id,
+      getPersistedMagnetParents(child).find(
+        (relation) => relation.parentId === parent.id,
+      )?.slot ?? 0,
+    ])),
     motion: new Map(thoughts.map((thought) => [thought.id, {
       x: thought.x,
       y: thought.y,
@@ -848,6 +863,7 @@ function toggleMagnetCandidate(thought) {
     showThought(thought);
   }
 
+  rebuildMagnetComponents();
   renderMagnetUi();
   announce(`${magnetEditor.selectedChildIds.size} thoughts selected.`);
 }
@@ -858,8 +874,7 @@ function handleMagnetButton(thought) {
     return;
   }
 
-  const parentId = getPersistedMagnetParentId(thought);
-  openMagnetEditor(parentId ? getThoughtById(parentId) || thought : thought);
+  openMagnetEditor(thought);
 }
 
 function closeMagnetEditor({ restoreMotion = false } = {}) {
@@ -872,10 +887,11 @@ function closeMagnetEditor({ restoreMotion = false } = {}) {
       const motion = editor.motion.get(thought.id);
       if (!motion) return;
       Object.assign(thought, motion);
-      renderThought(thought);
     });
   }
 
+  rebuildMagnetComponents();
+  if (restoreMotion) thoughts.forEach(renderThought);
   renderMagnetUi();
 }
 
@@ -885,26 +901,21 @@ function commitMagnetEditor() {
   const changedThoughts = [];
 
   thoughts.forEach((thought) => {
-    const wasSelected = editor.originalChildIds.has(thought.id);
+    if (thought.id === editor.parentId) return;
     const isSelected = editor.selectedChildIds.has(thought.id);
-    const stored = persistedMagnet(thought);
-    const slot = editor.slots.get(thought.id);
-    const slotChanged = isSelected && stored?.parentId === editor.parentId && stored.slot !== slot;
-    if (wasSelected === isSelected && !slotChanged) return;
+    const existingParents = getPersistedMagnetParents(thought);
+    const otherParents = existingParents.filter(
+      (relation) => relation.parentId !== editor.parentId,
+    );
+    const nextParents = isSelected
+      ? [...otherParents, {
+        parentId: editor.parentId,
+        slot: editor.slots.get(thought.id) ?? 0,
+      }]
+      : otherParents;
+    if (JSON.stringify(existingParents) === JSON.stringify(nextParents)) return;
 
-    if (isSelected) {
-      thought.meta = {
-        ...(thought.meta || {}),
-        magnet: {
-          version: MAGNET_VERSION,
-          parentId: editor.parentId,
-          slot,
-        },
-      };
-    } else {
-      thought.meta = { ...(thought.meta || {}) };
-      delete thought.meta.magnet;
-    }
+    writeMagnetParents(thought, nextParents);
     changedThoughts.push(thought);
   });
 
@@ -974,6 +985,7 @@ function replaceThoughts(nextThoughts) {
   thoughts.forEach((thought) => thought.element?.remove());
   thoughts = nextThoughts.map((thought) => makeThought(thought.text, thought));
   const repairedThoughts = repairMagnetRelations();
+  rebuildMagnetComponents({ preserveVisibility: false });
   initializeThoughtVisibility();
   renderMagnetUi();
   updateUi();
@@ -1291,6 +1303,7 @@ function addThought(rawText) {
     createdAt: Date.now(),
   });
   thoughts.push(thought);
+  rebuildMagnetComponents();
   updateUi();
   saveThoughts();
 
@@ -1310,7 +1323,7 @@ function togglePinned(thought) {
     return;
   }
   if (blockEditsDuringAccountSync()) return;
-  if (getPersistedMagnetParentId(thought) || isPersistedMagnetParent(thought)) {
+  if (getPersistedMagnetParents(thought).length || isPersistedMagnetParent(thought)) {
     announce('Disconnect this thought before pinning it.');
     return;
   }
@@ -1328,6 +1341,7 @@ function togglePinned(thought) {
     thought.rotation = randomBetween(-2.5, 2.5);
   }
 
+  rebuildMagnetComponents();
   if (thought.pinned) updatePinnedLayoutMeta(thought);
 
   renderThought(thought);
@@ -1340,11 +1354,16 @@ function togglePinned(thought) {
 function detachLocalMagnetChildren(parentId) {
   const changedThoughts = getPersistedMagnetChildren(parentId);
   changedThoughts.forEach((child) => {
-    child.meta = { ...(child.meta || {}) };
-    delete child.meta.magnet;
+    writeMagnetParents(
+      child,
+      getPersistedMagnetParents(child).filter(
+        (relation) => relation.parentId !== parentId,
+      ),
+    );
   });
 
   if (!changedThoughts.length) return;
+  rebuildMagnetComponents();
   saveThoughts();
   if (isCloudMode()) changedThoughts.forEach(enqueueThoughtUpsert);
   renderMagnetUi();
@@ -1366,8 +1385,9 @@ function removeThoughtElement(thought) {
   thought.element.classList.add('is-removing');
   window.setTimeout(() => {
     thought.element.remove();
-    visibilityStates.delete(thought.id);
     thoughts = thoughts.filter((item) => item !== thought);
+    rebuildMagnetComponents();
+    renderMagnetUi();
     updateUi();
     saveThoughts();
     announce('Thought deleted.');
@@ -1385,8 +1405,7 @@ function beginDrag(event, thought) {
   draggedThought = thought;
   const bounds = thought.element.getBoundingClientRect();
   dragOffset = { x: event.clientX - bounds.left, y: event.clientY - bounds.top };
-  thought.vx = 0;
-  thought.vy = 0;
+  magnetPhysics.beginDrag(thought.id);
   thought.element.setPointerCapture(event.pointerId);
   thought.element.classList.add('is-dragging');
   thought.element.style.zIndex = String(topZIndex() + 1);
@@ -1395,9 +1414,20 @@ function beginDrag(event, thought) {
 function moveDrag(event) {
   if (!draggedThought) return;
   const bounds = canvas.getBoundingClientRect();
-  draggedThought.x = event.clientX - bounds.left - dragOffset.x;
-  draggedThought.y = event.clientY - bounds.top - dragOffset.y;
-  constrainThought(draggedThought);
+  const maxX = Math.max(0, bounds.width - draggedThought.width);
+  const maxY = Math.max(
+    0,
+    bounds.height - RESERVED_BOTTOM_SPACE - draggedThought.height,
+  );
+  const x = Math.min(
+    Math.max(0, event.clientX - bounds.left - dragOffset.x),
+    maxX,
+  );
+  const y = Math.min(
+    Math.max(0, event.clientY - bounds.top - dragOffset.y),
+    maxY,
+  );
+  magnetPhysics.moveDraggedThought(draggedThought.id, x, y, event.timeStamp);
   renderThought(draggedThought);
 }
 
@@ -1405,14 +1435,8 @@ function stopDrag() {
   if (!draggedThought) return;
   const thought = draggedThought;
   thought.element.classList.remove('is-dragging');
-  const magnetParent = getThoughtById(getPersistedMagnetParentId(thought));
-  if (magnetParent) {
-    thought.vx = magnetParent.vx;
-    thought.vy = magnetParent.vy;
-  } else if (!thought.pinned) {
-    thought.vx = randomVelocity();
-    thought.vy = randomVelocity();
-  } else {
+  magnetPhysics.endDrag(thought.id);
+  if (thought.pinned) {
     updatePinnedLayoutMeta(thought);
     if (isCloudMode()) enqueueThoughtUpsert(thought);
   }
@@ -1477,23 +1501,20 @@ function formatHistoryDate(createdAt) {
 
 function focusThoughtFromHistory(thought) {
   historyDialog.close();
-  const root = getMagnetRoot(thought);
-  const members = getMagnetGroupMembers(root);
-  showThought(root);
+  const component = getMagnetComponent(thought);
+  const members = getMagnetComponentMembers(component);
+  showThought(thought);
   members.forEach(measureThought);
 
-  if (!root.pinned) {
+  if (!isMagnetComponentPinned(component)) {
     const bounds = getPlayfieldBounds();
     const targetX = Math.max(0, (bounds.width - thought.width) / 2);
     const targetY = Math.max(0, (bounds.height - thought.height) / 2);
-    shiftMagnetGroup(root, targetX - thought.x, targetY - thought.y);
-    root.vx = randomVelocity();
-    root.vy = randomVelocity();
-    members.slice(1).forEach((member) => {
-      member.vx = root.vx;
-      member.vy = root.vy;
-    });
-    getVisibilityState(root).status = 'visible';
+    shiftMagnetComponent(component, targetX - thought.x, targetY - thought.y);
+    const vx = randomVelocity();
+    const vy = randomVelocity();
+    magnetPhysics.setComponentVelocity(component.id, vx, vy);
+    getVisibilityState(component).status = 'visible';
   }
 
   thought.element.style.zIndex = String(topZIndex() + 1);
@@ -1588,88 +1609,6 @@ function announce(message) {
   window.setTimeout(() => { announcer.textContent = message; }, 10);
 }
 
-function updateMagnetChild(child, parent, slot, delta, reducedMotion) {
-  const target = getMagnetSlotPosition(parent, child, slot);
-  if (reducedMotion) {
-    child.x = target.x;
-    child.y = target.y;
-    child.vx = parent.vx;
-    child.vy = parent.vy;
-    return;
-  }
-
-  child.vx += (
-    (target.x - child.x) * MAGNET_SPRING
-    - (child.vx - parent.vx) * MAGNET_DAMPING
-  ) * delta;
-  child.vy += (
-    (target.y - child.y) * MAGNET_SPRING
-    - (child.vy - parent.vy) * MAGNET_DAMPING
-  ) * delta;
-  child.vx = Math.max(-MAGNET_MAX_SPEED, Math.min(MAGNET_MAX_SPEED, child.vx));
-  child.vy = Math.max(-MAGNET_MAX_SPEED, Math.min(MAGNET_MAX_SPEED, child.vy));
-
-  const hoverScale = child.element.matches(':hover') ? 0.35 : 1;
-  child.x += child.vx * delta * hoverScale;
-  child.y += child.vy * delta * hoverScale;
-}
-
-function resolveCollisions(activeThoughts) {
-  for (let pass = 0; pass < 2; pass += 1) {
-    for (let firstIndex = 0; firstIndex < activeThoughts.length; firstIndex += 1) {
-      for (let secondIndex = firstIndex + 1; secondIndex < activeThoughts.length; secondIndex += 1) {
-        const first = activeThoughts[firstIndex];
-        const second = activeThoughts[secondIndex];
-        if (belongToSameMagnetGroup(first, second)) continue;
-        const firstCanMove = !first.pinned && first !== draggedThought;
-        const secondCanMove = !second.pinned && second !== draggedThought;
-        const inverseMassFirst = firstCanMove ? 1 : 0;
-        const inverseMassSecond = secondCanMove ? 1 : 0;
-        const totalInverseMass = inverseMassFirst + inverseMassSecond;
-
-        if (totalInverseMass === 0) continue;
-
-        const overlapX = Math.min(first.x + first.width, second.x + second.width) - Math.max(first.x, second.x);
-        const overlapY = Math.min(first.y + first.height, second.y + second.height) - Math.max(first.y, second.y);
-        if (overlapX <= 0 || overlapY <= 0) continue;
-
-        const firstCenterX = first.x + first.width / 2;
-        const firstCenterY = first.y + first.height / 2;
-        const secondCenterX = second.x + second.width / 2;
-        const secondCenterY = second.y + second.height / 2;
-        const collisionOnHorizontalAxis = overlapX < overlapY;
-        const normalX = collisionOnHorizontalAxis ? (firstCenterX < secondCenterX ? -1 : 1) : 0;
-        const normalY = collisionOnHorizontalAxis ? 0 : (firstCenterY < secondCenterY ? -1 : 1);
-        const penetration = collisionOnHorizontalAxis ? overlapX : overlapY;
-        const correction = Math.max(0, penetration - 0.25) * 0.78 / totalInverseMass;
-
-        if (firstCanMove) {
-          first.x += normalX * correction * inverseMassFirst;
-          first.y += normalY * correction * inverseMassFirst;
-        }
-        if (secondCanMove) {
-          second.x -= normalX * correction * inverseMassSecond;
-          second.y -= normalY * correction * inverseMassSecond;
-        }
-
-        const relativeSpeed = (first.vx - second.vx) * normalX + (first.vy - second.vy) * normalY;
-        if (relativeSpeed >= 0) continue;
-
-        const restitution = 0.68;
-        const impulse = -((1 + restitution) * relativeSpeed) / totalInverseMass;
-        if (firstCanMove) {
-          first.vx += normalX * impulse * inverseMassFirst;
-          first.vy += normalY * impulse * inverseMassFirst;
-        }
-        if (secondCanMove) {
-          second.vx -= normalX * impulse * inverseMassSecond;
-          second.vy -= normalY * impulse * inverseMassSecond;
-        }
-      }
-    }
-  }
-}
-
 function animate(timestamp) {
   const delta = Math.min((timestamp - lastTimestamp) / 1000, 0.05);
   lastTimestamp = timestamp;
@@ -1682,45 +1621,40 @@ function animate(timestamp) {
 
   const bounds = getPlayfieldBounds();
   const activeThoughts = getActiveThoughts();
-  const activeRoots = getMagnetRoots().filter(isThoughtActive);
+  const activeComponents = magnetComponents.filter((component) => (
+    isMagnetComponentPinned(component)
+    || getVisibilityState(component).status !== 'dormant'
+  ));
 
-  if (!reducedMotion && !magnetEditor) {
-    activeRoots.forEach((root) => {
-      if (root.pinned || root === draggedThought) return;
-      const speed = root.element.matches(':hover') ? 0.35 : 1;
-      root.x += root.vx * delta * speed;
-      root.y += root.vy * delta * speed;
+  if (!magnetEditor) {
+    magnetPhysics.advance(delta, {
+      activeThoughtIds: new Set(activeThoughts.map((thought) => thought.id)),
+      hoveredComponentIds: new Set(activeComponents
+        .filter((component) => getMagnetComponentMembers(component).some(
+          (thought) => thought.element.matches(':hover, :focus-within'),
+        ))
+        .map((component) => component.id)),
+      reducedMotion,
     });
   }
 
-  activeThoughts.forEach((thought) => {
-    const magnet = effectiveMagnet(thought);
-    if (!magnet || thought === draggedThought) return;
-    const parent = getThoughtById(magnet.parentId);
-    if (!parent) return;
-    updateMagnetChild(thought, parent, magnet.slot, delta, reducedMotion);
-  });
-
-  activeRoots.forEach((root) => {
-    if (root.pinned || magnetEditor) return;
-    const state = getVisibilityState(root);
+  activeComponents.forEach((component) => {
+    if (isMagnetComponentPinned(component) || magnetEditor) return;
+    const state = getVisibilityState(component);
+    const members = getMagnetComponentMembers(component);
     if (
       state.status === 'entering'
-      && getMagnetGroupMembers(root).some((member) => intersectsPlayfield(member, bounds))
+      && members.some((member) => intersectsPlayfield(member, bounds))
     ) {
       state.status = 'visible';
     } else if (
       state.status === 'visible'
-      && isMagnetGroupFullyOutside(root, bounds)
+      && isMagnetComponentFullyOutside(component, bounds)
     ) {
-      hideThought(root);
+      hideThought(members[0]);
     }
   });
 
-  const collisionThoughts = activeThoughts.filter((thought) => (
-    thought.pinned || getVisibilityState(thought).status === 'visible'
-  ));
-  if (!magnetEditor) resolveCollisions(collisionThoughts);
   activeThoughts.forEach(renderThought);
 
   if (!magnetEditor) maybeSpawnThought(timestamp, reducedMotion);
@@ -1869,13 +1803,24 @@ window.addEventListener('resize', () => {
     }
     renderThought(thought);
   });
+  rebuildMagnetComponents();
   nextSpawnAt = 0;
   scheduleSave();
 });
 window.addEventListener('keydown', (event) => {
-  if (event.key !== 'Escape' || !magnetEditor) return;
-  closeMagnetEditor({ restoreMotion: true });
-  announce('Magnetic group changes canceled.');
+  if (!magnetEditor || event.isComposing || event.repeat) return;
+
+  if (event.key === 'Escape') {
+    event.preventDefault();
+    closeMagnetEditor({ restoreMotion: true });
+    announce('Magnetic group changes canceled.');
+    return;
+  }
+
+  if (event.key === 'Enter') {
+    event.preventDefault();
+    commitMagnetEditor();
+  }
 });
 document.addEventListener('pointerdown', (event) => {
   if (event.pointerType !== 'touch' || event.target.closest('.thought-card')) return;
