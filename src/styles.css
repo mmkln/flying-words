@@ -275,10 +275,127 @@ kbd { padding: 1px 4px; border: 1px solid rgba(114,104,143,.25); border-bottom-w
 .thought-text { margin: 1px 0; overflow-wrap: anywhere; font-size: 14px; line-height: 1.45; }
 
 .pin-btn,
+.magnet-btn,
 .delete-btn {
   border: 0;
   font: inherit;
 }
+
+.magnet-btn {
+  position: absolute;
+  top: -9px;
+  left: -9px;
+  display: grid;
+  width: 30px;
+  height: 30px;
+  padding: 6px;
+  place-items: center;
+  border: 1px solid rgba(255, 69, 58, .28);
+  border-radius: 50%;
+  color: #ff453a;
+  cursor: pointer;
+  background: rgba(255, 255, 255, .97);
+  box-shadow: 0 3px 8px rgba(47, 35, 82, .12);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity .16s ease, color .16s ease, background .16s ease, border-color .16s ease;
+}
+
+.magnet-btn svg {
+  display: block;
+  width: 17px;
+  height: 17px;
+  pointer-events: none;
+}
+
+.thought-card:hover .magnet-btn,
+.thought-card:focus-within .magnet-btn,
+.thought-space.is-magnet-editing .magnet-btn {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.thought-space.is-magnet-editing .magnet-btn {
+  color: #0a84ff;
+  border-color: rgba(10, 132, 255, .34);
+}
+
+.thought-space.is-magnet-editing .thought-card.is-magnet-parent {
+  border-color: rgba(255, 69, 58, .68);
+  box-shadow: 0 0 0 3px rgba(255, 69, 58, .1), 0 15px 32px rgba(68, 50, 124, .15);
+}
+
+.thought-card.is-magnet-parent .magnet-btn {
+  color: #fff;
+  border-color: #ff453a;
+  background: #ff453a;
+}
+
+.thought-space.is-magnet-editing .thought-card.is-magnet-child {
+  border-color: rgba(10, 132, 255, .58);
+}
+
+.thought-card.is-magnet-child .magnet-btn {
+  color: #0a84ff;
+  border-color: rgba(10, 132, 255, .38);
+}
+
+.thought-card.is-magnet-child .magnet-btn.is-selected {
+  color: #fff;
+  border-color: #0a84ff;
+  background: #0a84ff;
+}
+
+.thought-card.is-magnet-disabled {
+  opacity: .42;
+}
+
+.thought-card.is-magnet-disabled .magnet-btn {
+  cursor: not-allowed;
+  color: #8e8e93;
+  border-color: rgba(142, 142, 147, .26);
+  background: rgba(242, 242, 247, .94);
+}
+
+.magnet-toolbar {
+  position: fixed;
+  z-index: 300;
+  left: 50%;
+  bottom: 116px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px;
+  border: 1px solid rgba(70, 57, 110, .13);
+  border-radius: 15px;
+  color: #49415e;
+  background: rgba(255, 255, 255, .92);
+  box-shadow: 0 9px 26px rgba(55, 40, 100, .16);
+  transform: translateX(-50%);
+  backdrop-filter: blur(18px);
+}
+
+.magnet-toolbar[hidden] { display: none; }
+
+.magnet-toolbar-button {
+  padding: 7px 10px;
+  border: 0;
+  border-radius: 10px;
+  color: #645b78;
+  cursor: pointer;
+  background: transparent;
+  font-size: 13px;
+  font-weight: 650;
+}
+
+.magnet-toolbar-button:hover { background: rgba(112, 86, 190, .08); }
+.magnet-toolbar-button:focus-visible { outline: 3px solid rgba(126, 95, 215, .2); outline-offset: 1px; }
+.magnet-toolbar-done { color: #fff; background: #7055c5; }
+.magnet-toolbar-done:hover { background: #6348bd; }
+.magnet-toolbar-count { min-width: 72px; text-align: center; font-size: 12px; font-weight: 650; }
+
+.thought-card:focus { outline: none; }
+.thought-card:focus-visible { box-shadow: 0 0 0 3px rgba(112, 85, 197, .18), 0 15px 32px rgba(68, 50, 124, .15); }
 
 .pin-btn {
   display: flex;

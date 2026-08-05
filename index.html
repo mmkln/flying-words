@@ -27,6 +27,12 @@
       </button>
       <button class="account-button" id="account-button" type="button">Sign in</button>
 
+      <div class="magnet-toolbar" id="magnet-toolbar" role="toolbar" aria-label="Edit magnetic group" hidden>
+        <button class="magnet-toolbar-button" id="magnet-cancel" type="button">Cancel</button>
+        <span class="magnet-toolbar-count" id="magnet-count">0 selected</span>
+        <button class="magnet-toolbar-button magnet-toolbar-done" id="magnet-done" type="button">Done</button>
+      </div>
+
       <section class="thought-space" id="canvas" aria-label="Thought space">
         <div class="empty-state" id="empty-state">
           <span class="empty-orbit orbit-one" aria-hidden="true"></span>
@@ -100,8 +106,20 @@
     </dialog>
 
     <template id="thought-template">
-      <article class="thought-card">
+      <article class="thought-card" tabindex="0">
         <p class="thought-text"></p>
+        <button class="magnet-btn magnet-button" type="button" title="Create magnetic group" aria-label="Create magnetic group">
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <g transform="rotate(-45 12 12)">
+              <path
+                fill="currentColor"
+                fill-rule="evenodd"
+                clip-rule="evenodd"
+                d="M4 2h6v10a2 2 0 0 0 4 0V2h6v10a8 8 0 0 1-16 0V2Zm2 2v3h2V4H6Zm10 0v3h2V4h-2Z"
+              ></path>
+            </g>
+          </svg>
+        </button>
         <button class="pin-btn pin-button" type="button" title="Pin thought" aria-label="Pin thought">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
             <line x1="12" y1="17" x2="12" y2="22"></line>

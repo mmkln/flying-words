@@ -11,6 +11,10 @@ const TARGET_VISIBLE_DENSITY = 0.35;
 const RESPAWN_DELAY_MIN = 800;
 const RESPAWN_DELAY_MAX = 1400;
 const SPAWN_MARGIN = 20;
+const MAGNET_VERSION = 1;
+const MAGNET_SPRING = 12;
+const MAGNET_DAMPING = 6;
+const MAGNET_MAX_SPEED = 130;
 const LOCAL_API_URL = 'http://127.0.0.1:8000/api/v1';
 const PRODUCTION_API_URL = 'https://mxllwords.pythonanywhere.com/api/v1';
 const API_URL = ['localhost', '127.0.0.1'].includes(window.location.hostname)
@@ -37,6 +41,10 @@ const authMessage = document.querySelector('#auth-message');
 const authClose = document.querySelector('#auth-close');
 const registerButton = document.querySelector('#register-button');
 const loginButton = document.querySelector('#login-button');
+const magnetToolbar = document.querySelector('#magnet-toolbar');
+const magnetCount = document.querySelector('#magnet-count');
+const magnetCancel = document.querySelector('#magnet-cancel');
+const magnetDone = document.querySelector('#magnet-done');
 
 let auth = loadAuth();
 const initialPendingThoughts = auth ? loadPendingThoughts(auth.id) : [];
@@ -66,6 +74,7 @@ let handlingThoughtSubmit = false;
 let outboxFlushInFlight = false;
 let outboxRetryTimer;
 let outboxRetryDelay = 2000;
+let magnetEditor = null;
 
 function loadAuthFrom(storage) {
   try {
@@ -153,6 +162,154 @@ function serializableThoughts(source = thoughts) {
 
 function cloneMeta(meta = {}) {
   return JSON.parse(JSON.stringify(meta));
+}
+
+function persistedMagnet(thought) {
+  const magnet = thought.meta?.magnet;
+  if (
+    magnet?.version !== MAGNET_VERSION
+    || typeof magnet.parentId !== 'string'
+    || !Number.isInteger(magnet.slot)
+    || magnet.slot < 0
+    || magnet.slot >= MAX_THOUGHTS
+  ) {
+    return null;
+  }
+  return magnet;
+}
+
+function getThoughtById(thoughtId) {
+  return thoughts.find((thought) => thought.id === thoughtId) || null;
+}
+
+function getPersistedMagnetParentId(thought) {
+  return persistedMagnet(thought)?.parentId || null;
+}
+
+function getPersistedMagnetChildren(parentId) {
+  return thoughts.filter(
+    (thought) => getPersistedMagnetParentId(thought) === parentId,
+  );
+}
+
+function isPersistedMagnetParent(thought) {
+  return thoughts.some(
+    (candidate) => getPersistedMagnetParentId(candidate) === thought.id,
+  );
+}
+
+function effectiveMagnet(thought) {
+  const stored = persistedMagnet(thought);
+  if (!magnetEditor || thought.id === magnetEditor.parentId) return stored;
+
+  if (magnetEditor.selectedChildIds.has(thought.id)) {
+    return {
+      version: MAGNET_VERSION,
+      parentId: magnetEditor.parentId,
+      slot: magnetEditor.slots.get(thought.id) ?? 0,
+    };
+  }
+
+  return stored?.parentId === magnetEditor.parentId ? null : stored;
+}
+
+function getEffectiveMagnetParentId(thought) {
+  return effectiveMagnet(thought)?.parentId || null;
+}
+
+function getMagnetRoot(thought) {
+  const parentId = getEffectiveMagnetParentId(thought);
+  return parentId ? getThoughtById(parentId) || thought : thought;
+}
+
+function getMagnetGroupMembers(root) {
+  return [
+    root,
+    ...thoughts.filter(
+      (thought) => getEffectiveMagnetParentId(thought) === root.id,
+    ),
+  ];
+}
+
+function getMagnetRoots() {
+  return thoughts.filter((thought) => !getEffectiveMagnetParentId(thought));
+}
+
+function belongToSameMagnetGroup(first, second) {
+  return getMagnetRoot(first).id === getMagnetRoot(second).id;
+}
+
+function firstAvailableMagnetSlot(selectedIds, slots) {
+  const usedSlots = new Set(
+    [...selectedIds]
+      .map((thoughtId) => slots.get(thoughtId))
+      .filter(Number.isInteger),
+  );
+  let slot = 0;
+  while (usedSlots.has(slot)) slot += 1;
+  return slot;
+}
+
+function repairMagnetRelations() {
+  const byId = new Map(thoughts.map((thought) => [thought.id, thought]));
+  const changed = new Set();
+
+  thoughts.forEach((thought) => {
+    if (!Object.prototype.hasOwnProperty.call(thought.meta || {}, 'magnet')) return;
+    const magnet = persistedMagnet(thought);
+    const parent = magnet ? byId.get(magnet.parentId) : null;
+    if (
+      !magnet
+      || !parent
+      || parent === thought
+      || parent.pinned
+      || thought.pinned
+    ) {
+      thought.meta = { ...(thought.meta || {}) };
+      delete thought.meta.magnet;
+      changed.add(thought);
+    }
+  });
+
+  const parentIds = new Set(
+    thoughts.map(getPersistedMagnetParentId).filter(Boolean),
+  );
+  thoughts.forEach((thought) => {
+    if (!parentIds.has(thought.id) || !getPersistedMagnetParentId(thought)) return;
+    thought.meta = { ...(thought.meta || {}) };
+    delete thought.meta.magnet;
+    changed.add(thought);
+  });
+
+  const childrenByParent = new Map();
+  thoughts.forEach((thought) => {
+    const parentId = getPersistedMagnetParentId(thought);
+    if (!parentId) return;
+    if (!childrenByParent.has(parentId)) childrenByParent.set(parentId, []);
+    childrenByParent.get(parentId).push(thought);
+  });
+  childrenByParent.forEach((children) => {
+    const usedSlots = new Set();
+    children
+      .sort((first, second) => validCreatedAt(first.createdAt) - validCreatedAt(second.createdAt))
+      .forEach((child) => {
+        const currentSlot = persistedMagnet(child).slot;
+        if (!usedSlots.has(currentSlot)) {
+          usedSlots.add(currentSlot);
+          return;
+        }
+        let nextSlot = 0;
+        while (usedSlots.has(nextSlot)) nextSlot += 1;
+        child.meta = {
+          ...child.meta,
+          magnet: { ...child.meta.magnet, slot: nextSlot },
+        };
+        usedSlots.add(nextSlot);
+        changed.add(child);
+      });
+  });
+
+  return [...changed];
 }
 
 function normalizedLayout(thought) {
@@ -308,16 +465,18 @@ function randomVelocity() {
 }
 
 function getVisibilityState(thought) {
-  let state = visibilityStates.get(thought.id);
+  const root = getMagnetRoot(thought);
+  let state = visibilityStates.get(root.id);
   if (!state) {
     state = { status: 'visible', lastVisibleAt: 0 };
-    visibilityStates.set(thought.id, state);
+    visibilityStates.set(root.id, state);
   }
   return state;
 }
 
 function isThoughtActive(thought) {
-  return thought.pinned || getVisibilityState(thought).status !== 'dormant';
+  const root = getMagnetRoot(thought);
+  return root.pinned || getVisibilityState(root).status !== 'dormant';
 }
 
 function getActiveThoughts() {
@@ -357,17 +516,24 @@ function calculateVisibleTarget() {
 }
 
 function showThought(thought) {
-  getVisibilityState(thought).status = 'visible';
-  thought.element.hidden = false;
+  const root = getMagnetRoot(thought);
+  getVisibilityState(root).status = 'visible';
+  getMagnetGroupMembers(root).forEach((member) => {
+    member.element.hidden = false;
+  });
 }
 
 function hideThought(thought) {
-  if (thought.pinned || thought === draggedThought) return;
+  const root = getMagnetRoot(thought);
+  const members = getMagnetGroupMembers(root);
+  if (members.some((member) => member.pinned || member === draggedThought)) return;
 
-  const state = getVisibilityState(thought);
+  const state = getVisibilityState(root);
   state.status = 'dormant';
   state.lastVisibleAt = Date.now();
-  thought.element.hidden = true;
+  members.forEach((member) => {
+    member.element.hidden = true;
+  });
 }
 
 function intersectsPlayfield(thought, bounds) {
@@ -388,20 +554,88 @@ function isFullyOutside(thought, bounds) {
   );
 }
 
-function spawnThoughtFromEdge(thought, reducedMotion = false) {
-  const bounds = getPlayfieldBounds();
-  const state = getVisibilityState(thought);
+function getMagnetSlotPosition(parent, child, slot) {
+  let ring = 1;
+  let ringStart = 0;
+  let slotsInRing = 6;
+  while (slot >= ringStart + slotsInRing) {
+    ringStart += slotsInRing;
+    ring += 1;
+    slotsInRing = ring * 6;
+  }
 
-  thought.element.hidden = false;
-  measureThought(thought);
+  const index = slot - ringStart;
+  const angle = -Math.PI / 2 + (index / slotsInRing) * Math.PI * 2;
+  const radiusX = (
+    parent.width / 2
+    + child.width / 2
+    + 28
+    + (ring - 1) * (child.width + 24)
+  );
+  const radiusY = (
+    parent.height / 2
+    + child.height / 2
+    + 24
+    + (ring - 1) * (child.height + 24)
+  );
+
+  return {
+    x: parent.x + parent.width / 2 + Math.cos(angle) * radiusX - child.width / 2,
+    y: parent.y + parent.height / 2 + Math.sin(angle) * radiusY - child.height / 2,
+  };
+}
+
+function placeMagnetChildren(root) {
+  getMagnetGroupMembers(root).slice(1).forEach((child) => {
+    const magnet = effectiveMagnet(child);
+    const target = getMagnetSlotPosition(root, child, magnet.slot);
+    child.x = target.x;
+    child.y = target.y;
+    child.vx = root.vx;
+    child.vy = root.vy;
+  });
+}
+
+function groupBounds(root) {
+  const members = getMagnetGroupMembers(root);
+  return {
+    minX: Math.min(...members.map((member) => member.x)),
+    minY: Math.min(...members.map((member) => member.y)),
+    maxX: Math.max(...members.map((member) => member.x + member.width)),
+    maxY: Math.max(...members.map((member) => member.y + member.height)),
+  };
+}
+
+function shiftMagnetGroup(root, shiftX, shiftY) {
+  getMagnetGroupMembers(root).forEach((member) => {
+    member.x += shiftX;
+    member.y += shiftY;
+  });
+}
+
+function isMagnetGroupFullyOutside(root, bounds) {
+  return getMagnetGroupMembers(root).every((member) => isFullyOutside(member, bounds));
+}
+
+function spawnThoughtFromEdge(thought, reducedMotion = false) {
+  const root = getMagnetRoot(thought);
+  const bounds = getPlayfieldBounds();
+  const state = getVisibilityState(root);
+  const members = getMagnetGroupMembers(root);
+
+  members.forEach((member) => {
+    member.element.hidden = false;
+    measureThought(member);
+  });
 
   if (reducedMotion) {
     state.status = 'visible';
-    thought.x = randomBetween(0, Math.max(0, bounds.width - thought.width));
-    thought.y = randomBetween(0, Math.max(0, bounds.height - thought.height));
-    thought.vx = 0;
-    thought.vy = 0;
-    renderThought(thought);
+    root.x = randomBetween(0, Math.max(0, bounds.width - root.width));
+    root.y = randomBetween(0, Math.max(0, bounds.height - root.height));
+    root.vx = 0;
+    root.vy = 0;
+    placeMagnetChildren(root);
+    members.forEach(renderThought);
     return;
   }
 
@@ -411,33 +645,43 @@ function spawnThoughtFromEdge(thought, reducedMotion = false) {
   const drift = randomBetween(-8, 8);
 
   if (edge === 0) {
-    thought.x = -thought.width - SPAWN_MARGIN;
-    thought.y = randomBetween(0, Math.max(0, bounds.height - thought.height));
-    thought.vx = speed;
-    thought.vy = drift;
+    root.x = -root.width - SPAWN_MARGIN;
+    root.y = randomBetween(0, Math.max(0, bounds.height - root.height));
+    root.vx = speed;
+    root.vy = drift;
   } else if (edge === 1) {
-    thought.x = bounds.width + SPAWN_MARGIN;
-    thought.y = randomBetween(0, Math.max(0, bounds.height - thought.height));
-    thought.vx = -speed;
-    thought.vy = drift;
+    root.x = bounds.width + SPAWN_MARGIN;
+    root.y = randomBetween(0, Math.max(0, bounds.height - root.height));
+    root.vx = -speed;
+    root.vy = drift;
   } else if (edge === 2) {
-    thought.x = randomBetween(0, Math.max(0, bounds.width - thought.width));
-    thought.y = -thought.height - SPAWN_MARGIN;
-    thought.vx = drift;
-    thought.vy = speed;
+    root.x = randomBetween(0, Math.max(0, bounds.width - root.width));
+    root.y = -root.height - SPAWN_MARGIN;
+    root.vx = drift;
+    root.vy = speed;
   } else {
-    thought.x = randomBetween(0, Math.max(0, bounds.width - thought.width));
-    thought.y = bounds.height + SPAWN_MARGIN;
-    thought.vx = drift;
-    thought.vy = -speed;
+    root.x = randomBetween(0, Math.max(0, bounds.width - root.width));
+    root.y = bounds.height + SPAWN_MARGIN;
+    root.vx = drift;
+    root.vy = -speed;
   }
 
-  thought.rotation = randomBetween(-2.5, 2.5);
-  renderThought(thought);
+  root.rotation = randomBetween(-2.5, 2.5);
+  placeMagnetChildren(root);
+  const positionedBounds = groupBounds(root);
+  if (edge === 0) shiftMagnetGroup(root, -SPAWN_MARGIN - positionedBounds.maxX, 0);
+  if (edge === 1) shiftMagnetGroup(root, bounds.width + SPAWN_MARGIN - positionedBounds.minX, 0);
+  if (edge === 2) shiftMagnetGroup(root, 0, -SPAWN_MARGIN - positionedBounds.maxY);
+  if (edge === 3) shiftMagnetGroup(root, 0, bounds.height + SPAWN_MARGIN - positionedBounds.minY);
+  members.slice(1).forEach((member) => {
+    member.vx = root.vx;
+    member.vy = root.vy;
+  });
+  members.forEach(renderThought);
 }
 
 function spawnNextDormantThought(reducedMotion) {
-  const thought = thoughts
+  const thought = getMagnetRoots()
     .filter((item) => (
       !item.pinned && getVisibilityState(item).status === 'dormant'
     ))
@@ -475,23 +719,199 @@ function initializeThoughtVisibility() {
   visibilityStates.clear();
 
   const target = calculateVisibleTarget();
-  const pinnedThoughts = thoughts.filter((thought) => thought.pinned);
-  const availableSlots = Math.max(0, target - pinnedThoughts.length);
-  const initialUnpinned = thoughts
+  const roots = getMagnetRoots();
+  const pinnedRoots = roots.filter((thought) => thought.pinned);
+  const visibleRootIds = new Set(pinnedRoots.map((thought) => thought.id));
+  let visibleCardCount = pinnedRoots.reduce(
+    (count, root) => count + getMagnetGroupMembers(root).length,
+    0,
+  );
+
+  roots
     .filter((thought) => !thought.pinned)
     .sort((first, second) => second.createdAt - first.createdAt)
-    .slice(0, availableSlots);
-  const visibleIds = new Set([
-    ...pinnedThoughts.map((thought) => thought.id),
-    ...initialUnpinned.map((thought) => thought.id),
-  ]);
+    .some((root) => {
+      if (visibleCardCount >= target) return true;
+      visibleRootIds.add(root.id);
+      visibleCardCount += getMagnetGroupMembers(root).length;
+      return false;
+    });
 
-  thoughts.forEach((thought) => {
-    if (visibleIds.has(thought.id)) showThought(thought);
-    else hideThought(thought);
+  roots.forEach((root) => {
+    const visible = visibleRootIds.has(root.id);
+    visibilityStates.set(root.id, {
+      status: visible ? 'visible' : 'dormant',
+      lastVisibleAt: visible ? 0 : Date.now(),
+    });
+    getMagnetGroupMembers(root).forEach((member) => {
+      member.element.hidden = !visible;
+    });
   });
 
   nextSpawnAt = 0;
+}
+
+function magnetCandidateDisabled(thought) {
+  if (!magnetEditor || thought.id === magnetEditor.parentId) return false;
+  const currentParentId = getPersistedMagnetParentId(thought);
+  return Boolean(
+    thought.pinned
+    || isPersistedMagnetParent(thought)
+    || (currentParentId && currentParentId !== magnetEditor.parentId)
+  );
+}
+
+function renderMagnetThoughtState(thought) {
+  const button = thought.element.querySelector('.magnet-button');
+  if (!button) return;
+
+  const storedParentId = getPersistedMagnetParentId(thought);
+  const isEditingParent = magnetEditor?.parentId === thought.id;
+  const isParent = isEditingParent || isPersistedMagnetParent(thought);
+  const isSelected = magnetEditor
+    ? magnetEditor.selectedChildIds.has(thought.id)
+    : Boolean(storedParentId);
+  const isChild = magnetEditor
+    ? isSelected || Boolean(storedParentId && storedParentId !== magnetEditor.parentId)
+    : Boolean(storedParentId);
+  const disabled = Boolean(magnetEditor && (
+    isEditingParent || magnetCandidateDisabled(thought)
+  ));
+
+  thought.element.classList.toggle('is-magnet-parent', isParent);
+  thought.element.classList.toggle('is-magnet-child', isChild);
+  thought.element.classList.toggle('is-magnet-disabled', disabled && !isEditingParent);
+  button.classList.toggle('is-selected', isSelected);
+  button.disabled = disabled;
+  button.setAttribute('aria-pressed', String(isParent || isSelected));
+
+  if (isEditingParent) button.title = 'Magnetic group parent';
+  else if (disabled) button.title = 'This thought cannot join this group';
+  else if (magnetEditor && isSelected) button.title = 'Remove from magnetic group';
+  else if (magnetEditor) button.title = 'Add to magnetic group';
+  else if (storedParentId) button.title = 'Edit magnetic group';
+  else if (isParent) button.title = 'Edit magnetic group';
+  else button.title = 'Create magnetic group';
+  button.setAttribute('aria-label', button.title);
+}
+
+function renderMagnetUi() {
+  const selectedCount = magnetEditor?.selectedChildIds.size || 0;
+  magnetCount.textContent = `${selectedCount} selected`;
+  magnetToolbar.hidden = !magnetEditor;
+  canvas.classList.toggle('is-magnet-editing', Boolean(magnetEditor));
+  thoughts.forEach(renderMagnetThoughtState);
+}
+
+function openMagnetEditor(parent) {
+  if (blockEditsDuringAccountSync()) return;
+  if (parent.pinned || getPersistedMagnetParentId(parent)) {
+    announce('Disconnect or unpin this thought first.');
+    return;
+  }
+
+  const children = getPersistedMagnetChildren(parent.id);
+  magnetEditor = {
+    parentId: parent.id,
+    originalChildIds: new Set(children.map((child) => child.id)),
+    selectedChildIds: new Set(children.map((child) => child.id)),
+    slots: new Map(children.map((child) => [child.id, persistedMagnet(child).slot])),
+    motion: new Map(thoughts.map((thought) => [thought.id, {
+      x: thought.x,
+      y: thought.y,
+      vx: thought.vx,
+      vy: thought.vy,
+    }])),
+  };
+
+  showThought(parent);
+  renderMagnetUi();
+  announce('Choose thoughts to connect, then select Done.');
+}
+
+function toggleMagnetCandidate(thought) {
+  if (!magnetEditor || thought.id === magnetEditor.parentId) return;
+  if (magnetCandidateDisabled(thought)) {
+    announce('This thought cannot join the selected group.');
+    return;
+  }
+
+  if (magnetEditor.selectedChildIds.has(thought.id)) {
+    magnetEditor.selectedChildIds.delete(thought.id);
+    magnetEditor.slots.delete(thought.id);
+  } else {
+    magnetEditor.selectedChildIds.add(thought.id);
+    magnetEditor.slots.set(
+      thought.id,
+      firstAvailableMagnetSlot(magnetEditor.selectedChildIds, magnetEditor.slots),
+    );
+    showThought(thought);
+  }
+
+  renderMagnetUi();
+  announce(`${magnetEditor.selectedChildIds.size} thoughts selected.`);
+}
+
+function handleMagnetButton(thought) {
+  if (magnetEditor) {
+    toggleMagnetCandidate(thought);
+    return;
+  }
+
+  const parentId = getPersistedMagnetParentId(thought);
+  openMagnetEditor(parentId ? getThoughtById(parentId) || thought : thought);
+}
+
+function closeMagnetEditor({ restoreMotion = false } = {}) {
+  if (!magnetEditor) return;
+  const editor = magnetEditor;
+  magnetEditor = null;
+
+  if (restoreMotion) {
+    thoughts.forEach((thought) => {
+      const motion = editor.motion.get(thought.id);
+      if (!motion) return;
+      Object.assign(thought, motion);
+      renderThought(thought);
+    });
+  }
+
+  renderMagnetUi();
+}
+
+function commitMagnetEditor() {
+  if (!magnetEditor) return;
+  const editor = magnetEditor;
+  const changedThoughts = [];
+
+  thoughts.forEach((thought) => {
+    const wasSelected = editor.originalChildIds.has(thought.id);
+    const isSelected = editor.selectedChildIds.has(thought.id);
+    const stored = persistedMagnet(thought);
+    const slot = editor.slots.get(thought.id);
+    const slotChanged = isSelected && stored?.parentId === editor.parentId && stored.slot !== slot;
+    if (wasSelected === isSelected && !slotChanged) return;
+
+    if (isSelected) {
+      thought.meta = {
+        ...(thought.meta || {}),
+        magnet: {
+          version: MAGNET_VERSION,
+          parentId: editor.parentId,
+          slot,
+        },
+      };
+    } else {
+      thought.meta = { ...(thought.meta || {}) };
+      delete thought.meta.magnet;
+    }
+    changedThoughts.push(thought);
+  });
+
+  closeMagnetEditor();
+  saveThoughts();
+  if (isCloudMode()) changedThoughts.forEach(enqueueThoughtUpsert);
+  announce(`${editor.selectedChildIds.size} thoughts connected.`);
 }
 
 function makeThought(text, restoredThought = {}) {
@@ -499,6 +919,7 @@ function makeThought(text, restoredThought = {}) {
   const element = fragment.querySelector('.thought-card');
   const textElement = fragment.querySelector('.thought-text');
   const pinButton = fragment.querySelector('.pin-button');
+  const magnetButton = fragment.querySelector('.magnet-button');
   const deleteButton = fragment.querySelector('.delete-button');
   const rect = canvas.getBoundingClientRect();
   const thought = {
@@ -537,6 +958,7 @@ function makeThought(text, restoredThought = {}) {
   renderThought(thought);
 
   pinButton.addEventListener('click', () => togglePinned(thought));
+  magnetButton.addEventListener('click', () => handleMagnetButton(thought));
   deleteButton.addEventListener('click', () => removeThought(thought));
   element.addEventListener('pointerdown', (event) => beginDrag(event, thought));
   element.addEventListener('pointerenter', () => element.classList.add('is-hovered'));
@@ -545,12 +967,18 @@ function makeThought(text, restoredThought = {}) {
 }
 
 function replaceThoughts(nextThoughts) {
+  magnetEditor = null;
+  magnetToolbar.hidden = true;
+  canvas.classList.remove('is-magnet-editing');
   stopDrag();
   thoughts.forEach((thought) => thought.element?.remove());
   thoughts = nextThoughts.map((thought) => makeThought(thought.text, thought));
+  const repairedThoughts = repairMagnetRelations();
   initializeThoughtVisibility();
+  renderMagnetUi();
   updateUi();
   saveThoughts();
+  if (isCloudMode()) repairedThoughts.forEach(enqueueThoughtUpsert);
 }
 
 function measureThought(thought) {
@@ -846,6 +1274,11 @@ function addThought(rawText) {
   const text = rawText.trim();
   if (!text) return false;
 
+  if (magnetEditor) {
+    announce('Finish editing the magnetic group first.');
+    return false;
+  }
+
   if (blockEditsDuringAccountSync()) return false;
 
   if (thoughts.length >= MAX_THOUGHTS) {
@@ -872,7 +1305,15 @@ function addThought(rawText) {
 }
 
 function togglePinned(thought) {
+  if (magnetEditor) {
+    announce('Finish editing the magnetic group first.');
+    return;
+  }
   if (blockEditsDuringAccountSync()) return;
+  if (getPersistedMagnetParentId(thought) || isPersistedMagnetParent(thought)) {
+    announce('Disconnect this thought before pinning it.');
+    return;
+  }
 
   thought.pinned = !thought.pinned;
   if (thought.pinned) {
@@ -896,8 +1337,26 @@ function togglePinned(thought) {
   if (isCloudMode()) enqueueThoughtUpsert(thought);
 }
 
+function detachLocalMagnetChildren(parentId) {
+  const changedThoughts = getPersistedMagnetChildren(parentId);
+  changedThoughts.forEach((child) => {
+    child.meta = { ...(child.meta || {}) };
+    delete child.meta.magnet;
+  });
+
+  if (!changedThoughts.length) return;
+  saveThoughts();
+  if (isCloudMode()) changedThoughts.forEach(enqueueThoughtUpsert);
+  renderMagnetUi();
+}
+
 function removeThought(thought) {
+  if (magnetEditor) {
+    announce('Finish editing the magnetic group first.');
+    return;
+  }
   if (blockEditsDuringAccountSync()) return;
+  if (isPersistedMagnetParent(thought)) detachLocalMagnetChildren(thought.id);
   if (isCloudMode()) enqueueThoughtDelete(thought.id);
   removeThoughtElement(thought);
 }
@@ -917,8 +1376,12 @@ function removeThoughtElement(thought) {
 
 function beginDrag(event, thought) {
   if (event.target.closest('button')) return;
+  if (magnetEditor) return;
   if (blockEditsDuringAccountSync()) return;
   event.preventDefault();
+  if (event.pointerType === 'touch') {
+    thought.element.focus({ preventScroll: true });
+  }
   draggedThought = thought;
   const bounds = thought.element.getBoundingClientRect();
   dragOffset = { x: event.clientX - bounds.left, y: event.clientY - bounds.top };
@@ -942,7 +1405,11 @@ function stopDrag() {
   if (!draggedThought) return;
   const thought = draggedThought;
   thought.element.classList.remove('is-dragging');
-  if (!thought.pinned) {
+  const magnetParent = getThoughtById(getPersistedMagnetParentId(thought));
+  if (magnetParent) {
+    thought.vx = magnetParent.vx;
+    thought.vy = magnetParent.vy;
+  } else if (!thought.pinned) {
     thought.vx = randomVelocity();
     thought.vy = randomVelocity();
   } else {
@@ -971,6 +1438,7 @@ function renderThought(thought) {
   const pinButton = thought.element.querySelector('.pin-button');
   pinButton.title = thought.pinned ? 'Unpin thought' : 'Pin thought';
   pinButton.setAttribute('aria-label', pinButton.title);
+  renderMagnetThoughtState(thought);
 }
 
 function historyGroup(createdAt) {
@@ -1009,21 +1477,28 @@ function formatHistoryDate(createdAt) {
 
 function focusThoughtFromHistory(thought) {
   historyDialog.close();
-  showThought(thought);
-  measureThought(thought);
+  const root = getMagnetRoot(thought);
+  const members = getMagnetGroupMembers(root);
+  showThought(root);
+  members.forEach(measureThought);
 
-  if (!thought.pinned) {
+  if (!root.pinned) {
     const bounds = getPlayfieldBounds();
-    thought.x = Math.max(0, (bounds.width - thought.width) / 2);
-    thought.y = Math.max(0, (bounds.height - thought.height) / 2);
-    thought.vx = randomVelocity();
-    thought.vy = randomVelocity();
-    getVisibilityState(thought).status = 'visible';
+    const targetX = Math.max(0, (bounds.width - thought.width) / 2);
+    const targetY = Math.max(0, (bounds.height - thought.height) / 2);
+    shiftMagnetGroup(root, targetX - thought.x, targetY - thought.y);
+    root.vx = randomVelocity();
+    root.vy = randomVelocity();
+    members.slice(1).forEach((member) => {
+      member.vx = root.vx;
+      member.vy = root.vy;
+    });
+    getVisibilityState(root).status = 'visible';
   }
 
   thought.element.style.zIndex = String(topZIndex() + 1);
-  constrainThought(thought);
-  renderThought(thought);
+  if (members.length === 1) constrainThought(thought);
+  members.forEach(renderThought);
   thought.element.classList.add('is-history-focused');
   window.setTimeout(() => thought.element.classList.remove('is-history-focused'), 900);
   announce('Thought shown on the canvas.');
@@ -1113,12 +1588,39 @@ function announce(message) {
   window.setTimeout(() => { announcer.textContent = message; }, 10);
 }
 
+function updateMagnetChild(child, parent, slot, delta, reducedMotion) {
+  const target = getMagnetSlotPosition(parent, child, slot);
+  if (reducedMotion) {
+    child.x = target.x;
+    child.y = target.y;
+    child.vx = parent.vx;
+    child.vy = parent.vy;
+    return;
+  }
+
+  child.vx += (
+    (target.x - child.x) * MAGNET_SPRING
+    - (child.vx - parent.vx) * MAGNET_DAMPING
+  ) * delta;
+  child.vy += (
+    (target.y - child.y) * MAGNET_SPRING
+    - (child.vy - parent.vy) * MAGNET_DAMPING
+  ) * delta;
+  child.vx = Math.max(-MAGNET_MAX_SPEED, Math.min(MAGNET_MAX_SPEED, child.vx));
+  child.vy = Math.max(-MAGNET_MAX_SPEED, Math.min(MAGNET_MAX_SPEED, child.vy));
+
+  const hoverScale = child.element.matches(':hover') ? 0.35 : 1;
+  child.x += child.vx * delta * hoverScale;
+  child.y += child.vy * delta * hoverScale;
+}
+
 function resolveCollisions(activeThoughts) {
   for (let pass = 0; pass < 2; pass += 1) {
     for (let firstIndex = 0; firstIndex < activeThoughts.length; firstIndex += 1) {
       for (let secondIndex = firstIndex + 1; secondIndex < activeThoughts.length; secondIndex += 1) {
         const first = activeThoughts[firstIndex];
         const second = activeThoughts[secondIndex];
+        if (belongToSameMagnetGroup(first, second)) continue;
         const firstCanMove = !first.pinned && first !== draggedThought;
         const secondCanMove = !second.pinned && second !== draggedThought;
         const inverseMassFirst = firstCanMove ? 1 : 0;
@@ -1178,32 +1680,50 @@ function animate(timestamp) {
     return;
   }
 
-  if (!reducedMotion) {
-    const bounds = getPlayfieldBounds();
+  const bounds = getPlayfieldBounds();
+  const activeThoughts = getActiveThoughts();
+  const activeRoots = getMagnetRoots().filter(isThoughtActive);
 
-    getActiveThoughts().forEach((thought) => {
-      if (thought.pinned || thought === draggedThought) return;
-      const speed = thought.element.matches(':hover') ? 0.35 : 1;
-      thought.x += thought.vx * delta * speed;
-      thought.y += thought.vy * delta * speed;
-
-      const state = getVisibilityState(thought);
-      if (state.status === 'entering' && intersectsPlayfield(thought, bounds)) {
-        state.status = 'visible';
-      } else if (state.status === 'visible' && isFullyOutside(thought, bounds)) {
-        hideThought(thought);
-      }
+  if (!reducedMotion && !magnetEditor) {
+    activeRoots.forEach((root) => {
+      if (root.pinned || root === draggedThought) return;
+      const speed = root.element.matches(':hover') ? 0.35 : 1;
+      root.x += root.vx * delta * speed;
+      root.y += root.vy * delta * speed;
     });
-
-    const activeThoughts = getActiveThoughts();
-    const collisionThoughts = activeThoughts.filter((thought) => (
-      thought.pinned || getVisibilityState(thought).status === 'visible'
-    ));
-    resolveCollisions(collisionThoughts);
-    activeThoughts.forEach(renderThought);
   }
 
-  maybeSpawnThought(timestamp, reducedMotion);
+  activeThoughts.forEach((thought) => {
+    const magnet = effectiveMagnet(thought);
+    if (!magnet || thought === draggedThought) return;
+    const parent = getThoughtById(magnet.parentId);
+    if (!parent) return;
+    updateMagnetChild(thought, parent, magnet.slot, delta, reducedMotion);
+  });
+
+  activeRoots.forEach((root) => {
+    if (root.pinned || magnetEditor) return;
+    const state = getVisibilityState(root);
+    if (
+      state.status === 'entering'
+      && getMagnetGroupMembers(root).some((member) => intersectsPlayfield(member, bounds))
+    ) {
+      state.status = 'visible';
+    } else if (
+      state.status === 'visible'
+      && isMagnetGroupFullyOutside(root, bounds)
+    ) {
+      hideThought(root);
+    }
+  });
+
+  const collisionThoughts = activeThoughts.filter((thought) => (
+    thought.pinned || getVisibilityState(thought).status === 'visible'
+  ));
+  if (!magnetEditor) resolveCollisions(collisionThoughts);
+  activeThoughts.forEach(renderThought);
+
+  if (!magnetEditor) maybeSpawnThought(timestamp, reducedMotion);
   window.requestAnimationFrame(animate);
 }
 
@@ -1313,10 +1833,19 @@ form.addEventListener('submit', (event) => {
 });
 
 accountButton.addEventListener('click', () => {
+  if (magnetEditor) closeMagnetEditor({ restoreMotion: true });
   if (auth) signOut();
   else openAuthDialog();
 });
-historyButton.addEventListener('click', openHistory);
+historyButton.addEventListener('click', () => {
+  if (magnetEditor) closeMagnetEditor({ restoreMotion: true });
+  openHistory();
+});
+magnetCancel.addEventListener('click', () => {
+  closeMagnetEditor({ restoreMotion: true });
+  announce('Magnetic group changes canceled.');
+});
+magnetDone.addEventListener('click', commitMagnetEditor);
 historyClose.addEventListener('click', () => historyDialog.close());
 historySearch.addEventListener('input', renderHistory);
 historyDialog.addEventListener('click', (event) => {
@@ -1343,7 +1872,26 @@ window.addEventListener('resize', () => {
   nextSpawnAt = 0;
   scheduleSave();
 });
-window.addEventListener('beforeunload', saveThoughts);
+window.addEventListener('keydown', (event) => {
+  if (event.key !== 'Escape' || !magnetEditor) return;
+  closeMagnetEditor({ restoreMotion: true });
+  announce('Magnetic group changes canceled.');
+});
+document.addEventListener('pointerdown', (event) => {
+  if (event.pointerType !== 'touch' || event.target.closest('.thought-card')) return;
+  const focusedThought = document.activeElement?.closest?.('.thought-card');
+  focusedThought?.blur();
+});
+window.addEventListener('beforeunload', () => {
+  if (magnetEditor) {
+    const editor = magnetEditor;
+    thoughts.forEach((thought) => {
+      const motion = editor.motion.get(thought.id);
+      if (motion) Object.assign(thought, motion);
+    });
+  }
+  saveThoughts();
+});
 
 replaceThoughts(thoughts);
 updateAccountButton();
