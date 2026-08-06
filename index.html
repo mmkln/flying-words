@@ -53,13 +53,6 @@
               aria-haspopup="listbox"
               aria-expanded="false"
             ></button>
-            <div
-              class="knowledge-picker-menu"
-              id="knowledge-picker-menu"
-              role="listbox"
-              aria-label="Knowledge type"
-              hidden
-            ></div>
           </div>
           <label class="sr-only" for="thought-input">New thought</label>
           <input
@@ -77,6 +70,14 @@
         </form>
         <p class="composer-tip"><kbd>Enter</kbd> to add a thought · drag a card to move it</p>
       </div>
+
+      <div
+        class="knowledge-picker-menu"
+        id="knowledge-picker-menu"
+        role="listbox"
+        aria-label="Knowledge type"
+        hidden
+      ></div>
 
       <p class="announcer sr-only" id="announcer" aria-live="polite"></p>
     </main>
@@ -123,7 +124,12 @@
 
     <template id="thought-template">
       <article class="thought-card" tabindex="0">
-        <span class="thought-kind-icon" role="img"></span>
+        <button
+          class="thought-kind-icon thought-kind-button"
+          type="button"
+          aria-haspopup="listbox"
+          aria-expanded="false"
+        ></button>
         <p class="thought-text"></p>
         <button class="magnet-btn magnet-button" type="button" title="Create magnetic group" aria-label="Create magnetic group">
           <svg viewBox="0 0 24 24" aria-hidden="true">

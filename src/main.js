@@ -6,13 +6,15 @@ import {
 } from './magnet-hierarchy.js';
 import { createMagnetPhysics } from './magnet-physics.js';
 import {
+  KnowledgeKind,
   createKnowledgeMeta,
   getKnowledgeKindLabel,
   getThoughtKnowledgeKind,
+  setThoughtKnowledgeKind,
 } from './knowledge-kinds.js';
 import {
-  createKnowledgeKindIcon,
   createKnowledgeKindPicker,
+  renderKnowledgeKindTrigger,
 } from './knowledge-kind-picker.js';
 
 const STORAGE_KEY = 'flying-thoughts:v1';
@@ -37,7 +39,6 @@ const API_URL = ['localhost', '127.0.0.1'].includes(window.location.hostname)
 const canvas = document.querySelector('#canvas');
 const form = document.querySelector('#thought-form');
 const input = document.querySelector('#thought-input');
-const knowledgePickerRoot = document.querySelector('#knowledge-picker');
 const knowledgePickerTrigger = document.querySelector('#knowledge-picker-trigger');
 const knowledgePickerMenu = document.querySelector('#knowledge-picker-menu');
 const emptyState = document.querySelector('#empty-state');
@@ -94,15 +95,88 @@ let outboxFlushInFlight = false;
 let outboxRetryTimer;
 let outboxRetryDelay = 2000;
 let magnetEditor = null;
+let composerKnowledgeKind = KnowledgeKind.THOUGHT;
+let knowledgeKindEditor = null;
 
-const composerKnowledgeKindPicker = createKnowledgeKindPicker({
-  root: knowledgePickerRoot,
-  trigger: knowledgePickerTrigger,
+const knowledgeKindPicker = createKnowledgeKindPicker({
   menu: knowledgePickerMenu,
-  onChange(kind) {
-    announce(`New knowledge type: ${getKnowledgeKindLabel(kind)}.`);
+  onClose() {
+    knowledgeKindEditor = null;
   },
 });
+renderKnowledgeKindTrigger(knowledgePickerTrigger, composerKnowledgeKind);
+
+function openComposerKnowledgeKindPicker() {
+  if (magnetEditor) {
+    announce('Finish editing the magnetic group first.');
+    return;
+  }
+
+  if (knowledgeKindPicker.isOpenFor(knowledgePickerTrigger)) {
+    knowledgeKindPicker.close({ restoreFocus: true });
+    return;
+  }
+
+  knowledgeKindPicker.close();
+  knowledgeKindEditor = { mode: 'create' };
+  knowledgeKindPicker.openFor({
+    trigger: knowledgePickerTrigger,
+    value: composerKnowledgeKind,
+    onSelect(kind) {
+      composerKnowledgeKind = kind;
+      renderKnowledgeKindTrigger(knowledgePickerTrigger, kind);
+      announce(`New knowledge type: ${getKnowledgeKindLabel(kind)}.`);
+    },
+  });
+}
+
+function openThoughtKnowledgeKindPicker(
+  thought,
+  trigger = thought.element.querySelector('.thought-kind-button'),
+) {
+  if (magnetEditor) {
+    announce('Finish editing the magnetic group first.');
+    return;
+  }
+  if (blockEditsDuringAccountSync()) return;
+
+  if (knowledgeKindPicker.isOpenFor(trigger)) {
+    knowledgeKindPicker.close({ restoreFocus: true });
+    return;
+  }
+
+  knowledgeKindPicker.close();
+  knowledgeKindEditor = {
+    mode: 'edit',
+    thoughtId: thought.id,
+  };
+  knowledgeKindPicker.openFor({
+    trigger,
+    value: getThoughtKnowledgeKind(thought),
+    onSelect(kind) {
+      updateThoughtKnowledgeKind(thought, kind);
+    },
+  });
+}
+
+function updateThoughtKnowledgeKind(thought, kind) {
+  if (blockEditsDuringAccountSync()) return;
+  if (getThoughtKnowledgeKind(thought) === kind) return;
+
+  setThoughtKnowledgeKind(thought, kind);
+  renderThought(thought);
+  saveThoughts();
+  if (isCloudMode()) enqueueThoughtUpsert(thought);
+  if (historyDialog.open) renderHistory();
+  announce(`Knowledge type changed to ${getKnowledgeKindLabel(kind)}.`);
+}
+
+function handleKnowledgeKindTriggerKeyDown(event, openPicker) {
+  if (event.key !== 'ArrowDown' && event.key !== 'ArrowUp') return;
+  event.preventDefault();
+  event.stopPropagation();
+  openPicker();
+}
 
 function loadAuthFrom(storage) {
   try {
@@ -838,10 +912,15 @@ function renderMagnetUi() {
   magnetCount.textContent = `${selectedCount} selected`;
   magnetToolbar.hidden = !magnetEditor;
   canvas.classList.toggle('is-magnet-editing', Boolean(magnetEditor));
-  thoughts.forEach(renderMagnetThoughtState);
+  knowledgePickerTrigger.disabled = Boolean(magnetEditor);
+  thoughts.forEach((thought) => {
+    renderMagnetThoughtState(thought);
+    thought.element.querySelector('.thought-kind-button').disabled = Boolean(magnetEditor);
+  });
 }
 
 function openMagnetEditor(parent) {
+  knowledgeKindPicker.close();
   if (blockEditsDuringAccountSync()) return;
   if (parent.pinned) {
     announce('Unpin this thought first.');
@@ -956,6 +1035,7 @@ function makeThought(text, restoredThought = {}) {
   const fragment = template.content.cloneNode(true);
   const element = fragment.querySelector('.thought-card');
   const textElement = fragment.querySelector('.thought-text');
+  const kindButton = fragment.querySelector('.thought-kind-button');
   const pinButton = fragment.querySelector('.pin-button');
   const magnetButton = fragment.querySelector('.magnet-button');
   const deleteButton = fragment.querySelector('.delete-button');
@@ -996,6 +1076,13 @@ function makeThought(text, restoredThought = {}) {
   renderThought(thought);
 
   pinButton.addEventListener('click', () => togglePinned(thought));
+  kindButton.addEventListener('click', () => openThoughtKnowledgeKindPicker(thought));
+  kindButton.addEventListener('keydown', (event) => {
+    handleKnowledgeKindTriggerKeyDown(
+      event,
+      () => openThoughtKnowledgeKindPicker(thought),
+    );
+  });
   magnetButton.addEventListener('click', () => handleMagnetButton(thought));
   deleteButton.addEventListener('click', () => removeThought(thought));
   element.addEventListener('pointerdown', (event) => beginDrag(event, thought));
@@ -1005,6 +1092,7 @@ function makeThought(text, restoredThought = {}) {
 }
 
 function replaceThoughts(nextThoughts) {
+  knowledgeKindPicker.close();
   magnetEditor = null;
   magnetToolbar.hidden = true;
   canvas.classList.remove('is-magnet-editing');
@@ -1329,7 +1417,7 @@ function addThought(rawText) {
     id: crypto.randomUUID(),
     createdAt: Date.now(),
     meta: {
-      knowledge: createKnowledgeMeta(composerKnowledgeKindPicker.getValue()),
+      knowledge: createKnowledgeMeta(composerKnowledgeKind),
     },
   });
   thoughts.push(thought);
@@ -1405,6 +1493,7 @@ function removeThought(thought) {
     return;
   }
   if (blockEditsDuringAccountSync()) return;
+  if (knowledgeKindEditor?.thoughtId === thought.id) knowledgeKindPicker.close();
   if (isPersistedMagnetParent(thought)) detachLocalMagnetChildren(thought.id);
   if (isCloudMode()) enqueueThoughtDelete(thought.id);
   removeThoughtElement(thought);
@@ -1490,12 +1579,9 @@ function renderThought(thought) {
   thought.element.classList.toggle('is-pinned', thought.pinned);
   const kind = getThoughtKnowledgeKind(thought);
   if (thought.element.dataset.knowledgeKind !== kind) {
-    const kindIcon = thought.element.querySelector('.thought-kind-icon');
-    const kindLabel = getKnowledgeKindLabel(kind);
+    const kindButton = thought.element.querySelector('.thought-kind-button');
     thought.element.dataset.knowledgeKind = kind;
-    kindIcon.replaceChildren(createKnowledgeKindIcon(kind));
-    kindIcon.setAttribute('aria-label', `Knowledge type: ${kindLabel}`);
-    kindIcon.title = kindLabel;
+    renderKnowledgeKindTrigger(kindButton, kind);
   }
   thought.element.style.transform = `translate3d(${thought.x}px, ${thought.y}px, 0) rotate(${thought.rotation}deg)`;
   const pinButton = thought.element.querySelector('.pin-button');
@@ -1599,22 +1685,22 @@ function renderHistory() {
     const list = document.createElement('ul');
     groupThoughts.forEach((thought) => {
       const item = document.createElement('li');
-      const button = document.createElement('button');
-      const kindIcon = document.createElement('span');
+      const row = document.createElement('div');
+      const kindButton = document.createElement('button');
+      const contentButton = document.createElement('button');
       const text = document.createElement('span');
       const details = document.createElement('span');
       const time = document.createElement('time');
       const kind = getThoughtKnowledgeKind(thought);
-      const kindLabel = getKnowledgeKindLabel(kind);
 
-      button.type = 'button';
-      button.className = 'history-item';
-      kindIcon.className = 'history-kind-icon';
-      kindIcon.dataset.kind = kind;
-      kindIcon.setAttribute('role', 'img');
-      kindIcon.setAttribute('aria-label', `Knowledge type: ${kindLabel}`);
-      kindIcon.title = kindLabel;
-      kindIcon.append(createKnowledgeKindIcon(kind));
+      row.className = 'history-item';
+      kindButton.type = 'button';
+      kindButton.className = 'history-kind-icon history-kind-button';
+      kindButton.setAttribute('aria-haspopup', 'listbox');
+      kindButton.setAttribute('aria-expanded', 'false');
+      renderKnowledgeKindTrigger(kindButton, kind);
+      contentButton.type = 'button';
+      contentButton.className = 'history-item-content';
       text.className = 'history-item-text';
       text.textContent = thought.text;
       details.className = 'history-item-details';
@@ -1629,9 +1715,19 @@ function renderHistory() {
         details.append(pinned);
       }
 
-      button.append(kindIcon, text, details);
-      button.addEventListener('click', () => focusThoughtFromHistory(thought));
-      item.append(button);
+      kindButton.addEventListener('click', () => {
+        openThoughtKnowledgeKindPicker(thought, kindButton);
+      });
+      kindButton.addEventListener('keydown', (event) => {
+        handleKnowledgeKindTriggerKeyDown(
+          event,
+          () => openThoughtKnowledgeKindPicker(thought, kindButton),
+        );
+      });
+      contentButton.append(text, details);
+      contentButton.addEventListener('click', () => focusThoughtFromHistory(thought));
+      row.append(kindButton, contentButton);
+      item.append(row);
       list.append(item);
     });
 
@@ -1641,6 +1737,7 @@ function renderHistory() {
 }
 
 function openHistory() {
+  knowledgeKindPicker.close();
   historySearch.value = '';
   renderHistory();
   historyDialog.showModal();
@@ -1675,13 +1772,21 @@ function animate(timestamp) {
   ));
 
   if (!magnetEditor) {
+    const hoveredComponentIds = new Set(activeComponents
+      .filter((component) => getMagnetComponentMembers(component).some(
+        (thought) => thought.element.matches(':hover, :focus-within'),
+      ))
+      .map((component) => component.id));
+
+    if (knowledgeKindEditor?.thoughtId) {
+      const editedThought = getThoughtById(knowledgeKindEditor.thoughtId);
+      const editedComponent = editedThought ? getMagnetComponent(editedThought) : null;
+      if (editedComponent) hoveredComponentIds.add(editedComponent.id);
+    }
+
     magnetPhysics.advance(delta, {
       activeThoughtIds: new Set(activeThoughts.map((thought) => thought.id)),
-      hoveredComponentIds: new Set(activeComponents
-        .filter((component) => getMagnetComponentMembers(component).some(
-          (thought) => thought.element.matches(':hover, :focus-within'),
-        ))
-        .map((component) => component.id)),
+      hoveredComponentIds,
       reducedMotion,
     });
   }
@@ -1715,6 +1820,7 @@ function updateAccountButton() {
 }
 
 function openAuthDialog() {
+  knowledgeKindPicker.close();
   authMessage.textContent = '';
   authDialog.showModal();
   authEmail.focus();
@@ -1782,6 +1888,7 @@ async function authenticate(mode) {
 }
 
 function signOut(message = 'Signed out. Local thoughts stay on this browser.') {
+  knowledgeKindPicker.close();
   saveThoughts();
   window.clearTimeout(outboxRetryTimer);
   outboxRetryDelay = 2000;
@@ -1795,6 +1902,11 @@ function signOut(message = 'Signed out. Local thoughts stay on this browser.') {
   replaceThoughts(loadStoredThoughts(STORAGE_KEY));
   announce(message);
 }
+
+knowledgePickerTrigger.addEventListener('click', openComposerKnowledgeKindPicker);
+knowledgePickerTrigger.addEventListener('keydown', (event) => {
+  handleKnowledgeKindTriggerKeyDown(event, openComposerKnowledgeKindPicker);
+});
 
 form.addEventListener('submit', (event) => {
   event.preventDefault();
@@ -1843,6 +1955,7 @@ canvas.addEventListener('pointermove', moveDrag);
 canvas.addEventListener('pointerup', stopDrag);
 canvas.addEventListener('pointercancel', stopDrag);
 window.addEventListener('resize', () => {
+  knowledgeKindPicker.close();
   getActiveThoughts().forEach((thought) => {
     measureThought(thought);
     if (thought.pinned) {

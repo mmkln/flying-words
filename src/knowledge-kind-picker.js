@@ -74,14 +74,23 @@ export function createKnowledgeKindIcon(kind) {
   return createIcon(option.icon);
 }
 
+export function renderKnowledgeKindTrigger(trigger, kind) {
+  const normalizedKind = normalizeKnowledgeKind(kind);
+  const option = KnowledgeKindOptions.find(
+    ({ value }) => value === normalizedKind,
+  );
+  trigger.replaceChildren(createKnowledgeKindIcon(normalizedKind));
+  trigger.dataset.kind = normalizedKind;
+  trigger.setAttribute('aria-label', `Knowledge type: ${option.label}`);
+  trigger.title = option.label;
+}
+
 export function createKnowledgeKindPicker({
-  root,
-  trigger,
   menu,
-  initialValue = 'thought',
-  onChange = () => {},
+  onClose = () => {},
 }) {
-  let value = normalizeKnowledgeKind(initialValue);
+  let session = null;
+  const defaultMenuParent = menu.parentElement;
 
   const buttons = KnowledgeKindOptions.map((option) => {
     const button = document.createElement('button');
@@ -96,23 +105,15 @@ export function createKnowledgeKindPicker({
     label.textContent = option.label;
     button.append(createKnowledgeKindIcon(option.value), label);
     button.addEventListener('click', () => {
-      setValue(option.value, true);
+      if (!session) return;
+      session.onSelect(option.value);
       close({ restoreFocus: true });
     });
     menu.append(button);
     return button;
   });
 
-  function currentOption() {
-    return KnowledgeKindOptions.find((option) => option.value === value);
-  }
-
-  function render() {
-    const option = currentOption();
-    trigger.replaceChildren(createKnowledgeKindIcon(option.value));
-    trigger.dataset.kind = option.value;
-    trigger.setAttribute('aria-label', `Knowledge type: ${option.label}`);
-    trigger.title = option.label;
+  function renderSelection(value) {
     buttons.forEach((button) => {
       const selected = button.dataset.kind === value;
       button.classList.toggle('is-selected', selected);
@@ -120,22 +121,70 @@ export function createKnowledgeKindPicker({
     });
   }
 
-  function setValue(nextValue, notify = false) {
-    value = normalizeKnowledgeKind(nextValue);
-    render();
-    if (notify) onChange(value);
-  }
-
-  function open() {
+  function positionMenu(trigger) {
+    menu.style.visibility = 'hidden';
+    menu.style.top = '0';
+    menu.style.left = '0';
     menu.hidden = false;
-    trigger.setAttribute('aria-expanded', 'true');
-    buttons.find((button) => button.dataset.kind === value)?.focus();
+
+    const triggerRect = trigger.getBoundingClientRect();
+    const menuRect = menu.getBoundingClientRect();
+    const padding = 8;
+    const gap = 8;
+    const canOpenAbove = triggerRect.top >= menuRect.height + gap + padding;
+    const preferredTop = canOpenAbove
+      ? triggerRect.top - menuRect.height - gap
+      : triggerRect.bottom + gap;
+    const preferredLeft = triggerRect.left + triggerRect.width / 2 - menuRect.width / 2;
+    const top = Math.min(
+      Math.max(padding, preferredTop),
+      window.innerHeight - menuRect.height - padding,
+    );
+    const left = Math.min(
+      Math.max(padding, preferredLeft),
+      window.innerWidth - menuRect.width - padding,
+    );
+
+    menu.style.top = `${top}px`;
+    menu.style.left = `${left}px`;
+    menu.style.visibility = '';
   }
 
   function close({ restoreFocus = false } = {}) {
+    if (!session) return;
+
+    const { trigger } = session;
     menu.hidden = true;
     trigger.setAttribute('aria-expanded', 'false');
-    if (restoreFocus) trigger.focus();
+    session = null;
+    if (menu.parentElement !== defaultMenuParent) {
+      defaultMenuParent.append(menu);
+    }
+    if (restoreFocus && trigger.isConnected) trigger.focus();
+    onClose();
+  }
+
+  function openFor({ trigger, value, onSelect }) {
+    if (session?.trigger === trigger) {
+      close({ restoreFocus: true });
+      return;
+    }
+
+    close();
+    const normalizedValue = normalizeKnowledgeKind(value);
+    session = {
+      trigger,
+      value: normalizedValue,
+      onSelect,
+    };
+    const openDialog = trigger.closest('dialog[open]');
+    (openDialog || defaultMenuParent).append(menu);
+    renderSelection(normalizedValue);
+    trigger.setAttribute('aria-expanded', 'true');
+    positionMenu(trigger);
+    buttons.find(
+      (button) => button.dataset.kind === normalizedValue,
+    )?.focus();
   }
 
   function moveFocus(offset) {
@@ -146,10 +195,13 @@ export function createKnowledgeKindPicker({
   }
 
   function handleDocumentPointerDown(event) {
-    if (!root.contains(event.target)) close();
+    if (!session) return;
+    if (menu.contains(event.target) || session.trigger.contains(event.target)) return;
+    close();
   }
 
   function handleMenuKeyDown(event) {
+    if (!session) return;
     if ([
       'Escape',
       'Enter',
@@ -182,29 +234,18 @@ export function createKnowledgeKindPicker({
     }
   }
 
-  trigger.addEventListener('click', () => {
-    if (menu.hidden) open();
-    else close();
-  });
-  trigger.addEventListener('keydown', (event) => {
-    if (['Enter', ' ', 'ArrowDown', 'ArrowUp'].includes(event.key)) {
-      event.stopPropagation();
-    }
-    if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
-      event.preventDefault();
-      open();
-    }
-  });
   menu.addEventListener('keydown', handleMenuKeyDown);
   document.addEventListener('pointerdown', handleDocumentPointerDown);
-  render();
 
   return {
-    getValue() {
-      return value;
+    openFor,
+    close,
+    isOpenFor(trigger) {
+      return session?.trigger === trigger;
     },
-    setValue,
     destroy() {
+      close();
+      menu.removeEventListener('keydown', handleMenuKeyDown);
       document.removeEventListener('pointerdown', handleDocumentPointerDown);
     },
   };
