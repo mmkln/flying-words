@@ -26,9 +26,17 @@ import {
   repairConnections,
 } from './connections.js';
 import { createConnectionRenderer } from './connection-renderer.js';
+import {
+  DEFAULT_SPACE_ID,
+  SPACES,
+  getThoughtSpaceId,
+  isSpaceId,
+  isThoughtAvailableInSpace,
+} from './spaces.js';
 
 const STORAGE_KEY = 'flying-thoughts:v1';
 const AUTH_STORAGE_KEY = 'flying-thoughts:auth:v1';
+const ACTIVE_SPACE_STORAGE_KEY = 'flying-thoughts:active-space:v1';
 const PENDING_SYNC_STORAGE_PREFIX = 'flying-thoughts:pending-sync:v1:';
 const ACCOUNT_STORAGE_PREFIX = 'flying-thoughts:account:v1:';
 const OUTBOX_STORAGE_PREFIX = 'flying-thoughts:outbox:v1:';
@@ -60,6 +68,10 @@ const historyDialog = document.querySelector('#history-dialog');
 const historyClose = document.querySelector('#history-close');
 const historySearch = document.querySelector('#history-search');
 const historyList = document.querySelector('#history-list');
+const spacesButton = document.querySelector('#spaces-button');
+const spacesOverview = document.querySelector('#spaces-overview');
+const spacesClose = document.querySelector('#spaces-close');
+const spacesGrid = document.querySelector('#spaces-grid');
 const accountButton = document.querySelector('#account-button');
 const authDialog = document.querySelector('#auth-dialog');
 const authForm = document.querySelector('#auth-form');
@@ -109,6 +121,9 @@ let magnetEditor = null;
 let connectionEditor = null;
 let composerKnowledgeKind = KnowledgeKind.THOUGHT;
 let knowledgeKindEditor = null;
+let viewMode = 'canvas';
+let activeSpaceId = localStorage.getItem(ACTIVE_SPACE_STORAGE_KEY);
+if (!isSpaceId(activeSpaceId)) activeSpaceId = DEFAULT_SPACE_ID;
 
 const connectionRenderer = createConnectionRenderer({
   layer: connectionLayer,
@@ -390,8 +405,18 @@ function getMagnetComponentMembers(component) {
   return component?.memberIds.map(getThoughtById).filter(Boolean) || [];
 }
 
+function isThoughtAvailableInActiveSpace(thought) {
+  return isThoughtAvailableInSpace(thought, activeSpaceId);
+}
+
+function isMagnetComponentAvailableInActiveSpace(component) {
+  return getMagnetComponentMembers(component).every(isThoughtAvailableInActiveSpace);
+}
+
 function isMagnetComponentPinned(component) {
-  return getMagnetComponentMembers(component).some((thought) => thought.pinned);
+  return getMagnetComponentMembers(component).some(
+    (thought) => thought.pinned && isThoughtAvailableInActiveSpace(thought),
+  );
 }
 
 function wouldCreateMagnetCycle(parentId, childId) {
@@ -468,13 +493,14 @@ function normalizedLayout(thought) {
   return {
     version: 1,
     mode: 'normalized',
+    spaceId: activeSpaceId,
     x: normalize(thought.x / availableWidth),
     y: normalize(thought.y / availableHeight),
   };
 }
 
 function updatePinnedLayoutMeta(thought) {
-  if (!thought.pinned) return;
+  if (!thought.pinned || !isThoughtAvailableInActiveSpace(thought)) return;
 
   thought.meta = {
     ...(thought.meta || {}),
@@ -621,6 +647,7 @@ function getVisibilityState(value) {
 }
 
 function isThoughtActive(thought) {
+  if (!isThoughtAvailableInActiveSpace(thought)) return false;
   const component = getMagnetComponent(thought);
   return isMagnetComponentPinned(component)
     || getVisibilityState(component).status !== 'dormant';
@@ -639,9 +666,10 @@ function getPlayfieldBounds() {
 }
 
 function calculateVisibleTarget() {
+  const availableThoughts = thoughts.filter(isThoughtAvailableInActiveSpace);
   const bounds = getPlayfieldBounds();
   const usableArea = bounds.width * bounds.height;
-  const measuredThoughts = thoughts.filter(
+  const measuredThoughts = availableThoughts.filter(
     (thought) => thought.width > 0 && thought.height > 0,
   );
   const averageCardArea = measuredThoughts.length
@@ -657,12 +685,13 @@ function calculateVisibleTarget() {
     MIN_VISIBLE_THOUGHTS,
     Math.min(MAX_VISIBLE_THOUGHTS, calculatedTarget),
   );
-  const pinnedCount = thoughts.filter((thought) => thought.pinned).length;
+  const pinnedCount = availableThoughts.filter((thought) => thought.pinned).length;
 
-  return Math.max(pinnedCount, Math.min(thoughts.length, limitedTarget));
+  return Math.max(pinnedCount, Math.min(availableThoughts.length, limitedTarget));
 }
 
 function showThought(thought) {
+  if (!isThoughtAvailableInActiveSpace(thought)) return;
   const component = getMagnetComponent(thought);
   if (!component) return;
   getVisibilityState(component).status = 'visible';
@@ -804,7 +833,9 @@ function spawnThoughtFromEdge(thought, reducedMotion = false) {
 function spawnNextDormantThought(reducedMotion) {
   const component = magnetComponents
     .filter((item) => (
-      !isMagnetComponentPinned(item) && getVisibilityState(item).status === 'dormant'
+      isMagnetComponentAvailableInActiveSpace(item)
+      && !isMagnetComponentPinned(item)
+      && getVisibilityState(item).status === 'dormant'
     ))
     .sort((first, second) => (
       getVisibilityState(first).lastVisibleAt
@@ -841,14 +872,17 @@ function initializeThoughtVisibility() {
   visibilityStates.clear();
 
   const target = calculateVisibleTarget();
-  const pinnedComponents = magnetComponents.filter(isMagnetComponentPinned);
+  const availableComponents = magnetComponents.filter(
+    isMagnetComponentAvailableInActiveSpace,
+  );
+  const pinnedComponents = availableComponents.filter(isMagnetComponentPinned);
   const visibleComponentIds = new Set(pinnedComponents.map((component) => component.id));
   let visibleCardCount = pinnedComponents.reduce(
     (count, component) => count + component.memberIds.length,
     0,
   );
 
-  magnetComponents
+  availableComponents
     .filter((component) => !isMagnetComponentPinned(component))
     .sort((first, second) => {
       const firstCreatedAt = Math.max(
@@ -1098,7 +1132,15 @@ function renderConnectionUi() {
 }
 
 function rebuildConnectionLayer() {
-  const connections = flattenConnections(thoughts);
+  const availableThoughtIds = new Set(
+    thoughts
+      .filter(isThoughtAvailableInActiveSpace)
+      .map((thought) => thought.id),
+  );
+  const connections = flattenConnections(thoughts).filter((connection) => (
+    availableThoughtIds.has(connection.sourceId)
+    && availableThoughtIds.has(connection.targetId)
+  ));
   connectionRenderer.setConnections(connections);
   magnetPhysics.syncConnections(connections);
   connectionRenderer.update();
@@ -1611,12 +1653,18 @@ function togglePinned(thought) {
 
   thought.pinned = !thought.pinned;
   if (thought.pinned) {
-    showThought(thought);
     constrainThought(thought);
     thought.vx = 0;
     thought.vy = 0;
     thought.rotation = 0;
+    thought.meta = {
+      ...(thought.meta || {}),
+      layout: normalizedLayout(thought),
+    };
+    showThought(thought);
   } else {
+    thought.meta = { ...(thought.meta || {}) };
+    delete thought.meta.layout;
     thought.vx = randomVelocity();
     thought.vy = randomVelocity();
     thought.rotation = randomBetween(-2.5, 2.5);
@@ -1793,6 +1841,9 @@ function formatHistoryDate(createdAt) {
 
 function focusThoughtFromHistory(thought) {
   historyDialog.close();
+  if (thought.pinned && getThoughtSpaceId(thought) !== activeSpaceId) {
+    switchSpace(getThoughtSpaceId(thought));
+  }
   const component = getMagnetComponent(thought);
   const members = getMagnetComponentMembers(component);
   showThought(thought);
@@ -1911,8 +1962,132 @@ function openHistory() {
   historySearch.focus();
 }
 
+function renderSpacesOverview() {
+  spacesGrid.replaceChildren();
+  const canvasBounds = canvas.getBoundingClientRect();
+  const canvasWidth = Math.max(1, canvasBounds.width);
+  const canvasHeight = Math.max(1, canvasBounds.height - RESERVED_BOTTOM_SPACE);
+
+  SPACES.forEach((space) => {
+    const tile = document.createElement('button');
+    const label = document.createElement('span');
+    const surface = document.createElement('span');
+    const chrome = document.createElement('span');
+    const controls = document.createElement('span');
+    const account = document.createElement('span');
+    const composer = document.createElement('span');
+
+    tile.type = 'button';
+    tile.className = 'space-tile';
+    tile.dataset.spaceId = space.id;
+    tile.classList.toggle('is-active', space.id === activeSpaceId);
+    tile.setAttribute('aria-label', `Open ${space.label}`);
+    if (space.id === activeSpaceId) tile.setAttribute('aria-current', 'true');
+
+    label.className = 'space-tile-label';
+    label.textContent = space.label;
+    surface.className = 'space-preview-surface';
+    chrome.className = 'space-preview-chrome';
+    controls.className = 'space-preview-controls';
+    controls.append(document.createElement('span'), document.createElement('span'));
+    account.className = 'space-preview-account';
+    composer.className = 'space-preview-composer';
+    chrome.append(controls, account);
+    surface.append(chrome, composer);
+    tile.append(surface, label);
+
+    thoughts
+      .filter((thought) => (
+        thought.pinned && getThoughtSpaceId(thought) === space.id
+      ))
+      .forEach((thought) => {
+        const preview = document.createElement('span');
+        const layout = thought.meta?.layout;
+        const x = Number.isFinite(layout?.x) ? layout.x : 0.5;
+        const y = Number.isFinite(layout?.y) ? layout.y : 0.5;
+        const width = Math.min(
+          34,
+          Math.max(12, ((thought.width || 180) / canvasWidth) * 100),
+        );
+        const height = Math.min(
+          18,
+          Math.max(6, ((thought.height || 64) / canvasHeight) * 100),
+        );
+
+        preview.className = 'space-preview-card';
+        preview.style.left = `${Math.min(1, Math.max(0, x)) * (100 - width)}%`;
+        preview.style.top = `${Math.min(1, Math.max(0, y)) * (100 - height)}%`;
+        preview.style.width = `${width}%`;
+        preview.style.height = `${height}%`;
+        surface.append(preview);
+      });
+
+    tile.addEventListener('click', () => switchSpace(space.id));
+    spacesGrid.append(tile);
+  });
+}
+
+function closeSpacesOverview({ restoreFocus = true } = {}) {
+  if (viewMode !== 'spaces') return;
+  viewMode = 'canvas';
+  spacesOverview.hidden = true;
+  if (restoreFocus) spacesButton.focus();
+}
+
+function switchSpace(spaceId) {
+  if (!isSpaceId(spaceId)) return;
+
+  if (magnetEditor) closeMagnetEditor({ restoreMotion: true });
+  if (connectionEditor) closeConnectionEditor();
+  stopDrag();
+
+  activeSpaceId = spaceId;
+  localStorage.setItem(ACTIVE_SPACE_STORAGE_KEY, activeSpaceId);
+
+  thoughts.forEach((thought) => {
+    if (!isThoughtAvailableInActiveSpace(thought)) {
+      thought.element.hidden = true;
+      return;
+    }
+
+    measureThought(thought);
+    if (thought.pinned) {
+      applyPinnedLayout(thought);
+      constrainThought(thought);
+    }
+  });
+
+  initializeThoughtVisibility();
+  getActiveThoughts().forEach(renderThought);
+  rebuildConnectionLayer();
+  updateUi();
+  closeSpacesOverview();
+
+  const label = SPACES.find((space) => space.id === activeSpaceId)?.label;
+  announce(`${label || 'Space'} opened.`);
+}
+
+function openSpacesOverview() {
+  if (magnetEditor) closeMagnetEditor({ restoreMotion: true });
+  if (connectionEditor) closeConnectionEditor();
+  stopDrag();
+  knowledgeKindPicker.close();
+
+  thoughts
+    .filter((thought) => thought.pinned && isThoughtAvailableInActiveSpace(thought))
+    .forEach(updatePinnedLayoutMeta);
+  saveThoughts();
+
+  viewMode = 'spaces';
+  renderSpacesOverview();
+  spacesOverview.hidden = false;
+  spacesGrid
+    .querySelector(`[data-space-id="${activeSpaceId}"]`)
+    ?.focus();
+}
+
 function updateUi() {
-  emptyState.hidden = thoughts.length > 0;
+  emptyState.hidden = thoughts.some(isThoughtAvailableInActiveSpace);
   if (historyDialog.open) renderHistory();
 }
 
@@ -1926,7 +2101,7 @@ function animate(timestamp) {
   lastTimestamp = timestamp;
   const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 
-  if (historyDialog.open) {
+  if (viewMode === 'spaces' || historyDialog.open) {
     window.requestAnimationFrame(animate);
     return;
   }
@@ -1934,8 +2109,11 @@ function animate(timestamp) {
   const bounds = getPlayfieldBounds();
   const activeThoughts = getActiveThoughts();
   const activeComponents = magnetComponents.filter((component) => (
-    isMagnetComponentPinned(component)
-    || getVisibilityState(component).status !== 'dormant'
+    isMagnetComponentAvailableInActiveSpace(component)
+    && (
+      isMagnetComponentPinned(component)
+      || getVisibilityState(component).status !== 'dormant'
+    )
   ));
 
   if (!magnetEditor && !connectionEditor) {
@@ -2105,6 +2283,11 @@ historyButton.addEventListener('click', () => {
   if (connectionEditor) closeConnectionEditor();
   openHistory();
 });
+spacesButton.addEventListener('click', openSpacesOverview);
+spacesClose.addEventListener('click', closeSpacesOverview);
+spacesOverview.addEventListener('click', (event) => {
+  if (event.target === spacesOverview) closeSpacesOverview();
+});
 selectionCancel.addEventListener('click', () => {
   if (magnetEditor) {
     closeMagnetEditor({ restoreMotion: true });
@@ -2149,6 +2332,31 @@ window.addEventListener('resize', () => {
 });
 window.addEventListener('keydown', (event) => {
   if (event.isComposing || event.repeat) return;
+
+  if (viewMode === 'spaces') {
+    if (event.key === 'Escape') {
+      event.preventDefault();
+      closeSpacesOverview();
+      return;
+    }
+
+    const tiles = [...spacesGrid.querySelectorAll('.space-tile')];
+    const focusedIndex = tiles.indexOf(document.activeElement);
+    const currentIndex = focusedIndex >= 0
+      ? focusedIndex
+      : SPACES.findIndex((space) => space.id === activeSpaceId);
+    let nextIndex = currentIndex;
+
+    if (event.key === 'ArrowLeft' && currentIndex % 2 > 0) nextIndex -= 1;
+    else if (event.key === 'ArrowRight' && currentIndex % 2 < 1) nextIndex += 1;
+    else if (event.key === 'ArrowUp' && currentIndex >= 2) nextIndex -= 2;
+    else if (event.key === 'ArrowDown' && currentIndex < 2) nextIndex += 2;
+    else return;
+
+    event.preventDefault();
+    tiles[nextIndex]?.focus();
+    return;
+  }
 
   if (connectionEditor && event.key === 'Escape') {
     event.preventDefault();

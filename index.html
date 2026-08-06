@@ -25,6 +25,14 @@
           <path d="M12 7v5l3 2"></path>
         </svg>
       </button>
+      <button class="spaces-button" id="spaces-button" type="button" aria-label="Show spaces" title="Show spaces">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true">
+          <rect x="3" y="3" width="7" height="7" rx="1.5"></rect>
+          <rect x="14" y="3" width="7" height="7" rx="1.5"></rect>
+          <rect x="3" y="14" width="7" height="7" rx="1.5"></rect>
+          <rect x="14" y="14" width="7" height="7" rx="1.5"></rect>
+        </svg>
+      </button>
       <button class="account-button" id="account-button" type="button">Sign in</button>
 
       <div class="selection-toolbar" id="selection-toolbar" role="toolbar" aria-label="Edit card relationships" hidden>
@@ -79,6 +87,15 @@
         aria-label="Knowledge type"
         hidden
       ></div>
+
+      <section class="spaces-overview" id="spaces-overview" aria-label="Spaces" hidden>
+        <button class="spaces-close" id="spaces-close" type="button" aria-label="Close spaces">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true">
+            <path d="m6 6 12 12M18 6 6 18"></path>
+          </svg>
+        </button>
+        <div class="spaces-grid" id="spaces-grid"></div>
+      </section>
 
       <p class="announcer sr-only" id="announcer" aria-live="polite"></p>
     </main>
