@@ -9,6 +9,7 @@ import {
   KnowledgeKind,
   createKnowledgeMeta,
   getKnowledgeKindLabel,
+  getKnowledgeKindPlaceholder,
   getThoughtKnowledgeKind,
   setThoughtKnowledgeKind,
 } from './knowledge-kinds.js';
@@ -104,7 +105,14 @@ const knowledgeKindPicker = createKnowledgeKindPicker({
     knowledgeKindEditor = null;
   },
 });
-renderKnowledgeKindTrigger(knowledgePickerTrigger, composerKnowledgeKind);
+
+function renderComposerKnowledgeKind(kind) {
+  composerKnowledgeKind = kind;
+  renderKnowledgeKindTrigger(knowledgePickerTrigger, kind);
+  input.placeholder = getKnowledgeKindPlaceholder(kind);
+}
+
+renderComposerKnowledgeKind(composerKnowledgeKind);
 
 function openComposerKnowledgeKindPicker() {
   if (magnetEditor) {
@@ -123,8 +131,7 @@ function openComposerKnowledgeKindPicker() {
     trigger: knowledgePickerTrigger,
     value: composerKnowledgeKind,
     onSelect(kind) {
-      composerKnowledgeKind = kind;
-      renderKnowledgeKindTrigger(knowledgePickerTrigger, kind);
+      renderComposerKnowledgeKind(kind);
       announce(`New knowledge type: ${getKnowledgeKindLabel(kind)}.`);
     },
   });

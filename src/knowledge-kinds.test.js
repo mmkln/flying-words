@@ -5,6 +5,7 @@ import {
   KnowledgeKind,
   KnowledgeKindOptions,
   createKnowledgeMeta,
+  getKnowledgeKindPlaceholder,
   getThoughtKnowledgeKind,
   normalizeKnowledgeKind,
   setThoughtKnowledgeKind,
@@ -43,10 +44,19 @@ test('every knowledge kind has one icon picker definition', () => {
     new Set(KnowledgeKindOptions.map(({ value }) => value)).size,
     KnowledgeKindOptions.length,
   );
-  KnowledgeKindOptions.forEach(({ icon, label }) => {
+  KnowledgeKindOptions.forEach(({ icon, label, placeholder }) => {
     assert.equal(typeof icon, 'string');
     assert.ok(icon.length > 0);
     assert.equal(typeof label, 'string');
     assert.ok(label.length > 0);
+    assert.equal(typeof placeholder, 'string');
+    assert.ok(placeholder.length > 0);
   });
+});
+
+test('unknown knowledge kind uses the thought placeholder', () => {
+  assert.equal(
+    getKnowledgeKindPlaceholder('unknown'),
+    'Enter a thought…',
+  );
 });
