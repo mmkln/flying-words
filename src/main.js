@@ -5,6 +5,15 @@ import {
   wouldCreateHierarchyCycle,
 } from './magnet-hierarchy.js';
 import { createMagnetPhysics } from './magnet-physics.js';
+import {
+  createKnowledgeMeta,
+  getKnowledgeKindLabel,
+  getThoughtKnowledgeKind,
+} from './knowledge-kinds.js';
+import {
+  createKnowledgeKindIcon,
+  createKnowledgeKindPicker,
+} from './knowledge-kind-picker.js';
 
 const STORAGE_KEY = 'flying-thoughts:v1';
 const AUTH_STORAGE_KEY = 'flying-thoughts:auth:v1';
@@ -28,6 +37,9 @@ const API_URL = ['localhost', '127.0.0.1'].includes(window.location.hostname)
 const canvas = document.querySelector('#canvas');
 const form = document.querySelector('#thought-form');
 const input = document.querySelector('#thought-input');
+const knowledgePickerRoot = document.querySelector('#knowledge-picker');
+const knowledgePickerTrigger = document.querySelector('#knowledge-picker-trigger');
+const knowledgePickerMenu = document.querySelector('#knowledge-picker-menu');
 const emptyState = document.querySelector('#empty-state');
 const template = document.querySelector('#thought-template');
 const announcer = document.querySelector('#announcer');
@@ -82,6 +94,15 @@ let outboxFlushInFlight = false;
 let outboxRetryTimer;
 let outboxRetryDelay = 2000;
 let magnetEditor = null;
+
+const composerKnowledgeKindPicker = createKnowledgeKindPicker({
+  root: knowledgePickerRoot,
+  trigger: knowledgePickerTrigger,
+  menu: knowledgePickerMenu,
+  onChange(kind) {
+    announce(`New knowledge type: ${getKnowledgeKindLabel(kind)}.`);
+  },
+});
 
 function loadAuthFrom(storage) {
   try {
@@ -1307,6 +1328,9 @@ function addThought(rawText) {
   const thought = makeThought(text, {
     id: crypto.randomUUID(),
     createdAt: Date.now(),
+    meta: {
+      knowledge: createKnowledgeMeta(composerKnowledgeKindPicker.getValue()),
+    },
   });
   thoughts.push(thought);
   rebuildMagnetComponents();
@@ -1401,7 +1425,7 @@ function removeThoughtElement(thought) {
 }
 
 function beginDrag(event, thought) {
-  if (event.target.closest('button')) return;
+  if (event.target.closest('button, select, input, a')) return;
   if (magnetEditor) return;
   if (blockEditsDuringAccountSync()) return;
   event.preventDefault();
@@ -1464,6 +1488,15 @@ function constrainThought(thought) {
 
 function renderThought(thought) {
   thought.element.classList.toggle('is-pinned', thought.pinned);
+  const kind = getThoughtKnowledgeKind(thought);
+  if (thought.element.dataset.knowledgeKind !== kind) {
+    const kindIcon = thought.element.querySelector('.thought-kind-icon');
+    const kindLabel = getKnowledgeKindLabel(kind);
+    thought.element.dataset.knowledgeKind = kind;
+    kindIcon.replaceChildren(createKnowledgeKindIcon(kind));
+    kindIcon.setAttribute('aria-label', `Knowledge type: ${kindLabel}`);
+    kindIcon.title = kindLabel;
+  }
   thought.element.style.transform = `translate3d(${thought.x}px, ${thought.y}px, 0) rotate(${thought.rotation}deg)`;
   const pinButton = thought.element.querySelector('.pin-button');
   pinButton.title = thought.pinned ? 'Unpin thought' : 'Pin thought';
@@ -1567,12 +1600,21 @@ function renderHistory() {
     groupThoughts.forEach((thought) => {
       const item = document.createElement('li');
       const button = document.createElement('button');
+      const kindIcon = document.createElement('span');
       const text = document.createElement('span');
       const details = document.createElement('span');
       const time = document.createElement('time');
+      const kind = getThoughtKnowledgeKind(thought);
+      const kindLabel = getKnowledgeKindLabel(kind);
 
       button.type = 'button';
       button.className = 'history-item';
+      kindIcon.className = 'history-kind-icon';
+      kindIcon.dataset.kind = kind;
+      kindIcon.setAttribute('role', 'img');
+      kindIcon.setAttribute('aria-label', `Knowledge type: ${kindLabel}`);
+      kindIcon.title = kindLabel;
+      kindIcon.append(createKnowledgeKindIcon(kind));
       text.className = 'history-item-text';
       text.textContent = thought.text;
       details.className = 'history-item-details';
@@ -1587,7 +1629,7 @@ function renderHistory() {
         details.append(pinned);
       }
 
-      button.append(text, details);
+      button.append(kindIcon, text, details);
       button.addEventListener('click', () => focusThoughtFromHistory(thought));
       item.append(button);
       list.append(item);

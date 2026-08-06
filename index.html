@@ -45,6 +45,22 @@
 
       <div class="composer-wrap">
         <form class="composer" id="thought-form">
+          <div class="knowledge-picker" id="knowledge-picker">
+            <button
+              class="knowledge-picker-trigger"
+              id="knowledge-picker-trigger"
+              type="button"
+              aria-haspopup="listbox"
+              aria-expanded="false"
+            ></button>
+            <div
+              class="knowledge-picker-menu"
+              id="knowledge-picker-menu"
+              role="listbox"
+              aria-label="Knowledge type"
+              hidden
+            ></div>
+          </div>
           <label class="sr-only" for="thought-input">New thought</label>
           <input
             id="thought-input"
@@ -107,6 +123,7 @@
 
     <template id="thought-template">
       <article class="thought-card" tabindex="0">
+        <span class="thought-kind-icon" role="img"></span>
         <p class="thought-text"></p>
         <button class="magnet-btn magnet-button" type="button" title="Create magnetic group" aria-label="Create magnetic group">
           <svg viewBox="0 0 24 24" aria-hidden="true">
