@@ -82,6 +82,32 @@ export function addConnection(source, targetId, kind = ConnectionKind.RELATED) {
   return { status: 'created', connection };
 }
 
+export function reconcileConnections(source, selectedTargetIds) {
+  const existing = getOutgoingConnections(source);
+  const existingByTargetId = new Map(
+    existing.map((connection) => [connection.targetId, connection]),
+  );
+  const next = [...new Set(selectedTargetIds)]
+    .filter((targetId) => typeof targetId === 'string' && targetId !== source.id)
+    .slice(0, MAX_CONNECTIONS_PER_THOUGHT)
+    .map((targetId) => existingByTargetId.get(targetId) || {
+      id: crypto.randomUUID(),
+      targetId,
+      kind: ConnectionKind.RELATED,
+      spacing: ConnectionSpacing.NORMAL,
+      label: '',
+      createdAt: new Date().toISOString(),
+    });
+  const changed = JSON.stringify(existing) !== JSON.stringify(next);
+
+  if (changed) writeOutgoingConnections(source, next);
+
+  return {
+    changed,
+    count: next.length,
+  };
+}
+
 export function detachIncomingConnections(thoughts, targetId) {
   const changedThoughts = [];
 

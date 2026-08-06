@@ -471,9 +471,22 @@ kbd { padding: 1px 4px; border: 1px solid rgba(114,104,143,.25); border-bottom-w
   background: #7055c5;
 }
 
-.thought-space.is-connection-editing .thought-card:not(.is-connection-source) .connection-btn {
+.thought-space.is-connection-editing
+  .thought-card:not(.is-connection-source):not(.is-connection-selected)
+  .connection-btn {
   color: #0a84ff;
   border-color: rgba(10, 132, 255, .38);
+}
+
+.thought-card.is-connection-selected {
+  border-color: rgba(10, 132, 255, .65);
+  box-shadow: 0 0 0 3px rgba(10, 132, 255, .1), 0 15px 32px rgba(68, 50, 124, .15);
+}
+
+.thought-card.is-connection-selected .connection-btn {
+  color: #fff;
+  border-color: #0a84ff;
+  background: #0a84ff;
 }
 
 .magnet-btn {
@@ -577,7 +590,7 @@ kbd { padding: 1px 4px; border: 1px solid rgba(114,104,143,.25); border-bottom-w
   background: rgba(242, 242, 247, .94);
 }
 
-.magnet-toolbar {
+.selection-toolbar {
   position: fixed;
   z-index: 300;
   left: 50%;
@@ -595,9 +608,9 @@ kbd { padding: 1px 4px; border: 1px solid rgba(114,104,143,.25); border-bottom-w
   backdrop-filter: blur(18px);
 }
 
-.magnet-toolbar[hidden] { display: none; }
+.selection-toolbar[hidden] { display: none; }
 
-.magnet-toolbar-button {
+.selection-toolbar-button {
   padding: 7px 10px;
   border: 0;
   border-radius: 10px;
@@ -608,11 +621,11 @@ kbd { padding: 1px 4px; border: 1px solid rgba(114,104,143,.25); border-bottom-w
   font-weight: 650;
 }
 
-.magnet-toolbar-button:hover { background: rgba(112, 86, 190, .08); }
-.magnet-toolbar-button:focus-visible { outline: 3px solid rgba(126, 95, 215, .2); outline-offset: 1px; }
-.magnet-toolbar-done { color: #fff; background: #7055c5; }
-.magnet-toolbar-done:hover { background: #6348bd; }
-.magnet-toolbar-count { min-width: 72px; text-align: center; font-size: 12px; font-weight: 650; }
+.selection-toolbar-button:hover { background: rgba(112, 86, 190, .08); }
+.selection-toolbar-button:focus-visible { outline: 3px solid rgba(126, 95, 215, .2); outline-offset: 1px; }
+.selection-toolbar-done { color: #fff; background: #7055c5; }
+.selection-toolbar-done:hover { background: #6348bd; }
+.selection-toolbar-count { min-width: 72px; text-align: center; font-size: 12px; font-weight: 650; }
 
 .thought-card:focus { outline: none; }
 .thought-card:focus-visible { box-shadow: 0 0 0 3px rgba(112, 85, 197, .18), 0 15px 32px rgba(68, 50, 124, .15); }

@@ -9,6 +9,7 @@ import {
   flattenConnections,
   getOutgoingConnections,
   normalizeConnectionSpacing,
+  reconcileConnections,
   repairConnections,
 } from './connections.js';
 
@@ -41,6 +42,42 @@ test('rejects self-links and duplicate source-target pairs', () => {
   assert.equal(addConnection(source, 'target').status, 'created');
   assert.equal(addConnection(source, 'target').status, 'duplicate');
   assert.equal(getOutgoingConnections(source).length, 1);
+});
+
+test('reconciles a multi-selection while preserving existing connection ids', () => {
+  const source = thought('source');
+  addConnection(source, 'kept');
+  addConnection(source, 'removed');
+  const keptId = getOutgoingConnections(source)[0].id;
+
+  const result = reconcileConnections(source, new Set(['kept', 'added']));
+  const outgoing = getOutgoingConnections(source);
+
+  assert.deepEqual(result, { changed: true, count: 2 });
+  assert.deepEqual(outgoing.map(({ targetId }) => targetId), ['kept', 'added']);
+  assert.equal(outgoing[0].id, keptId);
+  assert.notEqual(outgoing[1].id, keptId);
+});
+
+test('reconciling an unchanged selection does not rewrite connections', () => {
+  const source = thought('source');
+  addConnection(source, 'target');
+  const existing = getOutgoingConnections(source)[0];
+
+  const result = reconcileConnections(source, ['target']);
+
+  assert.deepEqual(result, { changed: false, count: 1 });
+  assert.equal(getOutgoingConnections(source)[0], existing);
+});
+
+test('reconciling an empty selection removes connection metadata', () => {
+  const source = thought('source');
+  addConnection(source, 'target');
+
+  const result = reconcileConnections(source, []);
+
+  assert.deepEqual(result, { changed: true, count: 0 });
+  assert.equal(source.meta.connections, undefined);
 });
 
 test('unknown and missing connection spacing fall back to normal', () => {

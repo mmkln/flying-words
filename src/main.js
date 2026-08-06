@@ -18,9 +18,11 @@ import {
   renderKnowledgeKindTrigger,
 } from './knowledge-kind-picker.js';
 import {
-  addConnection,
+  MAX_CONNECTIONS_PER_THOUGHT,
   detachIncomingConnections,
   flattenConnections,
+  getOutgoingConnections,
+  reconcileConnections,
   repairConnections,
 } from './connections.js';
 import { createConnectionRenderer } from './connection-renderer.js';
@@ -67,10 +69,10 @@ const authMessage = document.querySelector('#auth-message');
 const authClose = document.querySelector('#auth-close');
 const registerButton = document.querySelector('#register-button');
 const loginButton = document.querySelector('#login-button');
-const magnetToolbar = document.querySelector('#magnet-toolbar');
-const magnetCount = document.querySelector('#magnet-count');
-const magnetCancel = document.querySelector('#magnet-cancel');
-const magnetDone = document.querySelector('#magnet-done');
+const selectionToolbar = document.querySelector('#selection-toolbar');
+const selectionCount = document.querySelector('#selection-count');
+const selectionCancel = document.querySelector('#selection-cancel');
+const selectionDone = document.querySelector('#selection-done');
 
 let auth = loadAuth();
 const initialPendingThoughts = auth ? loadPendingThoughts(auth.id) : [];
@@ -928,11 +930,18 @@ function renderMagnetThoughtState(thought) {
   button.setAttribute('aria-label', button.title);
 }
 
-function renderMagnetUi() {
-  const selectedCount = magnetEditor?.selectedChildIds.size || 0;
-  magnetCount.textContent = `${selectedCount} selected`;
-  magnetToolbar.hidden = !magnetEditor;
+function renderRelationshipUi() {
+  const selectedTotal = magnetEditor
+    ? magnetEditor.selectedChildIds.size
+    : connectionEditor?.selectedTargetIds.size || 0;
+  selectionCount.textContent = `${selectedTotal} selected`;
+  selectionToolbar.hidden = !magnetEditor && !connectionEditor;
+  selectionToolbar.setAttribute(
+    'aria-label',
+    magnetEditor ? 'Edit magnetic group' : 'Edit thought connections',
+  );
   canvas.classList.toggle('is-magnet-editing', Boolean(magnetEditor));
+  canvas.classList.toggle('is-connection-editing', Boolean(connectionEditor));
   knowledgePickerTrigger.disabled = Boolean(magnetEditor || connectionEditor);
   thoughts.forEach((thought) => {
     renderMagnetThoughtState(thought);
@@ -974,7 +983,7 @@ function openMagnetEditor(parent) {
   };
 
   showThought(parent);
-  renderMagnetUi();
+  renderRelationshipUi();
   announce('Choose thoughts to connect, then select Done.');
 }
 
@@ -998,7 +1007,7 @@ function toggleMagnetCandidate(thought) {
   }
 
   rebuildMagnetComponents();
-  renderMagnetUi();
+  renderRelationshipUi();
   announce(`${magnetEditor.selectedChildIds.size} thoughts selected.`);
 }
 
@@ -1031,7 +1040,7 @@ function closeMagnetEditor({ restoreMotion = false } = {}) {
 
   rebuildMagnetComponents();
   if (restoreMotion) thoughts.forEach(renderThought);
-  renderMagnetUi();
+  renderRelationshipUi();
 }
 
 function commitMagnetEditor() {
@@ -1069,19 +1078,23 @@ function renderConnectionThoughtState(thought) {
   if (!button) return;
 
   const isSource = thought.id === connectionEditor?.sourceId;
+  const isSelected = Boolean(
+    connectionEditor?.selectedTargetIds.has(thought.id),
+  );
   thought.element.classList.toggle('is-connection-source', isSource);
+  thought.element.classList.toggle('is-connection-selected', isSelected);
   button.disabled = Boolean(magnetEditor);
-  button.setAttribute('aria-pressed', String(isSource));
+  button.setAttribute('aria-pressed', String(isSource || isSelected));
 
-  if (isSource) button.title = 'Cancel connection';
-  else if (connectionEditor) button.title = 'Connect to this thought';
-  else button.title = 'Connect thought';
+  if (isSource) button.title = 'Connection source';
+  else if (connectionEditor && isSelected) button.title = 'Remove connection';
+  else if (connectionEditor) button.title = 'Add connection';
+  else button.title = 'Edit connections';
   button.setAttribute('aria-label', button.title);
 }
 
 function renderConnectionUi() {
-  canvas.classList.toggle('is-connection-editing', Boolean(connectionEditor));
-  renderMagnetUi();
+  renderRelationshipUi();
 }
 
 function rebuildConnectionLayer() {
@@ -1099,16 +1112,41 @@ function openConnectionEditor(source) {
   if (blockEditsDuringAccountSync()) return;
 
   knowledgeKindPicker.close();
-  connectionEditor = { sourceId: source.id };
+  connectionEditor = {
+    sourceId: source.id,
+    selectedTargetIds: new Set(
+      getOutgoingConnections(source).map((connection) => connection.targetId),
+    ),
+  };
   showThought(source);
   renderConnectionUi();
-  announce('Choose another thought to connect. Escape to cancel.');
+  announce('Choose connected thoughts, then select Done.');
 }
 
 function closeConnectionEditor() {
   if (!connectionEditor) return;
   connectionEditor = null;
   renderConnectionUi();
+}
+
+function toggleConnectionCandidate(thought) {
+  if (!connectionEditor || thought.id === connectionEditor.sourceId) return;
+
+  const selected = connectionEditor.selectedTargetIds;
+  if (selected.has(thought.id)) {
+    selected.delete(thought.id);
+  } else {
+    if (selected.size >= MAX_CONNECTIONS_PER_THOUGHT) {
+      announce(`You can create up to ${MAX_CONNECTIONS_PER_THOUGHT} connections.`);
+      return;
+    }
+
+    selected.add(thought.id);
+    showThought(thought);
+  }
+
+  renderConnectionUi();
+  announce(`${selected.size} thoughts selected.`);
 }
 
 function handleConnectionButton(thought) {
@@ -1119,31 +1157,33 @@ function handleConnectionButton(thought) {
 
   if (connectionEditor.sourceId === thought.id) {
     closeConnectionEditor();
-    announce('Connection cancelled.');
+    announce('Connection changes cancelled.');
     return;
   }
 
-  const source = getThoughtById(connectionEditor.sourceId);
+  toggleConnectionCandidate(thought);
+}
+
+function commitConnectionEditor() {
+  if (!connectionEditor) return;
+
+  const editor = connectionEditor;
+  const source = getThoughtById(editor.sourceId);
   if (!source) {
     closeConnectionEditor();
     return;
   }
 
-  const result = addConnection(source, thought.id);
-  if (result.status === 'duplicate') {
-    announce('These thoughts are already connected.');
-    return;
-  }
-  if (result.status === 'limit') {
-    announce('This thought has too many connections.');
-    return;
+  const result = reconcileConnections(source, editor.selectedTargetIds);
+  closeConnectionEditor();
+
+  if (result.changed) {
+    rebuildConnectionLayer();
+    saveThoughts();
+    if (isCloudMode()) enqueueThoughtUpsert(source);
   }
 
-  closeConnectionEditor();
-  rebuildConnectionLayer();
-  saveThoughts();
-  if (isCloudMode()) enqueueThoughtUpsert(source);
-  announce('Thoughts connected.');
+  announce(`${result.count} thoughts connected.`);
 }
 
 function makeThought(text, restoredThought = {}) {
@@ -1212,7 +1252,7 @@ function replaceThoughts(nextThoughts) {
   knowledgeKindPicker.close();
   magnetEditor = null;
   connectionEditor = null;
-  magnetToolbar.hidden = true;
+  selectionToolbar.hidden = true;
   canvas.classList.remove('is-magnet-editing');
   canvas.classList.remove('is-connection-editing');
   stopDrag();
@@ -1224,7 +1264,7 @@ function replaceThoughts(nextThoughts) {
   ]);
   rebuildMagnetComponents({ preserveVisibility: false });
   initializeThoughtVisibility();
-  renderMagnetUi();
+  renderRelationshipUi();
   rebuildConnectionLayer();
   updateUi();
   saveThoughts();
@@ -1607,7 +1647,7 @@ function detachLocalMagnetChildren(parentId) {
   rebuildMagnetComponents();
   saveThoughts();
   if (isCloudMode()) changedThoughts.forEach(enqueueThoughtUpsert);
-  renderMagnetUi();
+  renderRelationshipUi();
 }
 
 function removeThought(thought) {
@@ -1631,7 +1671,7 @@ function removeThoughtElement(thought) {
     thought.element.remove();
     thoughts = thoughts.filter((item) => item !== thought);
     rebuildMagnetComponents();
-    renderMagnetUi();
+    renderRelationshipUi();
     rebuildConnectionLayer();
     updateUi();
     saveThoughts();
@@ -2065,11 +2105,19 @@ historyButton.addEventListener('click', () => {
   if (connectionEditor) closeConnectionEditor();
   openHistory();
 });
-magnetCancel.addEventListener('click', () => {
-  closeMagnetEditor({ restoreMotion: true });
-  announce('Magnetic group changes canceled.');
+selectionCancel.addEventListener('click', () => {
+  if (magnetEditor) {
+    closeMagnetEditor({ restoreMotion: true });
+    announce('Magnetic group changes canceled.');
+  } else if (connectionEditor) {
+    closeConnectionEditor();
+    announce('Connection changes cancelled.');
+  }
 });
-magnetDone.addEventListener('click', commitMagnetEditor);
+selectionDone.addEventListener('click', () => {
+  if (magnetEditor) commitMagnetEditor();
+  else if (connectionEditor) commitConnectionEditor();
+});
 historyClose.addEventListener('click', () => historyDialog.close());
 historySearch.addEventListener('input', renderHistory);
 historyDialog.addEventListener('click', (event) => {
@@ -2105,7 +2153,13 @@ window.addEventListener('keydown', (event) => {
   if (connectionEditor && event.key === 'Escape') {
     event.preventDefault();
     closeConnectionEditor();
-    announce('Connection cancelled.');
+    announce('Connection changes cancelled.');
+    return;
+  }
+
+  if (connectionEditor && event.key === 'Enter') {
+    event.preventDefault();
+    commitConnectionEditor();
     return;
   }
 
