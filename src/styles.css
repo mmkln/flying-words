@@ -43,6 +43,24 @@ button { -webkit-tap-highlight-color: transparent; }
   overflow: hidden;
 }
 
+.connection-layer {
+  position: absolute;
+  z-index: 1;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+  pointer-events: none;
+}
+
+.connection-edge {
+  fill: none;
+  stroke: rgba(112, 85, 197, .46);
+  stroke-width: 1.6;
+  stroke-linecap: round;
+  vector-effect: non-scaling-stroke;
+}
+
 .empty-state {
   position: absolute;
   top: 47%;
@@ -401,9 +419,61 @@ kbd { padding: 1px 4px; border: 1px solid rgba(114,104,143,.25); border-bottom-w
 
 .pin-btn,
 .magnet-btn,
+.connection-btn,
 .delete-btn {
   border: 0;
   font: inherit;
+}
+
+.connection-btn {
+  position: absolute;
+  top: -9px;
+  left: 25px;
+  z-index: 4;
+  display: grid;
+  width: 30px;
+  height: 30px;
+  padding: 6px;
+  place-items: center;
+  border: 1px solid rgba(112, 85, 197, .28);
+  border-radius: 50%;
+  color: #7055c5;
+  cursor: pointer;
+  background: rgba(255, 255, 255, .97);
+  box-shadow: 0 3px 8px rgba(47, 35, 82, .12);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity .16s ease, color .16s ease, background .16s ease, border-color .16s ease;
+}
+
+.connection-btn svg {
+  display: block;
+  width: 17px;
+  height: 17px;
+  pointer-events: none;
+}
+
+.thought-card:hover .connection-btn,
+.thought-card:focus-within .connection-btn,
+.thought-space.is-connection-editing .connection-btn {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.thought-card.is-connection-source {
+  border-color: rgba(112, 85, 197, .72);
+  box-shadow: 0 0 0 3px rgba(112, 85, 197, .11), 0 15px 32px rgba(68, 50, 124, .15);
+}
+
+.thought-card.is-connection-source .connection-btn {
+  color: #fff;
+  border-color: #7055c5;
+  background: #7055c5;
+}
+
+.thought-space.is-connection-editing .thought-card:not(.is-connection-source) .connection-btn {
+  color: #0a84ff;
+  border-color: rgba(10, 132, 255, .38);
 }
 
 .magnet-btn {
@@ -438,6 +508,11 @@ kbd { padding: 1px 4px; border: 1px solid rgba(114,104,143,.25); border-bottom-w
 .thought-space.is-magnet-editing .magnet-btn {
   opacity: 1;
   pointer-events: auto;
+}
+
+.thought-space.is-connection-editing .magnet-btn {
+  opacity: 0;
+  pointer-events: none;
 }
 
 .thought-card.is-magnet-parent .magnet-btn {

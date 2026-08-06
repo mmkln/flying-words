@@ -38,6 +38,17 @@ function simulate(engine, thoughtIds, frameDelta, seconds) {
   }
 }
 
+function syncConnections(engine, connections) {
+  engine.syncConnections(connections);
+}
+
+function thoughtCenter(thought) {
+  return {
+    x: thought.x + thought.width / 2,
+    y: thought.y + thought.height / 2,
+  };
+}
+
 function assertPosition(thought, expected) {
   assert.ok(Math.abs(thought.x - expected.x) < 1e-9);
   assert.ok(Math.abs(thought.y - expected.y) < 1e-9);
@@ -109,6 +120,155 @@ test('fixed timestep produces the same cloud motion at 60 and 120 FPS', () => {
     assert.ok(Math.abs(thought.vx - comparison.vx) < 0.05);
     assert.ok(Math.abs(thought.vy - comparison.vy) < 0.05);
   });
+});
+
+test('semantic connection pulls standalone components together without moving their center of mass', () => {
+  const thoughts = [
+    makeThought('source', { x: 0, y: 80 }),
+    makeThought('target', { x: 600, y: 80 }),
+  ];
+  const engine = createMagnetPhysics();
+  sync(engine, thoughts, []);
+  syncConnections(engine, [{
+    id: 'connection',
+    sourceId: 'source',
+    targetId: 'target',
+    spacing: 'normal',
+  }]);
+
+  const beforeSource = thoughtCenter(thoughts[0]);
+  const beforeTarget = thoughtCenter(thoughts[1]);
+  const beforeDistance = beforeTarget.x - beforeSource.x;
+  const beforeCenter = (beforeSource.x + beforeTarget.x) / 2;
+
+  simulate(engine, thoughts.map(({ id }) => id), 1 / 120, 4);
+
+  const afterSource = thoughtCenter(thoughts[0]);
+  const afterTarget = thoughtCenter(thoughts[1]);
+  const afterDistance = afterTarget.x - afterSource.x;
+  const afterCenter = (afterSource.x + afterTarget.x) / 2;
+
+  assert.ok(afterDistance < beforeDistance - 80);
+  assert.ok(afterDistance < 320);
+  assert.ok(Math.abs(afterCenter - beforeCenter) < 0.05);
+});
+
+test('pinned connection endpoint stays fixed while the free endpoint moves', () => {
+  const thoughts = [
+    makeThought('anchor', { x: 40, y: 120, pinned: true }),
+    makeThought('free', { x: 620, y: 120 }),
+  ];
+  const engine = createMagnetPhysics();
+  sync(engine, thoughts, []);
+  syncConnections(engine, [{
+    id: 'connection',
+    sourceId: 'anchor',
+    targetId: 'free',
+    spacing: 'normal',
+  }]);
+
+  simulate(engine, thoughts.map(({ id }) => id), 1 / 120, 3);
+
+  assert.ok(Math.abs(thoughts[0].x - 40) < 1e-9);
+  assert.ok(Math.abs(thoughts[0].y - 120) < 1e-9);
+  assert.ok(thoughts[1].x < 570);
+});
+
+test('connection moves a magnetic cloud as one component without changing its internal solution', () => {
+  const makeSystem = (connected) => {
+    const thoughts = [
+      makeThought('parent', { x: 40, y: 100 }),
+      makeThought('child', { x: 260, y: 160 }),
+      makeThought('target', { x: 760, y: 130 }),
+    ];
+    const relations = [{ parentId: 'parent', childId: 'child', slot: 0 }];
+    const engine = createMagnetPhysics();
+    sync(engine, thoughts, relations);
+    syncConnections(engine, connected ? [{
+      id: 'connection',
+      sourceId: 'child',
+      targetId: 'target',
+      spacing: 'normal',
+    }] : []);
+    return { engine, thoughts };
+  };
+  const baseline = makeSystem(false);
+  const connected = makeSystem(true);
+  const ids = connected.thoughts.map(({ id }) => id);
+
+  simulate(baseline.engine, ids, 1 / 120, 2);
+  simulate(connected.engine, ids, 1 / 120, 2);
+
+  const baselineOffset = {
+    x: baseline.thoughts[1].x - baseline.thoughts[0].x,
+    y: baseline.thoughts[1].y - baseline.thoughts[0].y,
+  };
+  const connectedOffset = {
+    x: connected.thoughts[1].x - connected.thoughts[0].x,
+    y: connected.thoughts[1].y - connected.thoughts[0].y,
+  };
+
+  assert.ok(Math.abs(connectedOffset.x - baselineOffset.x) < 0.05);
+  assert.ok(Math.abs(connectedOffset.y - baselineOffset.y) < 0.05);
+  assert.ok(connected.thoughts[0].x > baseline.thoughts[0].x + 5);
+  assert.ok(connected.thoughts[1].x > baseline.thoughts[1].x + 5);
+});
+
+test('semantic connection inside one magnetic component does not add another force', () => {
+  const makeSystem = (connected) => {
+    const thoughts = [
+      makeThought('parent', { x: 20, y: 70, vx: 10, vy: 3 }),
+      makeThought('child', { x: 340, y: 210, vx: 10, vy: 3 }),
+    ];
+    const relations = [{ parentId: 'parent', childId: 'child', slot: 2 }];
+    const engine = createMagnetPhysics();
+    sync(engine, thoughts, relations);
+    syncConnections(engine, connected ? [{
+      id: 'connection',
+      sourceId: 'parent',
+      targetId: 'child',
+      spacing: 'tight',
+    }] : []);
+    return { engine, thoughts };
+  };
+  const baseline = makeSystem(false);
+  const connected = makeSystem(true);
+  const ids = connected.thoughts.map(({ id }) => id);
+
+  simulate(baseline.engine, ids, 1 / 120, 2);
+  simulate(connected.engine, ids, 1 / 120, 2);
+
+  connected.thoughts.forEach((thought, index) => {
+    assertPosition(thought, baseline.thoughts[index]);
+  });
+});
+
+test('a new semantic connection ramps in without a first-frame position jump', () => {
+  const thoughts = [
+    makeThought('source', { x: 30, y: 40 }),
+    makeThought('target', { x: 640, y: 340 }),
+  ];
+  const engine = createMagnetPhysics();
+  sync(engine, thoughts, []);
+  syncConnections(engine, [{
+    id: 'connection',
+    sourceId: 'source',
+    targetId: 'target',
+    spacing: 'normal',
+  }]);
+  const before = thoughts.map(({ x, y }) => ({ x, y }));
+
+  simulate(engine, thoughts.map(({ id }) => id), 1 / 120, 1 / 120);
+
+  thoughts.forEach((thought, index) => {
+    assert.ok(Math.hypot(
+      thought.x - before[index].x,
+      thought.y - before[index].y,
+    ) < 0.001);
+  });
+  const [constraint] = engine.debugSnapshot().connectionConstraints;
+  assert.ok(constraint.strength > 0);
+  assert.ok(constraint.strength < 0.1);
 });
 
 test('multi-parent constraints stay finite and velocity-limited', () => {

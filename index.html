@@ -34,6 +34,7 @@
       </div>
 
       <section class="thought-space" id="canvas" aria-label="Thought space">
+        <svg class="connection-layer" id="connection-layer" aria-hidden="true"></svg>
         <div class="empty-state" id="empty-state">
           <span class="empty-orbit orbit-one" aria-hidden="true"></span>
           <span class="empty-orbit orbit-two" aria-hidden="true"></span>
@@ -141,6 +142,13 @@
                 d="M4 2h6v10a2 2 0 0 0 4 0V2h6v10a8 8 0 0 1-16 0V2Zm2 2v3h2V4H6Zm10 0v3h2V4h-2Z"
               ></path>
             </g>
+          </svg>
+        </button>
+        <button class="connection-btn connection-button" type="button" title="Connect thought" aria-label="Connect thought" aria-pressed="false">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true">
+            <circle cx="5" cy="12" r="3"></circle>
+            <circle cx="19" cy="12" r="3"></circle>
+            <path d="M8 12h8"></path>
           </svg>
         </button>
         <button class="pin-btn pin-button" type="button" title="Pin thought" aria-label="Pin thought">

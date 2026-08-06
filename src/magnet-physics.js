@@ -1,4 +1,8 @@
 import { getMagnetSlotPreference } from './magnet-layout.js';
+import {
+  ConnectionSpacing,
+  normalizeConnectionSpacing,
+} from './connections.js';
 
 const DEFAULT_OPTIONS = {
   fixedStep: 1 / 120,
@@ -17,6 +21,15 @@ const DEFAULT_OPTIONS = {
   hoverTimeScale: 0.2,
   hoverResponse: 0.18,
   collisionRestitution: 0.12,
+  connectionStiffness: 0.85,
+  connectionDamping: 2.1,
+  connectionRampDuration: 0.4,
+  maxConnectionForce: 36,
+  connectionDeadZone: 8,
+  connectionTightGap: 24,
+  connectionNormalGap: 64,
+  connectionLooseGap: 160,
+  maxConnectionDistance: 360,
 };
 
 function clamp(value, minimum, maximum) {
@@ -99,6 +112,7 @@ export function createMagnetPhysics(customOptions = {}) {
   let componentByThoughtId = new Map();
   let nodes = new Map();
   let constraints = new Map();
+  let connectionConstraints = new Map();
   let dragged = null;
 
   function exportThought(thoughtId) {
@@ -224,6 +238,51 @@ export function createMagnetPhysics(customOptions = {}) {
 
     if (dragged && !nodes.has(dragged.thoughtId)) dragged = null;
     exportWorldState();
+  }
+
+  function syncConnections(connections = []) {
+    const previousConstraints = connectionConstraints;
+    const degreeByThoughtId = new Map();
+
+    connections.forEach((connection) => {
+      if (
+        typeof connection?.sourceId !== 'string'
+        || typeof connection?.targetId !== 'string'
+      ) return;
+
+      degreeByThoughtId.set(
+        connection.sourceId,
+        (degreeByThoughtId.get(connection.sourceId) || 0) + 1,
+      );
+      degreeByThoughtId.set(
+        connection.targetId,
+        (degreeByThoughtId.get(connection.targetId) || 0) + 1,
+      );
+    });
+
+    const nextConstraints = new Map();
+    connections.forEach((connection) => {
+      if (
+        typeof connection?.id !== 'string'
+        || typeof connection?.sourceId !== 'string'
+        || typeof connection?.targetId !== 'string'
+        || !nodes.has(connection.sourceId)
+        || !nodes.has(connection.targetId)
+      ) return;
+
+      const sourceDegree = degreeByThoughtId.get(connection.sourceId) || 1;
+      const targetDegree = degreeByThoughtId.get(connection.targetId) || 1;
+      nextConstraints.set(connection.id, {
+        id: connection.id,
+        sourceId: connection.sourceId,
+        targetId: connection.targetId,
+        spacing: normalizeConnectionSpacing(connection.spacing),
+        degreeScale: 1 / Math.sqrt(sourceDegree * targetDegree),
+        strength: previousConstraints.get(connection.id)?.strength ?? 0,
+      });
+    });
+
+    connectionConstraints = nextConstraints;
   }
 
   function addConstraintForces(forces, activeComponentIds, delta) {
@@ -443,6 +502,117 @@ export function createMagnetPhysics(customOptions = {}) {
     component.vy = velocity.y;
   }
 
+  function isComponentPinned(component) {
+    return [...component.memberIds].some(
+      (thoughtId) => thoughtsById.get(thoughtId)?.pinned,
+    );
+  }
+
+  function isComponentDragged(component) {
+    return Boolean(dragged && component.memberIds.has(dragged.thoughtId));
+  }
+
+  function connectionRestLength(connection, sourceThought, targetThought) {
+    const gaps = {
+      [ConnectionSpacing.TIGHT]: options.connectionTightGap,
+      [ConnectionSpacing.NORMAL]: options.connectionNormalGap,
+      [ConnectionSpacing.LOOSE]: options.connectionLooseGap,
+    };
+    const gap = gaps[connection.spacing] ?? options.connectionNormalGap;
+
+    return Math.min(
+      options.maxConnectionDistance,
+      sourceThought.width / 2 + targetThought.width / 2 + gap,
+    );
+  }
+
+  function addConnectionForces(activeComponentIds, delta) {
+    connectionConstraints.forEach((connection) => {
+      const sourceNode = nodes.get(connection.sourceId);
+      const targetNode = nodes.get(connection.targetId);
+      if (!sourceNode || !targetNode) return;
+
+      const sourceComponent = components.get(sourceNode.componentId);
+      const targetComponent = components.get(targetNode.componentId);
+      if (!sourceComponent || !targetComponent) return;
+      if (sourceComponent.id === targetComponent.id) return;
+      if (
+        !activeComponentIds.has(sourceComponent.id)
+        || !activeComponentIds.has(targetComponent.id)
+      ) return;
+
+      const sourceThought = thoughtsById.get(connection.sourceId);
+      const targetThought = thoughtsById.get(connection.targetId);
+      if (!sourceThought || !targetThought) return;
+
+      connection.strength = Math.min(
+        1,
+        connection.strength + delta / options.connectionRampDuration,
+      );
+
+      const sourcePosition = nodeWorldPosition(sourceComponent, sourceNode);
+      const targetPosition = nodeWorldPosition(targetComponent, targetNode);
+      const sourceCenterX = sourcePosition.x + sourceThought.width / 2;
+      const sourceCenterY = sourcePosition.y + sourceThought.height / 2;
+      const targetCenterX = targetPosition.x + targetThought.width / 2;
+      const targetCenterY = targetPosition.y + targetThought.height / 2;
+      let dx = targetCenterX - sourceCenterX;
+      let dy = targetCenterY - sourceCenterY;
+      let distance = Math.hypot(dx, dy);
+
+      if (distance < 0.001) {
+        dx = 1;
+        dy = 0;
+        distance = 1;
+      }
+
+      const normalX = dx / distance;
+      const normalY = dy / distance;
+      const restLength = connectionRestLength(
+        connection,
+        sourceThought,
+        targetThought,
+      );
+      const distanceError = distance - restLength;
+      const effectiveError = Math.abs(distanceError) <= options.connectionDeadZone
+        ? 0
+        : distanceError;
+      const relativeVelocityX = targetComponent.vx - sourceComponent.vx;
+      const relativeVelocityY = targetComponent.vy - sourceComponent.vy;
+      const velocityAlongSpring = (
+        relativeVelocityX * normalX + relativeVelocityY * normalY
+      );
+      const force = clamp(
+        (
+          effectiveError * options.connectionStiffness
+          + velocityAlongSpring * options.connectionDamping
+        ) * connection.degreeScale * connection.strength,
+        -options.maxConnectionForce,
+        options.maxConnectionForce,
+      );
+      const sourceFixed = (
+        isComponentPinned(sourceComponent) || isComponentDragged(sourceComponent)
+      );
+      const targetFixed = (
+        isComponentPinned(targetComponent) || isComponentDragged(targetComponent)
+      );
+      const inverseSourceMass = sourceFixed ? 0 : 1 / sourceComponent.mass;
+      const inverseTargetMass = targetFixed ? 0 : 1 / targetComponent.mass;
+      if (!inverseSourceMass && !inverseTargetMass) return;
+
+      const pairTimeScale = Math.min(
+        sourceComponent.timeScale,
+        targetComponent.timeScale,
+      );
+      const scaledDelta = delta * pairTimeScale;
+
+      sourceComponent.vx += normalX * force * inverseSourceMass * scaledDelta;
+      sourceComponent.vy += normalY * force * inverseSourceMass * scaledDelta;
+      targetComponent.vx -= normalX * force * inverseTargetMass * scaledDelta;
+      targetComponent.vy -= normalY * force * inverseTargetMass * scaledDelta;
+    });
+  }
+
   function resolveComponentCollisions(activeComponentIds) {
     const activeComponents = [...activeComponentIds]
       .map((componentId) => components.get(componentId))
@@ -549,6 +719,7 @@ export function createMagnetPhysics(customOptions = {}) {
     );
     addConstraintForces(forces, activeComponentIds, delta);
     addInternalCollisionForces(forces, activeComponentIds);
+    addConnectionForces(activeComponentIds, delta);
 
     activeComponentIds.forEach((componentId) => {
       const component = components.get(componentId);
@@ -713,11 +884,15 @@ export function createMagnetPhysics(customOptions = {}) {
         timeScale: component.timeScale,
       })),
       constraints: [...constraints.values()].map((constraint) => ({ ...constraint })),
+      connectionConstraints: [...connectionConstraints.values()].map(
+        (connection) => ({ ...connection }),
+      ),
     };
   }
 
   return {
     syncTopology,
+    syncConnections,
     advance,
     translateComponent,
     setComponentVelocity,
