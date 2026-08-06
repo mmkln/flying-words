@@ -1,0 +1,170 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#f7f5ff" />
+    <link rel="icon" href="./favicon.svg" type="image/svg+xml" />
+    <link rel="icon" href="./favicon-96x96.png" sizes="96x96" type="image/png" />
+    <link rel="shortcut icon" href="./favicon.ico" />
+    <link rel="apple-touch-icon" href="./apple-touch-icon.png" sizes="180x180" />
+    <link rel="manifest" href="./site.webmanifest" />
+    <meta
+      name="description"
+      content="Flying Thoughts — a space for thoughts that move freely."
+    />
+    <title>Flying Thoughts</title>
+    <script type="module" crossorigin src="/flying-words/assets/index-cb2t5bED.js"></script>
+    <link rel="stylesheet" crossorigin href="/flying-words/assets/index-DqOmm0_g.css">
+  </head>
+  <body>
+    <main class="app-shell">
+      <button class="history-button" id="history-button" type="button" aria-label="Open thought history" title="Thought history">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M3 12a9 9 0 1 0 3-6.7L3 8"></path>
+          <path d="M3 3v5h5"></path>
+          <path d="M12 7v5l3 2"></path>
+        </svg>
+      </button>
+      <button class="account-button" id="account-button" type="button">Sign in</button>
+
+      <div class="magnet-toolbar" id="magnet-toolbar" role="toolbar" aria-label="Edit magnetic group" hidden>
+        <button class="magnet-toolbar-button" id="magnet-cancel" type="button">Cancel</button>
+        <span class="magnet-toolbar-count" id="magnet-count">0 selected</span>
+        <button class="magnet-toolbar-button magnet-toolbar-done" id="magnet-done" type="button">Done</button>
+      </div>
+
+      <section class="thought-space" id="canvas" aria-label="Thought space">
+        <svg class="connection-layer" id="connection-layer" aria-hidden="true"></svg>
+        <div class="empty-state" id="empty-state">
+          <span class="empty-orbit orbit-one" aria-hidden="true"></span>
+          <span class="empty-orbit orbit-two" aria-hidden="true"></span>
+          <div class="empty-icon" aria-hidden="true">✦</div>
+          <h1>Let your thought take flight</h1>
+          <p>Write it below. Drag cards, pin what matters — the rest will move on their own.</p>
+        </div>
+      </section>
+
+      <div class="composer-wrap">
+        <form class="composer" id="thought-form">
+          <div class="knowledge-picker" id="knowledge-picker">
+            <button
+              class="knowledge-picker-trigger"
+              id="knowledge-picker-trigger"
+              type="button"
+              aria-haspopup="listbox"
+              aria-expanded="false"
+            ></button>
+          </div>
+          <label class="sr-only" for="thought-input">New thought</label>
+          <input
+            id="thought-input"
+            name="thought"
+            type="text"
+            maxlength="280"
+            placeholder="Enter a thought…"
+            autocomplete="off"
+            required
+          />
+          <button class="send-button" type="submit" aria-label="Add thought" title="Add thought">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m21 3-7.6 18-3.15-7.25L3 10.6 21 3Zm-10.75 10.75L21 3" /></svg>
+          </button>
+        </form>
+        <p class="composer-tip"><kbd>Enter</kbd> to add a thought · drag a card to move it</p>
+      </div>
+
+      <div
+        class="knowledge-picker-menu"
+        id="knowledge-picker-menu"
+        role="listbox"
+        aria-label="Knowledge type"
+        hidden
+      ></div>
+
+      <p class="announcer sr-only" id="announcer" aria-live="polite"></p>
+    </main>
+
+    <dialog class="history-dialog" id="history-dialog" aria-labelledby="history-title">
+      <div class="history-header">
+        <div>
+          <h2 id="history-title">History</h2>
+          <p>Your thoughts, newest first.</p>
+        </div>
+        <button class="history-close" id="history-close" type="button" aria-label="Close history">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true">
+            <path d="m6 6 12 12M18 6 6 18"></path>
+          </svg>
+        </button>
+      </div>
+      <label class="history-search" for="history-search">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true">
+          <circle cx="11" cy="11" r="7"></circle>
+          <path d="m16 16 4 4"></path>
+        </svg>
+        <span class="sr-only">Search thoughts</span>
+        <input id="history-search" type="search" placeholder="Search thoughts" autocomplete="off" />
+      </label>
+      <div class="history-list" id="history-list"></div>
+    </dialog>
+
+    <dialog class="auth-dialog" id="auth-dialog" aria-labelledby="auth-title">
+      <button class="dialog-close" id="auth-close" type="button" aria-label="Close">×</button>
+      <h2 id="auth-title">Keep thoughts in sync</h2>
+      <p>Sign in to save your thoughts to your account.</p>
+      <form class="auth-form" id="auth-form">
+        <label for="auth-email">Email</label>
+        <input id="auth-email" name="email" type="email" autocomplete="email" required />
+        <label for="auth-password">Password</label>
+        <input id="auth-password" name="password" type="password" autocomplete="current-password" minlength="8" required />
+        <p class="auth-message" id="auth-message" aria-live="polite"></p>
+        <div class="auth-actions">
+          <button class="auth-register" id="register-button" type="button">Create account</button>
+          <button class="auth-submit" id="login-button" type="submit">Sign in</button>
+        </div>
+      </form>
+    </dialog>
+
+    <template id="thought-template">
+      <article class="thought-card" tabindex="0">
+        <button
+          class="thought-kind-icon thought-kind-button"
+          type="button"
+          aria-haspopup="listbox"
+          aria-expanded="false"
+        ></button>
+        <p class="thought-text"></p>
+        <button class="magnet-btn magnet-button" type="button" title="Create magnetic group" aria-label="Create magnetic group">
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <g transform="rotate(-45 12 12)">
+              <path
+                fill="currentColor"
+                fill-rule="evenodd"
+                clip-rule="evenodd"
+                d="M4 2h6v10a2 2 0 0 0 4 0V2h6v10a8 8 0 0 1-16 0V2Zm2 2v3h2V4H6Zm10 0v3h2V4h-2Z"
+              ></path>
+            </g>
+          </svg>
+        </button>
+        <button class="connection-btn connection-button" type="button" title="Connect thought" aria-label="Connect thought" aria-pressed="false">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true">
+            <circle cx="5" cy="12" r="3"></circle>
+            <circle cx="19" cy="12" r="3"></circle>
+            <path d="M8 12h8"></path>
+          </svg>
+        </button>
+        <button class="pin-btn pin-button" type="button" title="Pin thought" aria-label="Pin thought">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <line x1="12" y1="17" x2="12" y2="22"></line>
+            <path d="M5 17h14v-1.76a2 2 0 0 0-.59-1.41L16 11.41V4h1a1 1 0 0 0 0-2H7a1 1 0 0 0 0 2h1v7.41L5.59 13.83A2 2 0 0 0 5 15.24V17z"></path>
+          </svg>
+        </button>
+        <button class="delete-btn delete-button" type="button" title="Delete thought" aria-label="Delete thought">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" aria-hidden="true">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18 18 6M6 6l12 12" />
+          </svg>
+        </button>
+      </article>
+    </template>
+
+  </body>
+</html>
