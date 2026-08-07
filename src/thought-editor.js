@@ -4,7 +4,7 @@ export function createThoughtEditor({
   textarea,
   counter,
   discardButton,
-  maximum = 1000,
+  maximum = 2000,
   warningThreshold = 850,
   onSave,
   onClose,
