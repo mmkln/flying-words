@@ -21,15 +21,22 @@ import {
   MAX_CONNECTIONS_PER_THOUGHT,
   detachIncomingConnections,
   flattenConnections,
-  getOutgoingConnections,
+  getOutgoingConnectionsForSpace,
   reconcileConnections,
   repairConnections,
 } from './connections.js';
 import { createConnectionRenderer } from './connection-renderer.js';
 import {
+  getCanvasPlacement,
+  hasCanvasPlacement,
+  normalizeCanvasMeta,
+  withCanvasPlacement,
+} from './canvas-placements.js';
+import {
   DEFAULT_SPACE_ID,
   SPACES,
   getThoughtSpaceId,
+  isCanvasSpace,
   isSpaceId,
   isThoughtAvailableInSpace,
 } from './spaces.js';
@@ -37,6 +44,7 @@ import {
 const STORAGE_KEY = 'flying-thoughts:v1';
 const AUTH_STORAGE_KEY = 'flying-thoughts:auth:v1';
 const ACTIVE_SPACE_STORAGE_KEY = 'flying-thoughts:active-space:v1';
+const CANVAS_CAMERA_STORAGE_PREFIX = 'flying-thoughts:canvas-camera:v1:';
 const PENDING_SYNC_STORAGE_PREFIX = 'flying-thoughts:pending-sync:v1:';
 const ACCOUNT_STORAGE_PREFIX = 'flying-thoughts:account:v1:';
 const OUTBOX_STORAGE_PREFIX = 'flying-thoughts:outbox:v1:';
@@ -48,6 +56,8 @@ const TARGET_VISIBLE_DENSITY = 0.35;
 const RESPAWN_DELAY_MIN = 800;
 const RESPAWN_DELAY_MAX = 1400;
 const SPAWN_MARGIN = 20;
+const MIN_CANVAS_SCALE = 0.72;
+const MAX_CANVAS_SCALE = 1;
 const LOCAL_API_URL = 'http://127.0.0.1:8000/api/v1';
 const PRODUCTION_API_URL = 'https://mxllwords.pythonanywhere.com/api/v1';
 const API_URL = ['localhost', '127.0.0.1'].includes(window.location.hostname)
@@ -55,12 +65,15 @@ const API_URL = ['localhost', '127.0.0.1'].includes(window.location.hostname)
   : PRODUCTION_API_URL;
 
 const canvas = document.querySelector('#canvas');
+const canvasWorld = document.querySelector('#canvas-world');
 const connectionLayer = document.querySelector('#connection-layer');
 const form = document.querySelector('#thought-form');
 const input = document.querySelector('#thought-input');
 const knowledgePickerTrigger = document.querySelector('#knowledge-picker-trigger');
 const knowledgePickerMenu = document.querySelector('#knowledge-picker-menu');
 const emptyState = document.querySelector('#empty-state');
+const emptyStateTitle = emptyState.querySelector('h1');
+const emptyStateDescription = emptyState.querySelector('p');
 const template = document.querySelector('#thought-template');
 const announcer = document.querySelector('#announcer');
 const historyButton = document.querySelector('#history-button');
@@ -69,6 +82,10 @@ const historyClose = document.querySelector('#history-close');
 const historySearch = document.querySelector('#history-search');
 const historyList = document.querySelector('#history-list');
 const spacesButton = document.querySelector('#spaces-button');
+const canvasControls = document.querySelector('#canvas-controls');
+const canvasZoomIn = document.querySelector('#canvas-zoom-in');
+const canvasZoomOut = document.querySelector('#canvas-zoom-out');
+const canvasResetZoom = document.querySelector('#canvas-reset-zoom');
 const spacesOverview = document.querySelector('#spaces-overview');
 const spacesClose = document.querySelector('#spaces-close');
 const spacesGrid = document.querySelector('#spaces-grid');
@@ -110,6 +127,11 @@ const magnetPhysics = createMagnetPhysics();
 let magnetComponents = [];
 let draggedThought = null;
 let dragOffset = { x: 0, y: 0 };
+let canvasPan = null;
+let canvasScaleAnimationId = null;
+let canvasHudTimer = null;
+let canvasHudVisible = false;
+let canvasHudExpanded = false;
 let lastTimestamp = performance.now();
 let nextSpawnAt = 0;
 let saveTimer;
@@ -121,9 +143,12 @@ let magnetEditor = null;
 let connectionEditor = null;
 let composerKnowledgeKind = KnowledgeKind.THOUGHT;
 let knowledgeKindEditor = null;
+let thoughtTextEditor = null;
 let viewMode = 'canvas';
 let activeSpaceId = localStorage.getItem(ACTIVE_SPACE_STORAGE_KEY);
 if (!isSpaceId(activeSpaceId)) activeSpaceId = DEFAULT_SPACE_ID;
+let canvasCamera = loadCanvasCamera(activeSpaceId);
+canvasHudVisible = isCanvasSpace(activeSpaceId) && canvasCamera.scale < MAX_CANVAS_SCALE;
 
 const connectionRenderer = createConnectionRenderer({
   layer: connectionLayer,
@@ -304,6 +329,118 @@ function cloneMeta(meta = {}) {
   return JSON.parse(JSON.stringify(meta));
 }
 
+function canvasCameraStorageKey(spaceId) {
+  return `${CANVAS_CAMERA_STORAGE_PREFIX}${spaceId}`;
+}
+
+function defaultCanvasCamera() {
+  return { x: 0, y: 0, scale: MAX_CANVAS_SCALE };
+}
+
+function loadCanvasCamera(spaceId) {
+  if (!isCanvasSpace(spaceId)) return defaultCanvasCamera();
+
+  try {
+    const stored = JSON.parse(localStorage.getItem(canvasCameraStorageKey(spaceId)));
+    if (!stored || !Number.isFinite(stored.x) || !Number.isFinite(stored.y)) {
+      return defaultCanvasCamera();
+    }
+
+    return {
+      x: stored.x,
+      y: stored.y,
+      scale: Math.min(
+        MAX_CANVAS_SCALE,
+        Math.max(MIN_CANVAS_SCALE, Number.isFinite(stored.scale) ? stored.scale : 1),
+      ),
+    };
+  } catch {
+    return defaultCanvasCamera();
+  }
+}
+
+function saveCanvasCamera() {
+  if (!isCanvasSpace(activeSpaceId)) return;
+  localStorage.setItem(canvasCameraStorageKey(activeSpaceId), JSON.stringify(canvasCamera));
+}
+
+function isCanvasAtDefaultScale() {
+  return Math.abs(canvasCamera.scale - MAX_CANVAS_SCALE) < 0.001;
+}
+
+function clearCanvasHudTimer() {
+  if (canvasHudTimer) window.clearTimeout(canvasHudTimer);
+  canvasHudTimer = null;
+}
+
+function renderCanvasHud() {
+  const shouldShow = isCanvasSpace(activeSpaceId)
+    && viewMode !== 'spaces'
+    && canvasHudVisible;
+  canvasControls.hidden = !shouldShow;
+  if (!shouldShow) return;
+
+  canvasControls.classList.toggle('is-expanded', canvasHudExpanded);
+  const percentage = Math.round(canvasCamera.scale * 100);
+  canvasResetZoom.textContent = `${percentage}%`;
+  canvasZoomIn.disabled = canvasCamera.scale >= MAX_CANVAS_SCALE;
+  canvasZoomOut.disabled = canvasCamera.scale <= MIN_CANVAS_SCALE;
+}
+
+function scheduleCanvasHudCollapse(delay = 1500) {
+  clearCanvasHudTimer();
+  canvasHudTimer = window.setTimeout(() => {
+    canvasHudExpanded = false;
+    if (isCanvasAtDefaultScale()) canvasHudVisible = false;
+    renderCanvasHud();
+  }, delay);
+}
+
+function revealCanvasHud() {
+  if (!isCanvasSpace(activeSpaceId)) return;
+  clearCanvasHudTimer();
+  canvasHudVisible = true;
+  canvasHudExpanded = true;
+  renderCanvasHud();
+  scheduleCanvasHudCollapse();
+}
+
+function renderCanvasCamera() {
+  const activeCanvas = isCanvasSpace(activeSpaceId);
+  canvas.classList.toggle('is-static-canvas', activeCanvas);
+  canvasWorld.style.transform = activeCanvas
+    ? `translate3d(${canvasCamera.x}px, ${canvasCamera.y}px, 0) scale(${canvasCamera.scale})`
+    : '';
+  renderCanvasHud();
+}
+
+function applyCanvasPlacement(thought) {
+  const placement = getCanvasPlacement(thought, activeSpaceId);
+  if (!placement) return false;
+
+  thought.x = placement.x;
+  thought.y = placement.y;
+  thought.vx = 0;
+  thought.vy = 0;
+  thought.rotation = 0;
+  return true;
+}
+
+function updateCanvasPlacement(thought) {
+  thought.meta = withCanvasPlacement(thought.meta, activeSpaceId, {
+    x: thought.x,
+    y: thought.y,
+  });
+}
+
+function pointerToCanvasWorld(event) {
+  const bounds = canvas.getBoundingClientRect();
+  return {
+    x: (event.clientX - bounds.left - canvasCamera.x) / canvasCamera.scale,
+    y: (event.clientY - bounds.top - canvasCamera.y) / canvasCamera.scale,
+  };
+}
+
 function getThoughtById(thoughtId) {
   return thoughts.find((thought) => thought.id === thoughtId) || null;
 }
@@ -451,7 +588,12 @@ function repairMagnetRelations() {
 
       getPersistedMagnetParents(thought).forEach((relation) => {
         const parent = byId.get(relation.parentId);
-        if (!parent || parent === thought || parent.pinned || thought.pinned) return;
+        if (
+          !parent
+          || parent === thought
+          || parent.pinned
+          || thought.pinned
+        ) return;
 
         const createsCycle = wouldCreateHierarchyCycle(
           relation.parentId,
@@ -574,7 +716,7 @@ function normalizeThoughts(data) {
       rotation: Number.isFinite(thought.rotation) ? thought.rotation : randomBetween(-2.5, 2.5),
       pinned: Boolean(thought.pinned),
       meta: thought.meta && typeof thought.meta === 'object' && !Array.isArray(thought.meta)
-        ? thought.meta
+        ? normalizeCanvasMeta(thought.meta)
         : {},
       createdAt: thought.createdAt || Date.now(),
     }));
@@ -648,6 +790,7 @@ function getVisibilityState(value) {
 
 function isThoughtActive(thought) {
   if (!isThoughtAvailableInActiveSpace(thought)) return false;
+  if (isCanvasSpace(activeSpaceId)) return true;
   const component = getMagnetComponent(thought);
   return isMagnetComponentPinned(component)
     || getVisibilityState(component).status !== 'dormant';
@@ -692,6 +835,10 @@ function calculateVisibleTarget() {
 
 function showThought(thought) {
   if (!isThoughtAvailableInActiveSpace(thought)) return;
+  if (isCanvasSpace(activeSpaceId)) {
+    thought.element.hidden = false;
+    return;
+  }
   const component = getMagnetComponent(thought);
   if (!component) return;
   getVisibilityState(component).status = 'visible';
@@ -701,6 +848,7 @@ function showThought(thought) {
 }
 
 function hideThought(thought) {
+  if (isCanvasSpace(activeSpaceId)) return;
   const component = getMagnetComponent(thought);
   if (!component) return;
   const members = getMagnetComponentMembers(component);
@@ -871,6 +1019,14 @@ function maybeSpawnThought(timestamp, reducedMotion) {
 function initializeThoughtVisibility() {
   visibilityStates.clear();
 
+  if (isCanvasSpace(activeSpaceId)) {
+    thoughts.forEach((thought) => {
+      thought.element.hidden = !isThoughtAvailableInActiveSpace(thought);
+    });
+    nextSpawnAt = 0;
+    return;
+  }
+
   const target = calculateVisibleTarget();
   const availableComponents = magnetComponents.filter(
     isMagnetComponentAvailableInActiveSpace,
@@ -923,6 +1079,20 @@ function magnetCandidateDisabled(thought) {
 function renderMagnetThoughtState(thought) {
   const button = thought.element.querySelector('.magnet-button');
   if (!button) return;
+
+  if (isCanvasSpace(activeSpaceId)) {
+    button.hidden = true;
+    thought.element.classList.remove(
+      'is-magnet-parent',
+      'is-magnet-child',
+      'is-magnet-hybrid',
+      'is-magnet-editor-parent',
+      'is-magnet-disabled',
+    );
+    return;
+  }
+
+  button.hidden = false;
 
   const storedParents = getPersistedMagnetParents(thought);
   const hasParents = storedParents.length > 0;
@@ -987,6 +1157,10 @@ function renderRelationshipUi() {
 }
 
 function openMagnetEditor(parent) {
+  if (isCanvasSpace(activeSpaceId)) {
+    announce('Magnetic groups are only available in flying Spaces.');
+    return;
+  }
   if (connectionEditor) {
     announce('Finish creating the connection first.');
     return;
@@ -1131,18 +1305,24 @@ function renderConnectionUi() {
   renderRelationshipUi();
 }
 
+function connectionScopeId(spaceId = activeSpaceId) {
+  return isCanvasSpace(spaceId) ? spaceId : undefined;
+}
+
 function rebuildConnectionLayer() {
   const availableThoughtIds = new Set(
     thoughts
       .filter(isThoughtAvailableInActiveSpace)
       .map((thought) => thought.id),
   );
+  const scopeId = connectionScopeId();
   const connections = flattenConnections(thoughts).filter((connection) => (
-    availableThoughtIds.has(connection.sourceId)
+    connection.spaceId === scopeId
+    && availableThoughtIds.has(connection.sourceId)
     && availableThoughtIds.has(connection.targetId)
   ));
   connectionRenderer.setConnections(connections);
-  magnetPhysics.syncConnections(connections);
+  magnetPhysics.syncConnections(isCanvasSpace(activeSpaceId) ? [] : connections);
   connectionRenderer.update();
 }
 
@@ -1157,7 +1337,8 @@ function openConnectionEditor(source) {
   connectionEditor = {
     sourceId: source.id,
     selectedTargetIds: new Set(
-      getOutgoingConnections(source).map((connection) => connection.targetId),
+      getOutgoingConnectionsForSpace(source, connectionScopeId())
+        .map((connection) => connection.targetId),
     ),
   };
   showThought(source);
@@ -1216,7 +1397,9 @@ function commitConnectionEditor() {
     return;
   }
 
-  const result = reconcileConnections(source, editor.selectedTargetIds);
+  const result = reconcileConnections(source, editor.selectedTargetIds, {
+    spaceId: connectionScopeId(),
+  });
   closeConnectionEditor();
 
   if (result.changed) {
@@ -1232,6 +1415,7 @@ function makeThought(text, restoredThought = {}) {
   const fragment = template.content.cloneNode(true);
   const element = fragment.querySelector('.thought-card');
   const textElement = fragment.querySelector('.thought-text');
+  const textEditor = fragment.querySelector('.thought-editor');
   const kindButton = fragment.querySelector('.thought-kind-button');
   const pinButton = fragment.querySelector('.pin-button');
   const magnetButton = fragment.querySelector('.magnet-button');
@@ -1264,13 +1448,16 @@ function makeThought(text, restoredThought = {}) {
   };
 
   textElement.textContent = text;
-  canvas.append(element);
+  canvasWorld.append(element);
   measureThought(thought);
   const hasLocalPosition = (
     Number.isFinite(restoredThought.x) && Number.isFinite(restoredThought.y)
   );
-  if (!hasLocalPosition) applyPinnedLayout(thought);
-  constrainThought(thought);
+  if (!hasLocalPosition) {
+    if (isCanvasSpace(activeSpaceId)) applyCanvasPlacement(thought);
+    else applyPinnedLayout(thought);
+  }
+  if (!isCanvasSpace(activeSpaceId)) constrainThought(thought);
   renderThought(thought);
 
   pinButton.addEventListener('click', () => togglePinned(thought));
@@ -1281,16 +1468,56 @@ function makeThought(text, restoredThought = {}) {
       () => openThoughtKnowledgeKindPicker(thought),
     );
   });
+  textElement.addEventListener('dblclick', (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    startThoughtTextEditing(thought);
+  });
+  textElement.addEventListener('pointerdown', (event) => {
+    // Text has its own interaction: never let the card drag handler cancel
+    // the browser's native double-click sequence.
+    event.stopPropagation();
+    element.focus({ preventScroll: true });
+  });
+  textElement.title = 'Double-click to edit';
+  textEditor.addEventListener('keydown', (event) => {
+    event.stopPropagation();
+
+    if ((event.ctrlKey || event.metaKey) && event.key === 'Enter') {
+      event.preventDefault();
+      finishThoughtTextEditing({ save: true });
+      return;
+    }
+
+    if (event.key === 'Escape') {
+      event.preventDefault();
+      finishThoughtTextEditing({ save: false });
+    }
+  });
+  textEditor.addEventListener('input', () => resizeThoughtEditor(textEditor));
+  textEditor.addEventListener('blur', () => {
+    finishThoughtTextEditing({ save: true, restoreFocus: false });
+  });
   magnetButton.addEventListener('click', () => handleMagnetButton(thought));
   connectionButton.addEventListener('click', () => handleConnectionButton(thought));
   deleteButton.addEventListener('click', () => removeThought(thought));
   element.addEventListener('pointerdown', (event) => beginDrag(event, thought));
+  element.addEventListener('keydown', (event) => {
+    if (event.target !== element) return;
+    if (event.key !== 'Enter' && event.key !== 'F2') return;
+
+    event.preventDefault();
+    startThoughtTextEditing(thought);
+  });
   element.addEventListener('pointerenter', () => element.classList.add('is-hovered'));
   element.addEventListener('pointerleave', () => element.classList.remove('is-hovered'));
   return thought;
 }
 
 function replaceThoughts(nextThoughts) {
+  if (thoughtTextEditor) {
+    finishThoughtTextEditing({ save: true, restoreFocus: false });
+  }
   knowledgeKindPicker.close();
   magnetEditor = null;
   connectionEditor = null;
@@ -1618,13 +1845,34 @@ function addThought(rawText) {
     return false;
   }
 
+  const meta = {
+    knowledge: createKnowledgeMeta(composerKnowledgeKind),
+  };
+
+  if (isCanvasSpace(activeSpaceId)) {
+    const bounds = canvas.getBoundingClientRect();
+    const canvasThoughtCount = thoughts.filter(
+      (thought) => hasCanvasPlacement(thought, activeSpaceId),
+    ).length;
+    const columnOffset = [0, 300, -300][canvasThoughtCount % 3];
+    const rowOffset = Math.floor(canvasThoughtCount / 3) * 140;
+    Object.assign(meta, withCanvasPlacement(meta, activeSpaceId, {
+      x: (bounds.width / 2 - canvasCamera.x) / canvasCamera.scale + columnOffset,
+      y: (bounds.height / 2 - canvasCamera.y) / canvasCamera.scale + rowOffset,
+    }));
+  }
+
   const thought = makeThought(text, {
     id: crypto.randomUUID(),
     createdAt: Date.now(),
-    meta: {
-      knowledge: createKnowledgeMeta(composerKnowledgeKind),
-    },
+    meta,
   });
+  if (isCanvasSpace(activeSpaceId)) {
+    thought.x -= thought.width / 2;
+    thought.y -= thought.height / 2;
+    updateCanvasPlacement(thought);
+    renderThought(thought);
+  }
   thoughts.push(thought);
   rebuildMagnetComponents();
   updateUi();
@@ -1641,6 +1889,10 @@ function addThought(rawText) {
 }
 
 function togglePinned(thought) {
+  if (isCanvasSpace(activeSpaceId)) {
+    announce('Canvas cards stay in place without pins.');
+    return;
+  }
   if (magnetEditor || connectionEditor) {
     announce('Finish the current card relationship first.');
     return;
@@ -1728,7 +1980,8 @@ function removeThoughtElement(thought) {
 }
 
 function beginDrag(event, thought) {
-  if (event.target.closest('button, select, input, a')) return;
+  if (event.target.closest('button, select, input, textarea, a')) return;
+  if (thoughtTextEditor) return;
   if (magnetEditor || connectionEditor) return;
   if (blockEditsDuringAccountSync()) return;
   event.preventDefault();
@@ -1736,6 +1989,16 @@ function beginDrag(event, thought) {
     thought.element.focus({ preventScroll: true });
   }
   draggedThought = thought;
+
+  if (isCanvasSpace(activeSpaceId)) {
+    const pointer = pointerToCanvasWorld(event);
+    dragOffset = { x: pointer.x - thought.x, y: pointer.y - thought.y };
+    thought.element.setPointerCapture(event.pointerId);
+    thought.element.classList.add('is-dragging');
+    thought.element.style.zIndex = String(topZIndex() + 1);
+    return;
+  }
+
   const bounds = thought.element.getBoundingClientRect();
   dragOffset = { x: event.clientX - bounds.left, y: event.clientY - bounds.top };
   magnetPhysics.beginDrag(thought.id);
@@ -1746,6 +2009,17 @@ function beginDrag(event, thought) {
 
 function moveDrag(event) {
   if (!draggedThought) return;
+
+  if (isCanvasSpace(activeSpaceId)) {
+    const pointer = pointerToCanvasWorld(event);
+    draggedThought.x = pointer.x - dragOffset.x;
+    draggedThought.y = pointer.y - dragOffset.y;
+    draggedThought.rotation = 0;
+    renderThought(draggedThought);
+    connectionRenderer.update();
+    return;
+  }
+
   const bounds = canvas.getBoundingClientRect();
   const maxX = Math.max(0, bounds.width - draggedThought.width);
   const maxY = Math.max(
@@ -1768,6 +2042,15 @@ function stopDrag() {
   if (!draggedThought) return;
   const thought = draggedThought;
   thought.element.classList.remove('is-dragging');
+
+  if (isCanvasSpace(activeSpaceId)) {
+    updateCanvasPlacement(thought);
+    draggedThought = null;
+    saveThoughts();
+    if (isCloudMode()) enqueueThoughtUpsert(thought);
+    return;
+  }
+
   magnetPhysics.endDrag(thought.id);
   if (thought.pinned) {
     updatePinnedLayoutMeta(thought);
@@ -1775,6 +2058,100 @@ function stopDrag() {
   }
   draggedThought = null;
   scheduleSave();
+}
+
+function beginCanvasPan(event) {
+  if (!isCanvasSpace(activeSpaceId)) return;
+  if (event.button !== 0 || event.target.closest('.thought-card, button, input')) return;
+
+  canvasPan = {
+    pointerId: event.pointerId,
+    startX: event.clientX,
+    startY: event.clientY,
+    cameraX: canvasCamera.x,
+    cameraY: canvasCamera.y,
+  };
+  canvas.setPointerCapture(event.pointerId);
+  canvas.classList.add('is-panning');
+}
+
+function moveCanvasPan(event) {
+  if (!canvasPan || event.pointerId !== canvasPan.pointerId) return false;
+
+  canvasCamera.x = canvasPan.cameraX + event.clientX - canvasPan.startX;
+  canvasCamera.y = canvasPan.cameraY + event.clientY - canvasPan.startY;
+  renderCanvasCamera();
+  return true;
+}
+
+function stopCanvasPan(event) {
+  if (!canvasPan || (event && event.pointerId !== canvasPan.pointerId)) return;
+  canvasPan = null;
+  canvas.classList.remove('is-panning');
+  saveCanvasCamera();
+}
+
+function setCanvasScale(nextScale, clientX, clientY, { persist = true, revealHud = true } = {}) {
+  if (!isCanvasSpace(activeSpaceId)) return;
+
+  const scale = Math.min(MAX_CANVAS_SCALE, Math.max(MIN_CANVAS_SCALE, nextScale));
+  if (scale === canvasCamera.scale) return;
+
+  const bounds = canvas.getBoundingClientRect();
+  const worldX = (clientX - bounds.left - canvasCamera.x) / canvasCamera.scale;
+  const worldY = (clientY - bounds.top - canvasCamera.y) / canvasCamera.scale;
+  canvasCamera.scale = scale;
+  canvasCamera.x = clientX - bounds.left - worldX * scale;
+  canvasCamera.y = clientY - bounds.top - worldY * scale;
+  renderCanvasCamera();
+  if (revealHud) revealCanvasHud();
+  if (persist) saveCanvasCamera();
+}
+
+function animateCanvasScale(targetScale, clientX, clientY) {
+  if (!isCanvasSpace(activeSpaceId)) return;
+  if (canvasScaleAnimationId) cancelAnimationFrame(canvasScaleAnimationId);
+
+  revealCanvasHud();
+
+  const startScale = canvasCamera.scale;
+  const finalScale = Math.min(
+    MAX_CANVAS_SCALE,
+    Math.max(MIN_CANVAS_SCALE, targetScale),
+  );
+  const startedAt = performance.now();
+  const duration = 150;
+
+  function frame(now) {
+    const progress = Math.min(1, (now - startedAt) / duration);
+    const eased = 1 - (1 - progress) ** 3;
+    const scale = startScale + (finalScale - startScale) * eased;
+
+    setCanvasScale(scale, clientX, clientY, {
+      persist: progress === 1,
+      revealHud: false,
+    });
+
+    if (progress < 1) {
+      canvasScaleAnimationId = requestAnimationFrame(frame);
+    } else {
+      canvasScaleAnimationId = null;
+    }
+  }
+
+  canvasScaleAnimationId = requestAnimationFrame(frame);
+}
+
+function handleCanvasWheel(event) {
+  if (!isCanvasSpace(activeSpaceId) || !event.ctrlKey) return;
+  event.preventDefault();
+  if (canvasScaleAnimationId) {
+    cancelAnimationFrame(canvasScaleAnimationId);
+    canvasScaleAnimationId = null;
+  }
+  const nextScale = canvasCamera.scale * Math.exp(-event.deltaY * 0.0015);
+  setCanvasScale(nextScale, event.clientX, event.clientY, { revealHud: false });
+  revealCanvasHud();
 }
 
 function topZIndex() {
@@ -1789,16 +2166,93 @@ function constrainThought(thought) {
   thought.y = Math.min(Math.max(0, thought.y), maxY);
 }
 
+function resizeThoughtEditor(editor) {
+  editor.style.height = 'auto';
+  editor.style.height = `${editor.scrollHeight}px`;
+}
+
+function startThoughtTextEditing(thought) {
+  if (magnetEditor || connectionEditor) {
+    announce('Finish the current card relationship first.');
+    return;
+  }
+  if (blockEditsDuringAccountSync()) return;
+  if (thoughtTextEditor?.thoughtId === thought.id) return;
+
+  if (thoughtTextEditor) finishThoughtTextEditing({ save: true });
+  if (draggedThought) stopDrag();
+
+  knowledgeKindPicker.close();
+  thoughtTextEditor = {
+    thoughtId: thought.id,
+    previousText: thought.text,
+  };
+
+  const editor = thought.element.querySelector('.thought-editor');
+  editor.value = thought.text;
+  renderThought(thought);
+  resizeThoughtEditor(editor);
+
+  window.requestAnimationFrame(() => {
+    editor.focus();
+    editor.setSelectionRange(editor.value.length, editor.value.length);
+  });
+}
+
+function finishThoughtTextEditing({ save, restoreFocus = true } = {}) {
+  if (!thoughtTextEditor) return;
+
+  const session = thoughtTextEditor;
+  const thought = getThoughtById(session.thoughtId);
+  thoughtTextEditor = null;
+  if (!thought) return;
+
+  const editor = thought.element.querySelector('.thought-editor');
+  const nextText = editor.value.trim();
+  const changed = save && Boolean(nextText) && nextText !== session.previousText;
+
+  if (changed) {
+    thought.text = nextText;
+    saveThoughts();
+    if (isCloudMode()) enqueueThoughtUpsert(thought);
+    if (historyDialog.open) renderHistory();
+    announce('Thought updated.');
+  } else if (save && !nextText) {
+    announce('A thought cannot be empty.');
+  }
+
+  renderThought(thought);
+  measureThought(thought);
+  if (!isCanvasSpace(activeSpaceId) && thought.pinned) {
+    constrainThought(thought);
+    updatePinnedLayoutMeta(thought);
+  }
+  rebuildConnectionLayer();
+
+  if (restoreFocus) thought.element.focus({ preventScroll: true });
+}
+
 function renderThought(thought) {
+  const canvasThought = isCanvasSpace(activeSpaceId);
+  const isEditing = thoughtTextEditor?.thoughtId === thought.id;
+  const textElement = thought.element.querySelector('.thought-text');
+  const textEditor = thought.element.querySelector('.thought-editor');
+  textElement.hidden = isEditing;
+  textEditor.hidden = !isEditing;
+  if (!isEditing) textElement.textContent = thought.text;
+
   thought.element.classList.toggle('is-pinned', thought.pinned);
+  thought.element.classList.toggle('is-canvas-card', canvasThought);
+  thought.element.classList.toggle('is-editing', isEditing);
   const kind = getThoughtKnowledgeKind(thought);
   if (thought.element.dataset.knowledgeKind !== kind) {
     const kindButton = thought.element.querySelector('.thought-kind-button');
     thought.element.dataset.knowledgeKind = kind;
     renderKnowledgeKindTrigger(kindButton, kind);
   }
-  thought.element.style.transform = `translate3d(${thought.x}px, ${thought.y}px, 0) rotate(${thought.rotation}deg)`;
+  thought.element.style.transform = `translate3d(${thought.x}px, ${thought.y}px, 0) rotate(${canvasThought ? 0 : thought.rotation}deg)`;
   const pinButton = thought.element.querySelector('.pin-button');
+  pinButton.hidden = canvasThought;
   pinButton.title = thought.pinned ? 'Unpin thought' : 'Pin thought';
   pinButton.setAttribute('aria-label', pinButton.title);
   renderMagnetThoughtState(thought);
@@ -1839,11 +2293,72 @@ function formatHistoryDate(createdAt) {
   return new Intl.DateTimeFormat(undefined, options).format(date);
 }
 
+function canvasHistoryPlacement(thought) {
+  const bounds = canvas.getBoundingClientRect();
+  const existingCount = thoughts.filter((item) => (
+    hasCanvasPlacement(item, activeSpaceId)
+  )).length;
+  const radius = existingCount === 0
+    ? 0
+    : 150 + Math.floor((existingCount - 1) / 6) * 92;
+  const angle = existingCount * 2.399963229728653;
+  const centerX = (bounds.width / 2 - canvasCamera.x) / canvasCamera.scale;
+  const centerY = (bounds.height / 2 - canvasCamera.y) / canvasCamera.scale;
+
+  return {
+    x: centerX - thought.width / 2 + Math.cos(angle) * radius,
+    y: centerY - thought.height / 2 + Math.sin(angle) * radius,
+  };
+}
+
+function focusCanvasThought(thought, message = 'Thought shown on Canvas.') {
+  applyCanvasPlacement(thought);
+  const bounds = canvas.getBoundingClientRect();
+  canvasCamera.x = bounds.width / 2 - (thought.x + thought.width / 2) * canvasCamera.scale;
+  canvasCamera.y = bounds.height / 2 - (thought.y + thought.height / 2) * canvasCamera.scale;
+  renderCanvasCamera();
+  saveCanvasCamera();
+  showThought(thought);
+  renderThought(thought);
+  rebuildConnectionLayer();
+  thought.element.focus({ preventScroll: true });
+  thought.element.classList.add('is-history-focused');
+  window.setTimeout(() => thought.element.classList.remove('is-history-focused'), 900);
+  announce(message);
+}
+
+function addOrFocusThoughtOnCanvas(thought) {
+  const existingPlacement = getCanvasPlacement(thought, activeSpaceId);
+
+  if (!existingPlacement) {
+    thought.meta = withCanvasPlacement(
+      thought.meta,
+      activeSpaceId,
+      canvasHistoryPlacement(thought),
+    );
+    saveThoughts();
+    if (isCloudMode()) enqueueThoughtUpsert(thought);
+    updateUi();
+  }
+
+  historyDialog.close();
+  focusCanvasThought(
+    thought,
+    existingPlacement ? 'Thought shown on Canvas.' : 'Thought added to Canvas.',
+  );
+}
+
 function focusThoughtFromHistory(thought) {
+  if (isCanvasSpace(activeSpaceId)) {
+    addOrFocusThoughtOnCanvas(thought);
+    return;
+  }
+
   historyDialog.close();
   if (thought.pinned && getThoughtSpaceId(thought) !== activeSpaceId) {
     switchSpace(getThoughtSpaceId(thought));
   }
+
   const component = getMagnetComponent(thought);
   const members = getMagnetComponentMembers(component);
   showThought(thought);
@@ -1996,15 +2511,32 @@ function renderSpacesOverview() {
     surface.append(chrome, composer);
     tile.append(surface, label);
 
-    thoughts
-      .filter((thought) => (
-        thought.pinned && getThoughtSpaceId(thought) === space.id
-      ))
-      .forEach((thought) => {
+    const isCanvasPreview = isCanvasSpace(space.id);
+    const previewThoughts = thoughts.filter((thought) => (
+      isCanvasPreview
+        ? hasCanvasPlacement(thought, space.id)
+        : thought.pinned && getThoughtSpaceId(thought) === space.id
+    ));
+    const canvasPositions = previewThoughts.map((thought) => (
+      getCanvasPlacement(thought, space.id)
+    ));
+    const minCanvasX = Math.min(...canvasPositions.map((position) => position?.x ?? 0), 0);
+    const maxCanvasX = Math.max(...canvasPositions.map((position) => position?.x ?? 0), 1);
+    const minCanvasY = Math.min(...canvasPositions.map((position) => position?.y ?? 0), 0);
+    const maxCanvasY = Math.max(...canvasPositions.map((position) => position?.y ?? 0), 1);
+    const canvasRangeX = Math.max(1, maxCanvasX - minCanvasX);
+    const canvasRangeY = Math.max(1, maxCanvasY - minCanvasY);
+
+    previewThoughts.forEach((thought) => {
         const preview = document.createElement('span');
         const layout = thought.meta?.layout;
-        const x = Number.isFinite(layout?.x) ? layout.x : 0.5;
-        const y = Number.isFinite(layout?.y) ? layout.y : 0.5;
+        const canvasPlacement = getCanvasPlacement(thought, space.id);
+        const x = isCanvasPreview
+          ? 0.08 + ((canvasPlacement?.x ?? 0) - minCanvasX) / canvasRangeX * 0.84
+          : Number.isFinite(layout?.x) ? layout.x : 0.5;
+        const y = isCanvasPreview
+          ? 0.08 + ((canvasPlacement?.y ?? 0) - minCanvasY) / canvasRangeY * 0.84
+          : Number.isFinite(layout?.y) ? layout.y : 0.5;
         const width = Math.min(
           34,
           Math.max(12, ((thought.width || 180) / canvasWidth) * 100),
@@ -2030,6 +2562,7 @@ function renderSpacesOverview() {
 function closeSpacesOverview({ restoreFocus = true } = {}) {
   if (viewMode !== 'spaces') return;
   viewMode = 'canvas';
+  renderCanvasCamera();
   spacesOverview.hidden = true;
   if (restoreFocus) spacesButton.focus();
 }
@@ -2040,9 +2573,20 @@ function switchSpace(spaceId) {
   if (magnetEditor) closeMagnetEditor({ restoreMotion: true });
   if (connectionEditor) closeConnectionEditor();
   stopDrag();
+  stopCanvasPan();
+  if (canvasScaleAnimationId) {
+    cancelAnimationFrame(canvasScaleAnimationId);
+    canvasScaleAnimationId = null;
+  }
+  saveCanvasCamera();
 
   activeSpaceId = spaceId;
   localStorage.setItem(ACTIVE_SPACE_STORAGE_KEY, activeSpaceId);
+  canvasCamera = loadCanvasCamera(activeSpaceId);
+  clearCanvasHudTimer();
+  canvasHudVisible = isCanvasSpace(activeSpaceId) && !isCanvasAtDefaultScale();
+  canvasHudExpanded = false;
+  renderCanvasCamera();
 
   thoughts.forEach((thought) => {
     if (!isThoughtAvailableInActiveSpace(thought)) {
@@ -2051,7 +2595,9 @@ function switchSpace(spaceId) {
     }
 
     measureThought(thought);
-    if (thought.pinned) {
+    if (isCanvasSpace(activeSpaceId)) {
+      applyCanvasPlacement(thought);
+    } else if (thought.pinned) {
       applyPinnedLayout(thought);
       constrainThought(thought);
     }
@@ -2079,6 +2625,7 @@ function openSpacesOverview() {
   saveThoughts();
 
   viewMode = 'spaces';
+  renderCanvasCamera();
   renderSpacesOverview();
   spacesOverview.hidden = false;
   spacesGrid
@@ -2088,6 +2635,13 @@ function openSpacesOverview() {
 
 function updateUi() {
   emptyState.hidden = thoughts.some(isThoughtAvailableInActiveSpace);
+  if (isCanvasSpace(activeSpaceId)) {
+    emptyStateTitle.textContent = 'Your Canvas is empty';
+    emptyStateDescription.textContent = 'Add a card, then drag the canvas to move or pinch to zoom out.';
+  } else {
+    emptyStateTitle.textContent = 'Let your thought take flight';
+    emptyStateDescription.textContent = 'Write it below. Drag cards, pin what matters — the rest will move on their own.';
+  }
   if (historyDialog.open) renderHistory();
 }
 
@@ -2106,6 +2660,13 @@ function animate(timestamp) {
     return;
   }
 
+  if (isCanvasSpace(activeSpaceId)) {
+    getActiveThoughts().forEach(renderThought);
+    connectionRenderer.update();
+    window.requestAnimationFrame(animate);
+    return;
+  }
+
   const bounds = getPlayfieldBounds();
   const activeThoughts = getActiveThoughts();
   const activeComponents = magnetComponents.filter((component) => (
@@ -2116,7 +2677,7 @@ function animate(timestamp) {
     )
   ));
 
-  if (!magnetEditor && !connectionEditor) {
+  if (!magnetEditor && !connectionEditor && !thoughtTextEditor) {
     const hoveredComponentIds = new Set(activeComponents
       .filter((component) => getMagnetComponentMembers(component).some(
         (thought) => thought.element.matches(':hover, :focus-within'),
@@ -2156,7 +2717,9 @@ function animate(timestamp) {
   activeThoughts.forEach(renderThought);
   connectionRenderer.update();
 
-  if (!magnetEditor && !connectionEditor) maybeSpawnThought(timestamp, reducedMotion);
+  if (!magnetEditor && !connectionEditor && !thoughtTextEditor) {
+    maybeSpawnThought(timestamp, reducedMotion);
+  }
   window.requestAnimationFrame(animate);
 }
 
@@ -2312,14 +2875,75 @@ authForm.addEventListener('submit', (event) => {
   void authenticate('login');
 });
 registerButton.addEventListener('click', () => void authenticate('register'));
-canvas.addEventListener('pointermove', moveDrag);
-canvas.addEventListener('pointerup', stopDrag);
-canvas.addEventListener('pointercancel', stopDrag);
+canvas.addEventListener('pointerdown', beginCanvasPan);
+canvas.addEventListener('pointermove', (event) => {
+  if (!moveCanvasPan(event)) moveDrag(event);
+});
+canvas.addEventListener('pointerup', (event) => {
+  const wasPanning = Boolean(canvasPan);
+  stopCanvasPan(event);
+  if (!wasPanning) stopDrag();
+});
+canvas.addEventListener('pointercancel', (event) => {
+  const wasPanning = Boolean(canvasPan);
+  stopCanvasPan(event);
+  if (!wasPanning) stopDrag();
+});
+canvas.addEventListener('wheel', handleCanvasWheel, { passive: false });
+
+function getCanvasViewportCenter() {
+  const bounds = canvas.getBoundingClientRect();
+  return {
+    x: bounds.left + bounds.width / 2,
+    y: bounds.top + bounds.height / 2,
+  };
+}
+
+canvasZoomIn.addEventListener('click', () => {
+  const center = getCanvasViewportCenter();
+  animateCanvasScale(canvasCamera.scale / 0.88, center.x, center.y);
+});
+canvasZoomOut.addEventListener('click', () => {
+  const center = getCanvasViewportCenter();
+  animateCanvasScale(canvasCamera.scale * 0.88, center.x, center.y);
+});
+canvasResetZoom.addEventListener('click', () => {
+  const center = getCanvasViewportCenter();
+  animateCanvasScale(MAX_CANVAS_SCALE, center.x, center.y);
+});
+canvasControls.addEventListener('pointerenter', () => {
+  if (!canvasHudVisible) return;
+  clearCanvasHudTimer();
+  canvasHudExpanded = true;
+  renderCanvasHud();
+});
+canvasControls.addEventListener('pointerleave', () => {
+  if (!canvasHudVisible) return;
+  canvasHudExpanded = false;
+  renderCanvasHud();
+  scheduleCanvasHudCollapse();
+});
+canvasControls.addEventListener('focusin', () => {
+  if (!canvasHudVisible) return;
+  clearCanvasHudTimer();
+  canvasHudExpanded = true;
+  renderCanvasHud();
+});
+canvasControls.addEventListener('focusout', () => {
+  window.requestAnimationFrame(() => {
+    if (!canvasHudVisible || canvasControls.contains(document.activeElement)) return;
+    canvasHudExpanded = false;
+    renderCanvasHud();
+    scheduleCanvasHudCollapse();
+  });
+});
 window.addEventListener('resize', () => {
   knowledgeKindPicker.close();
   getActiveThoughts().forEach((thought) => {
     measureThought(thought);
-    if (thought.pinned) {
+    if (isCanvasSpace(activeSpaceId)) {
+      applyCanvasPlacement(thought);
+    } else if (thought.pinned) {
       applyPinnedLayout(thought);
       constrainThought(thought);
     }
@@ -2345,12 +2969,13 @@ window.addEventListener('keydown', (event) => {
     const currentIndex = focusedIndex >= 0
       ? focusedIndex
       : SPACES.findIndex((space) => space.id === activeSpaceId);
+    const columnCount = 2;
     let nextIndex = currentIndex;
 
-    if (event.key === 'ArrowLeft' && currentIndex % 2 > 0) nextIndex -= 1;
-    else if (event.key === 'ArrowRight' && currentIndex % 2 < 1) nextIndex += 1;
-    else if (event.key === 'ArrowUp' && currentIndex >= 2) nextIndex -= 2;
-    else if (event.key === 'ArrowDown' && currentIndex < 2) nextIndex += 2;
+    if (event.key === 'ArrowLeft' && currentIndex % columnCount > 0) nextIndex -= 1;
+    else if (event.key === 'ArrowRight' && currentIndex % columnCount < columnCount - 1 && currentIndex + 1 < tiles.length) nextIndex += 1;
+    else if (event.key === 'ArrowUp' && currentIndex >= columnCount) nextIndex -= columnCount;
+    else if (event.key === 'ArrowDown' && currentIndex + columnCount < tiles.length) nextIndex += columnCount;
     else return;
 
     event.preventDefault();
@@ -2402,6 +3027,7 @@ window.addEventListener('beforeunload', () => {
 });
 
 replaceThoughts(thoughts);
+renderCanvasCamera();
 updateAccountButton();
 if (auth) void restoreAuthenticatedThoughts();
 window.addEventListener('online', () => {

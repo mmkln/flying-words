@@ -33,6 +33,11 @@
           <rect x="14" y="14" width="7" height="7" rx="1.5"></rect>
         </svg>
       </button>
+      <div class="canvas-controls" id="canvas-controls" role="group" aria-label="Canvas zoom" hidden>
+        <button class="canvas-zoom-step" id="canvas-zoom-in" type="button" aria-label="Zoom in" title="Zoom in">+</button>
+        <button class="canvas-zoom-reset" id="canvas-reset-zoom" type="button" aria-label="Reset zoom" title="Reset zoom">100%</button>
+        <button class="canvas-zoom-step" id="canvas-zoom-out" type="button" aria-label="Zoom out" title="Zoom out">−</button>
+      </div>
       <button class="account-button" id="account-button" type="button">Sign in</button>
 
       <div class="selection-toolbar" id="selection-toolbar" role="toolbar" aria-label="Edit card relationships" hidden>
@@ -42,7 +47,9 @@
       </div>
 
       <section class="thought-space" id="canvas" aria-label="Thought space">
-        <svg class="connection-layer" id="connection-layer" aria-hidden="true"></svg>
+        <div class="canvas-world" id="canvas-world">
+          <svg class="connection-layer" id="connection-layer" aria-hidden="true"></svg>
+        </div>
         <div class="empty-state" id="empty-state">
           <span class="empty-orbit orbit-one" aria-hidden="true"></span>
           <span class="empty-orbit orbit-two" aria-hidden="true"></span>
@@ -149,6 +156,7 @@
           aria-expanded="false"
         ></button>
         <p class="thought-text"></p>
+        <textarea class="thought-editor" aria-label="Edit thought" maxlength="280" hidden></textarea>
         <button class="magnet-btn magnet-button" type="button" title="Create magnetic group" aria-label="Create magnetic group">
           <svg viewBox="0 0 24 24" aria-hidden="true">
             <g transform="rotate(-45 12 12)">

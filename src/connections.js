@@ -39,11 +39,13 @@ export function getOutgoingConnections(thought) {
   const seenPairs = new Set();
 
   return connections.outgoing.filter((connection) => {
-    const pairKey = `${connection?.kind}:${connection?.targetId}`;
+    const scope = connection?.spaceId;
+    const pairKey = `${scope || 'legacy'}:${connection?.kind}:${connection?.targetId}`;
     const valid = (
       typeof connection?.id === 'string'
       && typeof connection?.targetId === 'string'
       && allowedKinds.has(connection?.kind)
+      && (scope === undefined || typeof scope === 'string')
       && connection.targetId !== thought.id
       && !seenIds.has(connection.id)
       && !seenPairs.has(pairKey)
@@ -58,12 +60,25 @@ export function getOutgoingConnections(thought) {
   });
 }
 
-export function addConnection(source, targetId, kind = ConnectionKind.RELATED) {
+export function getOutgoingConnectionsForSpace(source, spaceId) {
+  return getOutgoingConnections(source).filter(
+    (connection) => connection.spaceId === spaceId,
+  );
+}
+
+export function addConnection(
+  source,
+  targetId,
+  kind = ConnectionKind.RELATED,
+  { spaceId } = {},
+) {
   if (source.id === targetId) return { status: 'self' };
 
   const outgoing = getOutgoingConnections(source);
   const duplicate = outgoing.some((connection) => (
-    connection.targetId === targetId && connection.kind === kind
+    connection.targetId === targetId
+    && connection.kind === kind
+    && connection.spaceId === spaceId
   ));
 
   if (duplicate) return { status: 'duplicate' };
@@ -73,6 +88,7 @@ export function addConnection(source, targetId, kind = ConnectionKind.RELATED) {
     id: crypto.randomUUID(),
     targetId,
     kind,
+    ...(spaceId ? { spaceId } : {}),
     spacing: ConnectionSpacing.NORMAL,
     label: '',
     createdAt: new Date().toISOString(),
@@ -82,29 +98,33 @@ export function addConnection(source, targetId, kind = ConnectionKind.RELATED) {
   return { status: 'created', connection };
 }
 
-export function reconcileConnections(source, selectedTargetIds) {
+export function reconcileConnections(source, selectedTargetIds, { spaceId } = {}) {
   const existing = getOutgoingConnections(source);
+  const scopedExisting = existing.filter((connection) => connection.spaceId === spaceId);
+  const otherConnections = existing.filter((connection) => connection.spaceId !== spaceId);
   const existingByTargetId = new Map(
-    existing.map((connection) => [connection.targetId, connection]),
+    scopedExisting.map((connection) => [connection.targetId, connection]),
   );
-  const next = [...new Set(selectedTargetIds)]
+  const nextScoped = [...new Set(selectedTargetIds)]
     .filter((targetId) => typeof targetId === 'string' && targetId !== source.id)
     .slice(0, MAX_CONNECTIONS_PER_THOUGHT)
     .map((targetId) => existingByTargetId.get(targetId) || {
       id: crypto.randomUUID(),
       targetId,
       kind: ConnectionKind.RELATED,
+      ...(spaceId ? { spaceId } : {}),
       spacing: ConnectionSpacing.NORMAL,
       label: '',
       createdAt: new Date().toISOString(),
     });
+  const next = [...otherConnections, ...nextScoped];
   const changed = JSON.stringify(existing) !== JSON.stringify(next);
 
   if (changed) writeOutgoingConnections(source, next);
 
   return {
     changed,
-    count: next.length,
+    count: nextScoped.length,
   };
 }
 

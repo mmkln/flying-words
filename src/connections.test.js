@@ -8,6 +8,7 @@ import {
   detachIncomingConnections,
   flattenConnections,
   getOutgoingConnections,
+  getOutgoingConnectionsForSpace,
   normalizeConnectionSpacing,
   reconcileConnections,
   repairConnections,
@@ -128,4 +129,29 @@ test('flattens outgoing links for rendering without duplicating thoughts', () =>
   assert.equal(flattened[0].targetId, target.id);
   assert.equal('source' in flattened[0], false);
   assert.equal('target' in flattened[0], false);
+});
+
+test('keeps connections scoped to their Canvas separate from legacy flow connections', () => {
+  const source = thought('source');
+  addConnection(source, 'flow-target');
+  addConnection(source, 'canvas-target', ConnectionKind.RELATED, { spaceId: 'canvas-1' });
+
+  const result = reconcileConnections(
+    source,
+    ['canvas-replacement'],
+    { spaceId: 'canvas-1' },
+  );
+
+  assert.deepEqual(result, { changed: true, count: 1 });
+  assert.deepEqual(
+    getOutgoingConnections(source).map(({ targetId, spaceId }) => ({ targetId, spaceId })),
+    [
+      { targetId: 'flow-target', spaceId: undefined },
+      { targetId: 'canvas-replacement', spaceId: 'canvas-1' },
+    ],
+  );
+  assert.deepEqual(
+    getOutgoingConnectionsForSpace(source, 'canvas-1').map(({ targetId }) => targetId),
+    ['canvas-replacement'],
+  );
 });

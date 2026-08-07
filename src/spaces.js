@@ -1,15 +1,24 @@
+import { getCanvasPlacement } from './canvas-placements.js';
+
 export const SpaceId = Object.freeze({
   ONE: 'space-1',
   TWO: 'space-2',
   THREE: 'space-3',
-  FOUR: 'space-4',
+  CANVAS: 'canvas-1',
+});
+
+const LEGACY_SPACE_FOUR_ID = 'space-4';
+
+export const SpaceKind = Object.freeze({
+  FLOW: 'flow',
+  CANVAS: 'canvas',
 });
 
 export const SPACES = Object.freeze([
-  Object.freeze({ id: SpaceId.ONE, label: 'Space 1' }),
-  Object.freeze({ id: SpaceId.TWO, label: 'Space 2' }),
-  Object.freeze({ id: SpaceId.THREE, label: 'Space 3' }),
-  Object.freeze({ id: SpaceId.FOUR, label: 'Space 4' }),
+  Object.freeze({ id: SpaceId.ONE, label: 'Space 1', kind: SpaceKind.FLOW }),
+  Object.freeze({ id: SpaceId.TWO, label: 'Space 2', kind: SpaceKind.FLOW }),
+  Object.freeze({ id: SpaceId.THREE, label: 'Space 3', kind: SpaceKind.FLOW }),
+  Object.freeze({ id: SpaceId.CANVAS, label: 'Canvas', kind: SpaceKind.CANVAS }),
 ]);
 
 export const DEFAULT_SPACE_ID = SpaceId.ONE;
@@ -21,7 +30,16 @@ export function isSpaceId(value) {
 }
 
 export function normalizeSpaceId(value) {
+  if (value === LEGACY_SPACE_FOUR_ID) return SpaceId.THREE;
   return isSpaceId(value) ? value : DEFAULT_SPACE_ID;
+}
+
+export function getSpace(spaceId) {
+  return SPACES.find(({ id }) => id === normalizeSpaceId(spaceId)) || SPACES[0];
+}
+
+export function isCanvasSpace(spaceId) {
+  return getSpace(spaceId).kind === SpaceKind.CANVAS;
 }
 
 export function getThoughtSpaceId(thought) {
@@ -29,5 +47,11 @@ export function getThoughtSpaceId(thought) {
 }
 
 export function isThoughtAvailableInSpace(thought, spaceId) {
-  return !thought?.pinned || getThoughtSpaceId(thought) === normalizeSpaceId(spaceId);
+  const normalizedSpaceId = normalizeSpaceId(spaceId);
+
+  if (isCanvasSpace(normalizedSpaceId)) {
+    return Boolean(getCanvasPlacement(thought, normalizedSpaceId));
+  }
+
+  return !thought?.pinned || getThoughtSpaceId(thought) === normalizedSpaceId;
 }

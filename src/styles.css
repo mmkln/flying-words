@@ -43,6 +43,23 @@ button { -webkit-tap-highlight-color: transparent; }
   overflow: hidden;
 }
 
+.canvas-world {
+  position: absolute;
+  inset: 0;
+  transform-origin: 0 0;
+  will-change: transform;
+}
+
+.thought-space.is-static-canvas {
+  cursor: grab;
+  touch-action: none;
+}
+
+.thought-space.is-static-canvas.is-panning { cursor: grabbing; }
+
+.thought-space.is-static-canvas .magnet-btn,
+.thought-space.is-static-canvas .pin-btn { display: none; }
+
 .connection-layer {
   position: absolute;
   z-index: 1;
@@ -169,6 +186,68 @@ button { -webkit-tap-highlight-color: transparent; }
 .spaces-button:hover { border-color: rgba(107, 79, 204, .36); color: #6348bd; background: rgba(255, 255, 255, .92); }
 .spaces-button:focus-visible { outline: 3px solid rgba(126, 95, 215, .2); outline-offset: 2px; }
 .spaces-button svg { width: 17px; height: 17px; }
+
+.canvas-controls {
+  position: fixed;
+  z-index: 30;
+  right: 22px;
+  bottom: 24px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 3px;
+  padding: 4px;
+  border: 1px solid rgba(86, 67, 143, .18);
+  border-radius: 14px;
+  background: rgba(255, 255, 255, .82);
+  box-shadow: 0 10px 24px rgba(61, 43, 111, .11);
+  backdrop-filter: blur(14px);
+}
+
+.canvas-controls[hidden] { display: none; }
+
+.canvas-zoom-step,
+.canvas-zoom-reset {
+  display: grid;
+  width: 34px;
+  height: 34px;
+  padding: 0;
+  place-items: center;
+  border: 0;
+  border-radius: 8px;
+  color: #625c7d;
+  cursor: pointer;
+  background: transparent;
+  font: inherit;
+  font-size: 18px;
+  line-height: 1;
+}
+
+.canvas-zoom-reset {
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.canvas-zoom-step:hover:not(:disabled),
+.canvas-zoom-reset:hover:not(:disabled) {
+  color: #4c3b86;
+  background: rgba(112, 85, 197, .1);
+}
+
+.canvas-zoom-step:focus-visible,
+.canvas-zoom-reset:focus-visible {
+  outline: 3px solid rgba(126, 95, 215, .2);
+  outline-offset: 1px;
+}
+
+.canvas-zoom-step:disabled {
+  opacity: .36;
+  cursor: default;
+}
+
+.canvas-controls:not(.is-expanded) .canvas-zoom-step {
+  display: none;
+}
 
 .spaces-overview {
   position: fixed;
@@ -556,7 +635,13 @@ kbd { padding: 1px 4px; border: 1px solid rgba(114,104,143,.25); border-bottom-w
 .thought-card.is-pinned { border-color: #d1d5db; background: #f3f4f6; cursor: pointer; }
 .thought-card.is-removing { opacity: 0; pointer-events: none; }
 .thought-card.is-history-focused { border-color: rgba(108, 79, 204, .6); box-shadow: 0 0 0 4px rgba(126, 95, 215, .12), 0 15px 32px rgba(68, 50, 124, .15); }
-.thought-text { min-width: 0; margin: 1px 0; overflow-wrap: anywhere; font-size: 14px; line-height: 1.45; }
+.thought-text { min-width: 0; margin: 1px 0; overflow-wrap: anywhere; cursor: text; font-size: 14px; line-height: 1.45; }
+.thought-card.is-editing { cursor: default; user-select: text; border-color: rgba(112, 85, 197, .48); box-shadow: 0 0 0 3px rgba(112, 85, 197, .1), 0 15px 32px rgba(68, 50, 124, .15); }
+.thought-editor { width: min(250px, 52vw); min-height: 24px; margin: -2px 0; padding: 2px 0; border: 0; outline: 0; resize: none; overflow: hidden; color: inherit; background: transparent; font: inherit; font-size: 14px; line-height: 1.45; }
+.thought-card.is-editing .magnet-btn,
+.thought-card.is-editing .connection-btn,
+.thought-card.is-editing .pin-btn,
+.thought-card.is-editing .delete-btn { opacity: 0; pointer-events: none; }
 
 .thought-kind-icon {
   display: grid;
@@ -615,6 +700,9 @@ kbd { padding: 1px 4px; border: 1px solid rgba(114,104,143,.25); border-bottom-w
   pointer-events: none;
   transition: opacity .16s ease, color .16s ease, background .16s ease, border-color .16s ease;
 }
+
+/* Canvas has no magnet action, so the connection control owns the left anchor. */
+.thought-card.is-canvas-card .connection-btn { left: -9px; }
 
 .connection-btn svg {
   display: block;
@@ -848,6 +936,7 @@ kbd { padding: 1px 4px; border: 1px solid rgba(114,104,143,.25); border-bottom-w
   .account-button { top: 12px; right: 12px; }
   .history-button { top: 12px; left: 12px; }
   .spaces-button { top: 12px; left: 60px; }
+  .canvas-controls { top: 58px; right: 12px; bottom: auto; }
   .spaces-overview { padding: 48px 16px 22px; }
   .spaces-close { top: 10px; right: 10px; }
   .spaces-grid { gap: 22px 12px; }
