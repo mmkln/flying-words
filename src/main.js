@@ -126,7 +126,9 @@ const visibilityStates = new Map();
 const componentByThoughtId = new Map();
 const magnetPhysics = createMagnetPhysics();
 let magnetComponents = [];
+const DRAG_THRESHOLD_PX = 6;
 let draggedThought = null;
+let dragCandidate = null;
 let dragOffset = { x: 0, y: 0 };
 let canvasPan = null;
 let canvasScaleAnimationId = null;
@@ -1500,21 +1502,7 @@ function makeThought(text, restoredThought = {}) {
       () => openThoughtKnowledgeKindPicker(thought),
     );
   });
-  let wasSelectedBeforeTextPointerDown = false;
-  textElement.addEventListener('pointerdown', (event) => {
-    // Text owns its interaction: the first click selects the card, while a
-    // second click enters editing without starting a drag.
-    event.stopPropagation();
-    wasSelectedBeforeTextPointerDown = selectedThoughtId === thought.id;
-    selectThought(thought);
-    element.focus({ preventScroll: true });
-  });
-  textElement.addEventListener('click', (event) => {
-    event.preventDefault();
-    event.stopPropagation();
-    if (wasSelectedBeforeTextPointerDown) startThoughtTextEditing(thought);
-  });
-  textElement.title = 'Click again to edit';
+  textElement.title = 'Click again to edit · Drag to move';
   textEditor.addEventListener('keydown', (event) => {
     event.stopPropagation();
 
@@ -2017,35 +2005,75 @@ function removeThoughtElement(thought) {
 }
 
 function beginDrag(event, thought) {
+  if (event.button !== 0) return;
   if (event.target.closest('button, select, input, textarea, a')) return;
   if (thoughtTextEditor) return;
   if (magnetEditor || connectionEditor) return;
   if (blockEditsDuringAccountSync()) return;
+
+  const wasSelected = selectedThoughtId === thought.id;
+  const startedOnText = Boolean(event.target.closest('.thought-text'));
   selectThought(thought);
   event.preventDefault();
+
+  const nextDragOffset = isCanvasSpace(activeSpaceId)
+    ? (() => {
+      const pointer = pointerToCanvasWorld(event);
+      return {
+        x: pointer.x - thought.x,
+        y: pointer.y - thought.y,
+      };
+    })()
+    : (() => {
+      const bounds = thought.element.getBoundingClientRect();
+      return {
+        x: event.clientX - bounds.left,
+        y: event.clientY - bounds.top,
+      };
+    })();
+
+  dragCandidate = {
+    thought,
+    pointerId: event.pointerId,
+    startX: event.clientX,
+    startY: event.clientY,
+    startedOnText,
+    wasSelected,
+    dragOffset: nextDragOffset,
+  };
+  thought.element.setPointerCapture(event.pointerId);
+
   if (event.pointerType === 'touch') {
     thought.element.focus({ preventScroll: true });
   }
-  draggedThought = thought;
+}
 
-  if (isCanvasSpace(activeSpaceId)) {
-    const pointer = pointerToCanvasWorld(event);
-    dragOffset = { x: pointer.x - thought.x, y: pointer.y - thought.y };
-    thought.element.setPointerCapture(event.pointerId);
-    thought.element.classList.add('is-dragging');
-    thought.element.style.zIndex = String(topZIndex() + 1);
-    return;
+function activateDrag(candidate) {
+  draggedThought = candidate.thought;
+  dragCandidate = null;
+  dragOffset = candidate.dragOffset;
+
+  if (!isCanvasSpace(activeSpaceId)) {
+    magnetPhysics.beginDrag(draggedThought.id);
   }
 
-  const bounds = thought.element.getBoundingClientRect();
-  dragOffset = { x: event.clientX - bounds.left, y: event.clientY - bounds.top };
-  magnetPhysics.beginDrag(thought.id);
-  thought.element.setPointerCapture(event.pointerId);
-  thought.element.classList.add('is-dragging');
-  thought.element.style.zIndex = String(topZIndex() + 1);
+  draggedThought.element.classList.add('is-dragging');
+  draggedThought.element.style.zIndex = String(topZIndex() + 1);
 }
 
 function moveDrag(event) {
+  if (!draggedThought && dragCandidate) {
+    if (event.pointerId !== dragCandidate.pointerId) return;
+
+    const distance = Math.hypot(
+      event.clientX - dragCandidate.startX,
+      event.clientY - dragCandidate.startY,
+    );
+
+    if (distance < DRAG_THRESHOLD_PX) return;
+    activateDrag(dragCandidate);
+  }
+
   if (!draggedThought) return;
 
   if (isCanvasSpace(activeSpaceId)) {
@@ -2076,7 +2104,23 @@ function moveDrag(event) {
   renderThought(draggedThought);
 }
 
-function stopDrag() {
+function stopDrag(event, { cancelled = !event } = {}) {
+  if (
+    dragCandidate
+    && (!event || event.pointerId === dragCandidate.pointerId)
+  ) {
+    const candidate = dragCandidate;
+    dragCandidate = null;
+
+    if (!draggedThought && !cancelled) {
+      if (candidate.startedOnText && candidate.wasSelected) {
+        startThoughtTextEditing(candidate.thought);
+      } else {
+        candidate.thought.element.focus({ preventScroll: true });
+      }
+    }
+  }
+
   if (!draggedThought) return;
   const thought = draggedThought;
   thought.element.classList.remove('is-dragging');
@@ -2922,12 +2966,12 @@ canvas.addEventListener('pointermove', (event) => {
 canvas.addEventListener('pointerup', (event) => {
   const wasPanning = Boolean(canvasPan);
   stopCanvasPan(event);
-  if (!wasPanning) stopDrag();
+  if (!wasPanning) stopDrag(event);
 });
 canvas.addEventListener('pointercancel', (event) => {
   const wasPanning = Boolean(canvasPan);
   stopCanvasPan(event);
-  if (!wasPanning) stopDrag();
+  if (!wasPanning) stopDrag(event, { cancelled: true });
 });
 canvas.addEventListener('wheel', handleCanvasWheel, { passive: false });
 

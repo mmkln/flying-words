@@ -636,7 +636,7 @@ kbd { padding: 1px 4px; border: 1px solid rgba(114,104,143,.25); border-bottom-w
 .thought-card.is-removing { opacity: 0; pointer-events: none; }
 .thought-card.is-history-focused { border-color: rgba(108, 79, 204, .6); box-shadow: 0 0 0 4px rgba(126, 95, 215, .12), 0 15px 32px rgba(68, 50, 124, .15); }
 .thought-card.is-selected:not(.is-editing) { border-color: rgba(112, 85, 197, .34); box-shadow: 0 0 0 3px rgba(112, 85, 197, .08), 0 15px 32px rgba(68, 50, 124, .15); }
-.thought-text { min-width: 0; margin: 1px 0; overflow-wrap: anywhere; cursor: text; font-size: 14px; line-height: 1.45; }
+.thought-text { min-width: 0; margin: 1px 0; overflow-wrap: anywhere; cursor: inherit; font-size: 14px; line-height: 1.45; }
 .thought-card.is-editing { cursor: default; user-select: text; border-color: rgba(112, 85, 197, .48); box-shadow: 0 0 0 3px rgba(112, 85, 197, .1), 0 15px 32px rgba(68, 50, 124, .15); }
 .thought-editor { width: min(250px, 52vw); min-height: 24px; margin: -2px 0; padding: 2px 0; border: 0; outline: 0; resize: none; overflow: hidden; caret-color: #7055c5; color: inherit; background: transparent; font: inherit; font-size: 14px; line-height: 1.45; }
 .thought-card.is-editing .magnet-btn,
