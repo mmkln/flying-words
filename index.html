@@ -71,20 +71,20 @@
             ></button>
           </div>
           <label class="sr-only" for="thought-input">New thought</label>
-          <input
+          <textarea
             id="thought-input"
             name="thought"
-            type="text"
-            maxlength="280"
+            rows="1"
+            maxlength="1000"
             placeholder="Enter a thought…"
             autocomplete="off"
             required
-          />
+          ></textarea>
           <button class="send-button" type="submit" aria-label="Add thought" title="Add thought">
             <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m21 3-7.6 18-3.15-7.25L3 10.6 21 3Zm-10.75 10.75L21 3" /></svg>
           </button>
         </form>
-        <p class="composer-tip"><kbd>Enter</kbd> to add a thought · drag a card to move it</p>
+        <p class="composer-tip"><kbd>Enter</kbd> to add · <kbd>Shift + Enter</kbd> for a new line</p>
       </div>
 
       <div
@@ -147,6 +147,34 @@
       </form>
     </dialog>
 
+    <dialog class="thought-focus-dialog" id="thought-focus-dialog" aria-labelledby="thought-focus-title">
+      <form class="thought-focus-form" id="thought-focus-form">
+        <header class="thought-focus-header">
+          <span
+            class="knowledge-picker-trigger thought-focus-kind-icon"
+            id="thought-focus-kind"
+            aria-hidden="true"
+          ></span>
+          <h2 id="thought-focus-title" class="sr-only">Edit thought</h2>
+        </header>
+
+        <textarea
+          id="thought-focus-editor"
+          maxlength="1000"
+          aria-label="Thought text"
+          required
+        ></textarea>
+
+        <footer class="thought-focus-footer">
+          <output id="thought-focus-count" aria-live="polite" hidden></output>
+          <div class="thought-focus-actions">
+            <button id="thought-focus-discard" class="thought-focus-secondary" type="button">Cancel</button>
+            <button class="thought-focus-primary" type="submit">Done</button>
+          </div>
+        </footer>
+      </form>
+    </dialog>
+
     <template id="thought-template">
       <article class="thought-card" tabindex="0">
         <button
@@ -156,7 +184,6 @@
           aria-expanded="false"
         ></button>
         <p class="thought-text"></p>
-        <textarea class="thought-editor" aria-label="Edit thought" maxlength="280" hidden></textarea>
         <button class="magnet-btn magnet-button" type="button" title="Create magnetic group" aria-label="Create magnetic group">
           <svg viewBox="0 0 24 24" aria-hidden="true">
             <g transform="rotate(-45 12 12)">

@@ -583,8 +583,8 @@ button { -webkit-tap-highlight-color: transparent; }
 .knowledge-picker-option[data-kind="link"] { --kind-color: #267d76; --kind-tint: rgba(38, 125, 118, .11); }
 .knowledge-picker-trigger[data-kind="research_result"],
 .knowledge-picker-option[data-kind="research_result"] { --kind-color: #36785a; --kind-tint: rgba(54, 120, 90, .11); }
-.composer input { width: 100%; min-width: 0; padding: 12px 4px; border: 0; outline: 0; color: #322c4b; background: transparent; font-size: 15px; }
-.composer input::placeholder { color: #9993aa; }
+.composer textarea { box-sizing: border-box; width: 100%; min-width: 0; min-height: 46px; max-height: 120px; padding: 12px 4px; border: 0; outline: 0; resize: none; overflow-y: hidden; color: #322c4b; background: transparent; font: inherit; font-size: 15px; line-height: 1.4; }
+.composer textarea::placeholder { color: #9993aa; }
 
 .send-button {
   display: grid;
@@ -635,14 +635,66 @@ kbd { padding: 1px 4px; border: 1px solid rgba(114,104,143,.25); border-bottom-w
 .thought-card.is-pinned { border-color: #d1d5db; background: #f3f4f6; cursor: pointer; }
 .thought-card.is-removing { opacity: 0; pointer-events: none; }
 .thought-card.is-history-focused { border-color: rgba(108, 79, 204, .6); box-shadow: 0 0 0 4px rgba(126, 95, 215, .12), 0 15px 32px rgba(68, 50, 124, .15); }
-.thought-card.is-selected:not(.is-editing) { border-color: rgba(112, 85, 197, .34); box-shadow: 0 0 0 3px rgba(112, 85, 197, .08), 0 15px 32px rgba(68, 50, 124, .15); }
-.thought-text { min-width: 0; margin: 1px 0; overflow-wrap: anywhere; cursor: inherit; font-size: 14px; line-height: 1.45; }
-.thought-card.is-editing { cursor: default; user-select: text; border-color: rgba(112, 85, 197, .48); box-shadow: 0 0 0 3px rgba(112, 85, 197, .1), 0 15px 32px rgba(68, 50, 124, .15); }
-.thought-editor { width: min(250px, 52vw); min-height: 24px; margin: -2px 0; padding: 2px 0; border: 0; outline: 0; resize: none; overflow: hidden; caret-color: #7055c5; color: inherit; background: transparent; font: inherit; font-size: 14px; line-height: 1.45; }
-.thought-card.is-editing .magnet-btn,
-.thought-card.is-editing .connection-btn,
-.thought-card.is-editing .pin-btn,
-.thought-card.is-editing .delete-btn { opacity: 0; pointer-events: none; }
+.thought-card.is-selected { border-color: rgba(112, 85, 197, .34); box-shadow: 0 0 0 3px rgba(112, 85, 197, .08), 0 15px 32px rgba(68, 50, 124, .15); }
+.thought-text { display: -webkit-box; min-width: 0; margin: 1px 0; overflow: hidden; overflow-wrap: anywhere; cursor: text; -webkit-box-orient: vertical; -webkit-line-clamp: 3; white-space: pre-wrap; font-size: 14px; line-height: 1.45; }
+
+.thought-focus-dialog {
+  width: min(560px, calc(100vw - 32px));
+  margin: auto;
+  padding: 0;
+  border: 1px solid rgba(87, 72, 135, .18);
+  border-radius: 20px;
+  color: #39334d;
+  background: rgba(255, 255, 255, .98);
+  box-shadow: 0 24px 70px rgba(47, 31, 92, .24);
+}
+
+.thought-focus-dialog::backdrop { background: rgba(30, 24, 48, .22); }
+.thought-focus-form { display: grid; gap: 20px; padding: 22px; }
+.thought-focus-header,
+.thought-focus-footer,
+.thought-focus-actions { display: flex; align-items: center; }
+.thought-focus-header,
+.thought-focus-footer { justify-content: space-between; }
+
+.thought-focus-secondary,
+.thought-focus-primary {
+  border: 0;
+  font: inherit;
+  cursor: pointer;
+}
+
+.thought-focus-kind-icon { flex: 0 0 auto; cursor: default; pointer-events: none; }
+
+#thought-focus-editor {
+  box-sizing: border-box;
+  width: 100%;
+  min-height: 240px;
+  max-height: min(54vh, 480px);
+  padding: 0;
+  border: 0;
+  outline: 0;
+  resize: vertical;
+  overflow-y: auto;
+  color: inherit;
+  background: transparent;
+  font: inherit;
+  font-size: 17px;
+  line-height: 1.55;
+  caret-color: #7055c5;
+}
+
+.thought-focus-footer { min-height: 38px; }
+.thought-focus-footer output { color: #847e98; font-size: 12px; font-variant-numeric: tabular-nums; }
+.thought-focus-actions { gap: 8px; }
+.thought-focus-secondary,
+.thought-focus-primary { min-height: 36px; padding: 0 14px; border-radius: 10px; }
+.thought-focus-secondary { color: #615a76; background: rgba(101, 87, 149, .08); }
+.thought-focus-primary { color: #fff; background: #7055c5; box-shadow: 0 5px 12px rgba(94, 69, 180, .22); }
+.thought-focus-secondary:hover { background: rgba(101, 87, 149, .14); }
+.thought-focus-primary:hover { background: #6348bd; }
+.thought-focus-secondary:focus-visible,
+.thought-focus-primary:focus-visible { outline: 3px solid rgba(112, 85, 197, .2); outline-offset: 2px; }
 
 .thought-kind-icon {
   display: grid;

@@ -17,6 +17,7 @@ import {
   createKnowledgeKindPicker,
   renderKnowledgeKindTrigger,
 } from './knowledge-kind-picker.js';
+import { createThoughtEditor } from './thought-editor.js';
 import {
   MAX_CONNECTIONS_PER_THOUGHT,
   detachIncomingCanvasConnections,
@@ -50,6 +51,8 @@ const PENDING_SYNC_STORAGE_PREFIX = 'flying-thoughts:pending-sync:v1:';
 const ACCOUNT_STORAGE_PREFIX = 'flying-thoughts:account:v1:';
 const OUTBOX_STORAGE_PREFIX = 'flying-thoughts:outbox:v1:';
 const MAX_THOUGHTS = 1000;
+const MAX_THOUGHT_TEXT_LENGTH = 1000;
+const THOUGHT_TEXT_WARNING_THRESHOLD = 850;
 const RESERVED_BOTTOM_SPACE = 0;
 const MIN_VISIBLE_THOUGHTS = 4;
 const MAX_VISIBLE_THOUGHTS = 30;
@@ -103,6 +106,12 @@ const selectionToolbar = document.querySelector('#selection-toolbar');
 const selectionCount = document.querySelector('#selection-count');
 const selectionCancel = document.querySelector('#selection-cancel');
 const selectionDone = document.querySelector('#selection-done');
+const thoughtFocusDialog = document.querySelector('#thought-focus-dialog');
+const thoughtFocusForm = document.querySelector('#thought-focus-form');
+const thoughtFocusEditor = document.querySelector('#thought-focus-editor');
+const thoughtFocusCount = document.querySelector('#thought-focus-count');
+const thoughtFocusKind = document.querySelector('#thought-focus-kind');
+const thoughtFocusDiscard = document.querySelector('#thought-focus-discard');
 
 let auth = loadAuth();
 const initialPendingThoughts = auth ? loadPendingThoughts(auth.id) : [];
@@ -146,7 +155,6 @@ let magnetEditor = null;
 let connectionEditor = null;
 let composerKnowledgeKind = KnowledgeKind.THOUGHT;
 let knowledgeKindEditor = null;
-let thoughtTextEditor = null;
 let selectedThoughtId = null;
 let viewMode = 'canvas';
 let activeSpaceId = localStorage.getItem(ACTIVE_SPACE_STORAGE_KEY);
@@ -166,13 +174,64 @@ const knowledgeKindPicker = createKnowledgeKindPicker({
   },
 });
 
+const thoughtEditor = createThoughtEditor({
+  dialog: thoughtFocusDialog,
+  form: thoughtFocusForm,
+  textarea: thoughtFocusEditor,
+  counter: thoughtFocusCount,
+  discardButton: thoughtFocusDiscard,
+  maximum: MAX_THOUGHT_TEXT_LENGTH,
+  warningThreshold: THOUGHT_TEXT_WARNING_THRESHOLD,
+  onSave({ thoughtId, text }) {
+    const thought = getThoughtById(thoughtId);
+    if (!thought || !text) {
+      announce('A thought cannot be empty.');
+      return false;
+    }
+
+    if (text.length > MAX_THOUGHT_TEXT_LENGTH) {
+      announce(`A thought can contain up to ${MAX_THOUGHT_TEXT_LENGTH} characters.`);
+      return false;
+    }
+
+    if (text !== thought.text) {
+      thought.text = text;
+      saveThoughts();
+      if (isCloudMode()) enqueueThoughtUpsert(thought);
+      if (historyDialog.open) renderHistory();
+      renderThought(thought);
+      measureThought(thought);
+      if (!isCanvasSpace(activeSpaceId) && thought.pinned) {
+        constrainThought(thought);
+        updatePinnedLayoutMeta(thought);
+      }
+      rebuildConnectionLayer();
+      announce('Thought updated.');
+    }
+
+    return true;
+  },
+  onClose({ thoughtId, restoreFocus }) {
+    if (!restoreFocus) return;
+    getThoughtById(thoughtId)?.element?.focus({ preventScroll: true });
+  },
+});
+
 function renderComposerKnowledgeKind(kind) {
   composerKnowledgeKind = kind;
   renderKnowledgeKindTrigger(knowledgePickerTrigger, kind);
   input.placeholder = getKnowledgeKindPlaceholder(kind);
 }
 
+function resizeComposer() {
+  const maxHeight = 120;
+  input.style.height = 'auto';
+  input.style.height = `${Math.min(input.scrollHeight, maxHeight)}px`;
+  input.style.overflowY = input.scrollHeight > maxHeight ? 'auto' : 'hidden';
+}
+
 renderComposerKnowledgeKind(composerKnowledgeKind);
+resizeComposer();
 
 function openComposerKnowledgeKindPicker() {
   if (magnetEditor || connectionEditor) {
@@ -723,7 +782,7 @@ function normalizeThoughts(data) {
     .slice(0, MAX_THOUGHTS)
     .map((thought) => ({
       id: thought.id || crypto.randomUUID(),
-      text: thought.text.slice(0, 280),
+      text: thought.text.slice(0, MAX_THOUGHT_TEXT_LENGTH),
       color: thought.color || 'purple',
       x: Number.isFinite(thought.x) ? thought.x : 100,
       y: Number.isFinite(thought.y) ? thought.y : 100,
@@ -1449,7 +1508,6 @@ function makeThought(text, restoredThought = {}) {
   const fragment = template.content.cloneNode(true);
   const element = fragment.querySelector('.thought-card');
   const textElement = fragment.querySelector('.thought-text');
-  const textEditor = fragment.querySelector('.thought-editor');
   const kindButton = fragment.querySelector('.thought-kind-button');
   const pinButton = fragment.querySelector('.pin-button');
   const magnetButton = fragment.querySelector('.magnet-button');
@@ -1502,24 +1560,18 @@ function makeThought(text, restoredThought = {}) {
       () => openThoughtKnowledgeKindPicker(thought),
     );
   });
-  textElement.title = 'Click again to edit · Drag to move';
-  textEditor.addEventListener('keydown', (event) => {
+  let wasSelectedBeforeTextPointerDown = false;
+  textElement.title = 'Click again to edit · Drag the card to move it';
+  textElement.addEventListener('pointerdown', (event) => {
     event.stopPropagation();
-
-    if ((event.ctrlKey || event.metaKey) && event.key === 'Enter') {
-      event.preventDefault();
-      finishThoughtTextEditing({ save: true });
-      return;
-    }
-
-    if (event.key === 'Escape') {
-      event.preventDefault();
-      finishThoughtTextEditing({ save: false });
-    }
+    wasSelectedBeforeTextPointerDown = selectedThoughtId === thought.id;
+    selectThought(thought);
+    element.focus({ preventScroll: true });
   });
-  textEditor.addEventListener('input', () => resizeThoughtEditor(textEditor));
-  textEditor.addEventListener('blur', () => {
-    finishThoughtTextEditing({ save: true, restoreFocus: false });
+  textElement.addEventListener('click', (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    if (wasSelectedBeforeTextPointerDown) startThoughtTextEditing(thought);
   });
   magnetButton.addEventListener('click', () => handleMagnetButton(thought));
   connectionButton.addEventListener('click', () => handleConnectionButton(thought));
@@ -1539,9 +1591,7 @@ function makeThought(text, restoredThought = {}) {
 }
 
 function replaceThoughts(nextThoughts) {
-  if (thoughtTextEditor) {
-    finishThoughtTextEditing({ save: true, restoreFocus: false });
-  }
+  thoughtEditor.discard({ restoreFocus: false });
   selectedThoughtId = null;
   knowledgeKindPicker.close();
   magnetEditor = null;
@@ -1858,6 +1908,11 @@ function addThought(rawText) {
   const text = rawText.trim();
   if (!text) return false;
 
+  if (text.length > MAX_THOUGHT_TEXT_LENGTH) {
+    announce(`A thought can contain up to ${MAX_THOUGHT_TEXT_LENGTH} characters.`);
+    return false;
+  }
+
   if (magnetEditor || connectionEditor) {
     announce('Finish the current card relationship first.');
     return false;
@@ -2007,7 +2062,7 @@ function removeThoughtElement(thought) {
 function beginDrag(event, thought) {
   if (event.button !== 0) return;
   if (event.target.closest('button, select, input, textarea, a')) return;
-  if (thoughtTextEditor) return;
+  if (thoughtEditor.isOpen()) return;
   if (magnetEditor || connectionEditor) return;
   if (blockEditsDuringAccountSync()) return;
 
@@ -2248,85 +2303,34 @@ function constrainThought(thought) {
   thought.y = Math.min(Math.max(0, thought.y), maxY);
 }
 
-function resizeThoughtEditor(editor) {
-  editor.style.height = 'auto';
-  editor.style.height = `${editor.scrollHeight}px`;
-}
-
 function startThoughtTextEditing(thought) {
   if (magnetEditor || connectionEditor) {
     announce('Finish the current card relationship first.');
     return;
   }
-  if (blockEditsDuringAccountSync()) return;
-  if (thoughtTextEditor?.thoughtId === thought.id) return;
-
-  if (thoughtTextEditor) finishThoughtTextEditing({ save: true });
+  if (blockEditsDuringAccountSync() || thoughtEditor.isOpen()) return;
   if (draggedThought) stopDrag();
 
   knowledgeKindPicker.close();
   selectThought(thought);
-  thoughtTextEditor = {
+  renderKnowledgeKindTrigger(
+    thoughtFocusKind,
+    getThoughtKnowledgeKind(thought),
+  );
+  thoughtFocusKind.removeAttribute('title');
+  thoughtEditor.open({
     thoughtId: thought.id,
-    previousText: thought.text,
-  };
-
-  const editor = thought.element.querySelector('.thought-editor');
-  editor.value = thought.text;
-  renderThought(thought);
-  resizeThoughtEditor(editor);
-
-  window.requestAnimationFrame(() => {
-    editor.focus();
-    editor.setSelectionRange(editor.value.length, editor.value.length);
+    text: thought.text,
   });
-}
-
-function finishThoughtTextEditing({ save, restoreFocus = true } = {}) {
-  if (!thoughtTextEditor) return;
-
-  const session = thoughtTextEditor;
-  const thought = getThoughtById(session.thoughtId);
-  thoughtTextEditor = null;
-  if (!thought) return;
-
-  const editor = thought.element.querySelector('.thought-editor');
-  const nextText = editor.value.trim();
-  const changed = save && Boolean(nextText) && nextText !== session.previousText;
-
-  if (changed) {
-    thought.text = nextText;
-    saveThoughts();
-    if (isCloudMode()) enqueueThoughtUpsert(thought);
-    if (historyDialog.open) renderHistory();
-    announce('Thought updated.');
-  } else if (save && !nextText) {
-    announce('A thought cannot be empty.');
-  }
-
-  renderThought(thought);
-  measureThought(thought);
-  if (!isCanvasSpace(activeSpaceId) && thought.pinned) {
-    constrainThought(thought);
-    updatePinnedLayoutMeta(thought);
-  }
-  rebuildConnectionLayer();
-
-  if (restoreFocus) thought.element.focus({ preventScroll: true });
 }
 
 function renderThought(thought) {
   const canvasThought = isCanvasSpace(activeSpaceId);
-  const isEditing = thoughtTextEditor?.thoughtId === thought.id;
   const textElement = thought.element.querySelector('.thought-text');
-  const textEditor = thought.element.querySelector('.thought-editor');
-  textElement.hidden = isEditing;
-  textEditor.hidden = !isEditing;
-  if (!isEditing) textElement.textContent = thought.text;
+  textElement.textContent = thought.text;
 
   thought.element.classList.toggle('is-pinned', thought.pinned);
   thought.element.classList.toggle('is-canvas-card', canvasThought);
-  thought.element.classList.toggle('is-editing', isEditing);
   thought.element.classList.toggle('is-selected', selectedThoughtId === thought.id);
   const kind = getThoughtKnowledgeKind(thought);
   if (thought.element.dataset.knowledgeKind !== kind) {
@@ -2761,7 +2765,7 @@ function animate(timestamp) {
     )
   ));
 
-  if (!magnetEditor && !connectionEditor && !thoughtTextEditor) {
+  if (!magnetEditor && !connectionEditor && !thoughtEditor.isOpen()) {
     const hoveredComponentIds = new Set(activeComponents
       .filter((component) => getMagnetComponentMembers(component).some(
         (thought) => thought.element.matches(':hover, :focus-within'),
@@ -2801,7 +2805,7 @@ function animate(timestamp) {
   activeThoughts.forEach(renderThought);
   connectionRenderer.update();
 
-  if (!magnetEditor && !connectionEditor && !thoughtTextEditor) {
+  if (!magnetEditor && !connectionEditor && !thoughtEditor.isOpen()) {
     maybeSpawnThought(timestamp, reducedMotion);
   }
   window.requestAnimationFrame(animate);
@@ -2901,6 +2905,13 @@ knowledgePickerTrigger.addEventListener('keydown', (event) => {
   handleKnowledgeKindTriggerKeyDown(event, openComposerKnowledgeKindPicker);
 });
 
+input.addEventListener('input', resizeComposer);
+input.addEventListener('keydown', (event) => {
+  if (event.isComposing || event.key !== 'Enter' || event.shiftKey) return;
+  event.preventDefault();
+  form.requestSubmit();
+});
+
 form.addEventListener('submit', (event) => {
   event.preventDefault();
   if (handlingThoughtSubmit) return;
@@ -2915,6 +2926,7 @@ form.addEventListener('submit', (event) => {
     if (!added && !input.value) input.value = submittedText;
   } finally {
     handlingThoughtSubmit = false;
+    resizeComposer();
     input.focus();
   }
 });
