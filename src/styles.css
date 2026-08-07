@@ -702,6 +702,8 @@ kbd { padding: 1px 4px; border: 1px solid rgba(114,104,143,.25); border-bottom-w
   transition: opacity .16s ease, color .16s ease, background .16s ease, border-color .16s ease;
 }
 
+.connection-btn[hidden] { display: none !important; }
+
 /* Canvas has no magnet action, so the connection control owns the left anchor. */
 .thought-card.is-canvas-card .connection-btn { left: -9px; }
 

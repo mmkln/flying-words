@@ -7,6 +7,7 @@ import {
   SpaceId,
   SpaceKind,
   getSpace,
+  getSpaceCapabilities,
   getThoughtSpaceId,
   isCanvasSpace,
   isSpaceId,
@@ -22,6 +23,19 @@ test('exposes three stable flow spaces and one fixed Canvas', () => {
   );
   assert.equal(getSpace(SpaceId.CANVAS).kind, SpaceKind.CANVAS);
   assert.equal(isCanvasSpace(SpaceId.CANVAS), true);
+});
+
+test('enables magnets in flow Spaces and connections only on Canvas', () => {
+  assert.deepEqual(getSpaceCapabilities(SpaceId.ONE), {
+    magnets: true,
+    connections: false,
+    camera: false,
+  });
+  assert.deepEqual(getSpaceCapabilities(SpaceId.CANVAS), {
+    magnets: false,
+    connections: true,
+    camera: true,
+  });
 });
 
 test('falls back to the first space for legacy and invalid layouts', () => {

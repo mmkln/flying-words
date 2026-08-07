@@ -1,3 +1,5 @@
+import { SpaceId } from './spaces.js';
+
 export const ConnectionKind = Object.freeze({
   RELATED: 'related',
 });
@@ -10,6 +12,7 @@ export const ConnectionSpacing = Object.freeze({
 
 export const MAX_CONNECTIONS_PER_THOUGHT = 32;
 
+const CONNECTION_SPACE_ID = SpaceId.CANVAS;
 const allowedKinds = new Set(Object.values(ConnectionKind));
 const allowedSpacings = new Set(Object.values(ConnectionSpacing));
 
@@ -17,7 +20,7 @@ export function normalizeConnectionSpacing(value) {
   return allowedSpacings.has(value) ? value : ConnectionSpacing.NORMAL;
 }
 
-function writeOutgoingConnections(thought, outgoing) {
+function writeCanvasConnections(thought, outgoing) {
   thought.meta = { ...(thought.meta || {}) };
 
   if (outgoing.length) {
@@ -31,119 +34,76 @@ function writeOutgoingConnections(thought, outgoing) {
   delete thought.meta.connections;
 }
 
-export function getOutgoingConnections(thought) {
+export function getOutgoingCanvasConnections(thought) {
   const connections = thought?.meta?.connections;
   if (connections?.version !== 1 || !Array.isArray(connections.outgoing)) return [];
 
   const seenIds = new Set();
-  const seenPairs = new Set();
+  const seenTargets = new Set();
 
   return connections.outgoing.filter((connection) => {
-    const scope = connection?.spaceId;
-    const pairKey = `${scope || 'legacy'}:${connection?.kind}:${connection?.targetId}`;
     const valid = (
       typeof connection?.id === 'string'
       && typeof connection?.targetId === 'string'
-      && allowedKinds.has(connection?.kind)
-      && (scope === undefined || typeof scope === 'string')
+      && connection.spaceId === CONNECTION_SPACE_ID
+      && allowedKinds.has(connection.kind)
       && connection.targetId !== thought.id
       && !seenIds.has(connection.id)
-      && !seenPairs.has(pairKey)
+      && !seenTargets.has(connection.targetId)
     );
 
     if (valid) {
       seenIds.add(connection.id);
-      seenPairs.add(pairKey);
+      seenTargets.add(connection.targetId);
     }
 
     return valid;
   });
 }
 
-export function getOutgoingConnectionsForSpace(source, spaceId) {
-  return getOutgoingConnections(source).filter(
-    (connection) => connection.spaceId === spaceId,
-  );
-}
-
-export function addConnection(
-  source,
-  targetId,
-  kind = ConnectionKind.RELATED,
-  { spaceId } = {},
-) {
-  if (source.id === targetId) return { status: 'self' };
-
-  const outgoing = getOutgoingConnections(source);
-  const duplicate = outgoing.some((connection) => (
-    connection.targetId === targetId
-    && connection.kind === kind
-    && connection.spaceId === spaceId
-  ));
-
-  if (duplicate) return { status: 'duplicate' };
-  if (outgoing.length >= MAX_CONNECTIONS_PER_THOUGHT) return { status: 'limit' };
-
-  const connection = {
-    id: crypto.randomUUID(),
-    targetId,
-    kind,
-    ...(spaceId ? { spaceId } : {}),
-    spacing: ConnectionSpacing.NORMAL,
-    label: '',
-    createdAt: new Date().toISOString(),
-  };
-
-  writeOutgoingConnections(source, [...outgoing, connection]);
-  return { status: 'created', connection };
-}
-
-export function reconcileConnections(source, selectedTargetIds, { spaceId } = {}) {
-  const existing = getOutgoingConnections(source);
-  const scopedExisting = existing.filter((connection) => connection.spaceId === spaceId);
-  const otherConnections = existing.filter((connection) => connection.spaceId !== spaceId);
+export function reconcileCanvasConnections(source, selectedTargetIds) {
+  const existing = getOutgoingCanvasConnections(source);
   const existingByTargetId = new Map(
-    scopedExisting.map((connection) => [connection.targetId, connection]),
+    existing.map((connection) => [connection.targetId, connection]),
   );
-  const nextScoped = [...new Set(selectedTargetIds)]
+  const next = [...new Set(selectedTargetIds)]
     .filter((targetId) => typeof targetId === 'string' && targetId !== source.id)
     .slice(0, MAX_CONNECTIONS_PER_THOUGHT)
-    .map((targetId) => existingByTargetId.get(targetId) || {
+    .map((targetId) => existingByTargetId.get(targetId) || ({
       id: crypto.randomUUID(),
       targetId,
       kind: ConnectionKind.RELATED,
-      ...(spaceId ? { spaceId } : {}),
+      spaceId: CONNECTION_SPACE_ID,
       spacing: ConnectionSpacing.NORMAL,
       label: '',
       createdAt: new Date().toISOString(),
-    });
-  const next = [...otherConnections, ...nextScoped];
+    }));
   const changed = JSON.stringify(existing) !== JSON.stringify(next);
 
-  if (changed) writeOutgoingConnections(source, next);
+  if (changed) writeCanvasConnections(source, next);
 
   return {
     changed,
-    count: nextScoped.length,
+    count: next.length,
   };
 }
 
-export function detachIncomingConnections(thoughts, targetId) {
+export function detachIncomingCanvasConnections(thoughts, targetId) {
   const changedThoughts = [];
 
   thoughts.forEach((source) => {
-    const outgoing = getOutgoingConnections(source);
+    const outgoing = getOutgoingCanvasConnections(source);
     const next = outgoing.filter((connection) => connection.targetId !== targetId);
     if (next.length === outgoing.length) return;
 
-    writeOutgoingConnections(source, next);
+    writeCanvasConnections(source, next);
     changedThoughts.push(source);
   });
 
   return changedThoughts;
 }
 
-export function repairConnections(thoughts) {
+export function repairCanvasConnections(thoughts) {
   const knownIds = new Set(thoughts.map((thought) => thought.id));
   const changedThoughts = [];
 
@@ -151,21 +111,21 @@ export function repairConnections(thoughts) {
     const stored = source.meta?.connections?.outgoing;
     if (!Array.isArray(stored)) return;
 
-    const repaired = getOutgoingConnections(source).filter(
+    const repaired = getOutgoingCanvasConnections(source).filter(
       (connection) => knownIds.has(connection.targetId),
     );
 
     if (JSON.stringify(stored) === JSON.stringify(repaired)) return;
 
-    writeOutgoingConnections(source, repaired);
+    writeCanvasConnections(source, repaired);
     changedThoughts.push(source);
   });
 
   return changedThoughts;
 }
 
-export function flattenConnections(thoughts) {
-  return thoughts.flatMap((source) => getOutgoingConnections(source).map(
+export function flattenCanvasConnections(thoughts) {
+  return thoughts.flatMap((source) => getOutgoingCanvasConnections(source).map(
     (connection) => ({ ...connection, sourceId: source.id }),
   ));
 }

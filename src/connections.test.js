@@ -4,14 +4,12 @@ import test from 'node:test';
 import {
   ConnectionKind,
   ConnectionSpacing,
-  addConnection,
-  detachIncomingConnections,
-  flattenConnections,
-  getOutgoingConnections,
-  getOutgoingConnectionsForSpace,
+  detachIncomingCanvasConnections,
+  flattenCanvasConnections,
+  getOutgoingCanvasConnections,
   normalizeConnectionSpacing,
-  reconcileConnections,
-  repairConnections,
+  reconcileCanvasConnections,
+  repairCanvasConnections,
 } from './connections.js';
 
 function thought(id, outgoing = undefined) {
@@ -23,36 +21,40 @@ function thought(id, outgoing = undefined) {
   };
 }
 
-test('stores only the target id in the source thought metadata', () => {
+test('stores only Canvas target ids in the source thought metadata', () => {
   const source = thought('source');
-  const result = addConnection(source, 'target');
+  const result = reconcileCanvasConnections(source, ['target']);
+  const connection = source.meta.connections.outgoing[0];
 
-  assert.equal(result.status, 'created');
+  assert.deepEqual(result, { changed: true, count: 1 });
   assert.equal(source.meta.connections.version, 1);
-  assert.equal(source.meta.connections.outgoing[0].targetId, 'target');
-  assert.equal(source.meta.connections.outgoing[0].kind, ConnectionKind.RELATED);
-  assert.equal(source.meta.connections.outgoing[0].spacing, ConnectionSpacing.NORMAL);
-  assert.equal('sourceId' in source.meta.connections.outgoing[0], false);
-  assert.equal('target' in source.meta.connections.outgoing[0], false);
+  assert.equal(connection.targetId, 'target');
+  assert.equal(connection.kind, ConnectionKind.RELATED);
+  assert.equal(connection.spaceId, 'canvas-1');
+  assert.equal(connection.spacing, ConnectionSpacing.NORMAL);
+  assert.equal('sourceId' in connection, false);
+  assert.equal('target' in connection, false);
 });
 
-test('rejects self-links and duplicate source-target pairs', () => {
+test('rejects self-links and duplicate target selections', () => {
   const source = thought('source');
 
-  assert.equal(addConnection(source, 'source').status, 'self');
-  assert.equal(addConnection(source, 'target').status, 'created');
-  assert.equal(addConnection(source, 'target').status, 'duplicate');
-  assert.equal(getOutgoingConnections(source).length, 1);
+  const result = reconcileCanvasConnections(source, ['source', 'target', 'target']);
+
+  assert.deepEqual(result, { changed: true, count: 1 });
+  assert.deepEqual(
+    getOutgoingCanvasConnections(source).map(({ targetId }) => targetId),
+    ['target'],
+  );
 });
 
-test('reconciles a multi-selection while preserving existing connection ids', () => {
+test('reconciles a Canvas multi-selection while preserving existing connection ids', () => {
   const source = thought('source');
-  addConnection(source, 'kept');
-  addConnection(source, 'removed');
-  const keptId = getOutgoingConnections(source)[0].id;
+  reconcileCanvasConnections(source, ['kept', 'removed']);
+  const keptId = getOutgoingCanvasConnections(source)[0].id;
 
-  const result = reconcileConnections(source, new Set(['kept', 'added']));
-  const outgoing = getOutgoingConnections(source);
+  const result = reconcileCanvasConnections(source, new Set(['kept', 'added']));
+  const outgoing = getOutgoingCanvasConnections(source);
 
   assert.deepEqual(result, { changed: true, count: 2 });
   assert.deepEqual(outgoing.map(({ targetId }) => targetId), ['kept', 'added']);
@@ -60,22 +62,22 @@ test('reconciles a multi-selection while preserving existing connection ids', ()
   assert.notEqual(outgoing[1].id, keptId);
 });
 
-test('reconciling an unchanged selection does not rewrite connections', () => {
+test('reconciling an unchanged Canvas selection does not rewrite connections', () => {
   const source = thought('source');
-  addConnection(source, 'target');
-  const existing = getOutgoingConnections(source)[0];
+  reconcileCanvasConnections(source, ['target']);
+  const existing = getOutgoingCanvasConnections(source)[0];
 
-  const result = reconcileConnections(source, ['target']);
+  const result = reconcileCanvasConnections(source, ['target']);
 
   assert.deepEqual(result, { changed: false, count: 1 });
-  assert.equal(getOutgoingConnections(source)[0], existing);
+  assert.equal(getOutgoingCanvasConnections(source)[0], existing);
 });
 
 test('reconciling an empty selection removes connection metadata', () => {
   const source = thought('source');
-  addConnection(source, 'target');
+  reconcileCanvasConnections(source, ['target']);
 
-  const result = reconcileConnections(source, []);
+  const result = reconcileCanvasConnections(source, []);
 
   assert.deepEqual(result, { changed: true, count: 0 });
   assert.equal(source.meta.connections, undefined);
@@ -88,41 +90,43 @@ test('unknown and missing connection spacing fall back to normal', () => {
   assert.equal(normalizeConnectionSpacing('loose'), ConnectionSpacing.LOOSE);
 });
 
-test('removes incoming links when a target thought is deleted', () => {
+test('removes incoming Canvas links when a target thought is deleted', () => {
   const first = thought('first');
   const second = thought('second');
-  addConnection(first, 'target');
-  addConnection(second, 'target');
+  reconcileCanvasConnections(first, ['target']);
+  reconcileCanvasConnections(second, ['target']);
 
-  const changed = detachIncomingConnections([first, second], 'target');
+  const changed = detachIncomingCanvasConnections([first, second], 'target');
 
   assert.deepEqual(changed, [first, second]);
   assert.equal(first.meta.connections, undefined);
   assert.equal(second.meta.connections, undefined);
 });
 
-test('repairs missing targets, duplicates, self-links, and unknown kinds', () => {
+test('repairs invalid, missing, and legacy Flow connections out of metadata', () => {
   const source = thought('source', [
-    { id: 'valid', targetId: 'target', kind: 'related' },
-    { id: 'duplicate', targetId: 'target', kind: 'related' },
-    { id: 'missing', targetId: 'missing', kind: 'related' },
-    { id: 'self', targetId: 'source', kind: 'related' },
-    { id: 'unknown', targetId: 'target', kind: 'unknown' },
+    { id: 'valid', targetId: 'target', kind: 'related', spaceId: 'canvas-1' },
+    { id: 'duplicate', targetId: 'target', kind: 'related', spaceId: 'canvas-1' },
+    { id: 'missing', targetId: 'missing', kind: 'related', spaceId: 'canvas-1' },
+    { id: 'self', targetId: 'source', kind: 'related', spaceId: 'canvas-1' },
+    { id: 'unknown', targetId: 'target', kind: 'unknown', spaceId: 'canvas-1' },
+    { id: 'legacy', targetId: 'flow-target', kind: 'related' },
+    { id: 'flow', targetId: 'flow-target', kind: 'related', spaceId: 'space-1' },
   ]);
   const target = thought('target');
 
-  assert.deepEqual(repairConnections([source, target]), [source]);
-  assert.deepEqual(getOutgoingConnections(source), [
-    { id: 'valid', targetId: 'target', kind: 'related' },
+  assert.deepEqual(repairCanvasConnections([source, target]), [source]);
+  assert.deepEqual(getOutgoingCanvasConnections(source), [
+    { id: 'valid', targetId: 'target', kind: 'related', spaceId: 'canvas-1' },
   ]);
 });
 
-test('flattens outgoing links for rendering without duplicating thoughts', () => {
+test('flattens Canvas links for rendering without duplicating thoughts', () => {
   const source = thought('source');
   const target = thought('target');
-  addConnection(source, target.id);
+  reconcileCanvasConnections(source, [target.id]);
 
-  const flattened = flattenConnections([source, target]);
+  const flattened = flattenCanvasConnections([source, target]);
 
   assert.equal(flattened.length, 1);
   assert.equal(flattened[0].sourceId, source.id);
@@ -131,27 +135,16 @@ test('flattens outgoing links for rendering without duplicating thoughts', () =>
   assert.equal('target' in flattened[0], false);
 });
 
-test('keeps connections scoped to their Canvas separate from legacy flow connections', () => {
-  const source = thought('source');
-  addConnection(source, 'flow-target');
-  addConnection(source, 'canvas-target', ConnectionKind.RELATED, { spaceId: 'canvas-1' });
+test('editing Canvas connections replaces stale Flow connection metadata', () => {
+  const source = thought('source', [
+    { id: 'legacy', targetId: 'flow-target', kind: 'related' },
+  ]);
 
-  const result = reconcileConnections(
-    source,
-    ['canvas-replacement'],
-    { spaceId: 'canvas-1' },
-  );
+  const result = reconcileCanvasConnections(source, ['canvas-target']);
 
   assert.deepEqual(result, { changed: true, count: 1 });
   assert.deepEqual(
-    getOutgoingConnections(source).map(({ targetId, spaceId }) => ({ targetId, spaceId })),
-    [
-      { targetId: 'flow-target', spaceId: undefined },
-      { targetId: 'canvas-replacement', spaceId: 'canvas-1' },
-    ],
-  );
-  assert.deepEqual(
-    getOutgoingConnectionsForSpace(source, 'canvas-1').map(({ targetId }) => targetId),
-    ['canvas-replacement'],
+    source.meta.connections.outgoing.map(({ targetId, spaceId }) => ({ targetId, spaceId })),
+    [{ targetId: 'canvas-target', spaceId: 'canvas-1' }],
   );
 });

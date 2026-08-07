@@ -19,11 +19,11 @@ import {
 } from './knowledge-kind-picker.js';
 import {
   MAX_CONNECTIONS_PER_THOUGHT,
-  detachIncomingConnections,
-  flattenConnections,
-  getOutgoingConnectionsForSpace,
-  reconcileConnections,
-  repairConnections,
+  detachIncomingCanvasConnections,
+  flattenCanvasConnections,
+  getOutgoingCanvasConnections,
+  reconcileCanvasConnections,
+  repairCanvasConnections,
 } from './connections.js';
 import { createConnectionRenderer } from './connection-renderer.js';
 import {
@@ -35,6 +35,7 @@ import {
 import {
   DEFAULT_SPACE_ID,
   SPACES,
+  getSpaceCapabilities,
   getThoughtSpaceId,
   isCanvasSpace,
   isSpaceId,
@@ -1093,7 +1094,7 @@ function renderMagnetThoughtState(thought) {
   const button = thought.element.querySelector('.magnet-button');
   if (!button) return;
 
-  if (isCanvasSpace(activeSpaceId)) {
+  if (!getSpaceCapabilities(activeSpaceId).magnets) {
     button.hidden = true;
     thought.element.classList.remove(
       'is-magnet-parent',
@@ -1148,6 +1149,8 @@ function renderMagnetThoughtState(thought) {
 }
 
 function renderRelationshipUi() {
+  if (!getSpaceCapabilities(activeSpaceId).connections) connectionEditor = null;
+
   const selectedTotal = magnetEditor
     ? magnetEditor.selectedChildIds.size
     : connectionEditor?.selectedTargetIds.size || 0;
@@ -1170,7 +1173,7 @@ function renderRelationshipUi() {
 }
 
 function openMagnetEditor(parent) {
-  if (isCanvasSpace(activeSpaceId)) {
+  if (!getSpaceCapabilities(activeSpaceId).magnets) {
     announce('Magnetic groups are only available in flying Spaces.');
     return;
   }
@@ -1298,6 +1301,18 @@ function renderConnectionThoughtState(thought) {
   const button = thought.element.querySelector('.connection-button');
   if (!button) return;
 
+  const { connections } = getSpaceCapabilities(activeSpaceId);
+  button.hidden = !connections;
+  if (!connections) {
+    thought.element.classList.remove(
+      'is-connection-source',
+      'is-connection-selected',
+    );
+    button.disabled = true;
+    button.setAttribute('aria-pressed', 'false');
+    return;
+  }
+
   const isSource = thought.id === connectionEditor?.sourceId;
   const isSelected = Boolean(
     connectionEditor?.selectedTargetIds.has(thought.id),
@@ -1318,28 +1333,30 @@ function renderConnectionUi() {
   renderRelationshipUi();
 }
 
-function connectionScopeId(spaceId = activeSpaceId) {
-  return isCanvasSpace(spaceId) ? spaceId : undefined;
-}
-
 function rebuildConnectionLayer() {
+  if (!getSpaceCapabilities(activeSpaceId).connections) {
+    connectionRenderer.setConnections([]);
+    magnetPhysics.syncConnections([]);
+    connectionRenderer.update();
+    return;
+  }
+
   const availableThoughtIds = new Set(
     thoughts
       .filter(isThoughtAvailableInActiveSpace)
       .map((thought) => thought.id),
   );
-  const scopeId = connectionScopeId();
-  const connections = flattenConnections(thoughts).filter((connection) => (
-    connection.spaceId === scopeId
-    && availableThoughtIds.has(connection.sourceId)
+  const connections = flattenCanvasConnections(thoughts).filter((connection) => (
+    availableThoughtIds.has(connection.sourceId)
     && availableThoughtIds.has(connection.targetId)
   ));
   connectionRenderer.setConnections(connections);
-  magnetPhysics.syncConnections(isCanvasSpace(activeSpaceId) ? [] : connections);
+  magnetPhysics.syncConnections([]);
   connectionRenderer.update();
 }
 
 function openConnectionEditor(source) {
+  if (!getSpaceCapabilities(activeSpaceId).connections) return;
   if (magnetEditor) {
     announce('Finish editing the magnetic group first.');
     return;
@@ -1350,7 +1367,7 @@ function openConnectionEditor(source) {
   connectionEditor = {
     sourceId: source.id,
     selectedTargetIds: new Set(
-      getOutgoingConnectionsForSpace(source, connectionScopeId())
+      getOutgoingCanvasConnections(source)
         .map((connection) => connection.targetId),
     ),
   };
@@ -1402,6 +1419,10 @@ function handleConnectionButton(thought) {
 
 function commitConnectionEditor() {
   if (!connectionEditor) return;
+  if (!getSpaceCapabilities(activeSpaceId).connections) {
+    closeConnectionEditor();
+    return;
+  }
 
   const editor = connectionEditor;
   const source = getThoughtById(editor.sourceId);
@@ -1410,9 +1431,7 @@ function commitConnectionEditor() {
     return;
   }
 
-  const result = reconcileConnections(source, editor.selectedTargetIds, {
-    spaceId: connectionScopeId(),
-  });
+  const result = reconcileCanvasConnections(source, editor.selectedTargetIds);
   closeConnectionEditor();
 
   if (result.changed) {
@@ -1547,7 +1566,7 @@ function replaceThoughts(nextThoughts) {
   thoughts = nextThoughts.map((thought) => makeThought(thought.text, thought));
   const repairedThoughts = new Set([
     ...repairMagnetRelations(),
-    ...repairConnections(thoughts),
+    ...repairCanvasConnections(thoughts),
   ]);
   rebuildMagnetComponents({ preserveVisibility: false });
   initializeThoughtVisibility();
@@ -1976,7 +1995,7 @@ function removeThought(thought) {
   if (blockEditsDuringAccountSync()) return;
   if (knowledgeKindEditor?.thoughtId === thought.id) knowledgeKindPicker.close();
   if (isPersistedMagnetParent(thought)) detachLocalMagnetChildren(thought.id);
-  const changedConnectionSources = detachIncomingConnections(thoughts, thought.id);
+  const changedConnectionSources = detachIncomingCanvasConnections(thoughts, thought.id);
   if (isCloudMode()) changedConnectionSources.forEach(enqueueThoughtUpsert);
   if (isCloudMode()) enqueueThoughtDelete(thought.id);
   removeThoughtElement(thought);

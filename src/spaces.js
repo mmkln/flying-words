@@ -14,6 +14,19 @@ export const SpaceKind = Object.freeze({
   CANVAS: 'canvas',
 });
 
+const SPACE_CAPABILITIES = Object.freeze({
+  [SpaceKind.FLOW]: Object.freeze({
+    magnets: true,
+    connections: false,
+    camera: false,
+  }),
+  [SpaceKind.CANVAS]: Object.freeze({
+    magnets: false,
+    connections: true,
+    camera: true,
+  }),
+});
+
 export const SPACES = Object.freeze([
   Object.freeze({ id: SpaceId.ONE, label: 'Space 1', kind: SpaceKind.FLOW }),
   Object.freeze({ id: SpaceId.TWO, label: 'Space 2', kind: SpaceKind.FLOW }),
@@ -36,6 +49,10 @@ export function normalizeSpaceId(value) {
 
 export function getSpace(spaceId) {
   return SPACES.find(({ id }) => id === normalizeSpaceId(spaceId)) || SPACES[0];
+}
+
+export function getSpaceCapabilities(spaceId) {
+  return SPACE_CAPABILITIES[getSpace(spaceId).kind];
 }
 
 export function isCanvasSpace(spaceId) {
