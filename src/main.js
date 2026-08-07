@@ -62,6 +62,9 @@ const RESPAWN_DELAY_MAX = 1400;
 const SPAWN_MARGIN = 20;
 const MIN_CANVAS_SCALE = 0.5;
 const MAX_CANVAS_SCALE = 1;
+const CANVAS_SPAWN_MARGIN = 20;
+const CANVAS_SPAWN_GAP = 18;
+const CANVAS_SPAWN_MAX_RINGS = 8;
 const LOCAL_API_URL = 'http://127.0.0.1:8000/api/v1';
 const PRODUCTION_API_URL = 'https://mxllwords.pythonanywhere.com/api/v1';
 const API_URL = ['localhost', '127.0.0.1'].includes(window.location.hostname)
@@ -73,6 +76,7 @@ const canvasWorld = document.querySelector('#canvas-world');
 const connectionLayer = document.querySelector('#connection-layer');
 const form = document.querySelector('#thought-form');
 const input = document.querySelector('#thought-input');
+const composerWrap = document.querySelector('.composer-wrap');
 const knowledgePickerTrigger = document.querySelector('#knowledge-picker-trigger');
 const knowledgePickerMenu = document.querySelector('#knowledge-picker-menu');
 const emptyState = document.querySelector('#empty-state');
@@ -496,11 +500,101 @@ function updateCanvasPlacement(thought) {
   });
 }
 
-function pointerToCanvasWorld(event) {
+function clientPointToCanvasWorld(clientX, clientY) {
   const bounds = canvas.getBoundingClientRect();
   return {
-    x: (event.clientX - bounds.left - canvasCamera.x) / canvasCamera.scale,
-    y: (event.clientY - bounds.top - canvasCamera.y) / canvasCamera.scale,
+    x: (clientX - bounds.left - canvasCamera.x) / canvasCamera.scale,
+    y: (clientY - bounds.top - canvasCamera.y) / canvasCamera.scale,
+  };
+}
+
+function pointerToCanvasWorld(event) {
+  return clientPointToCanvasWorld(event.clientX, event.clientY);
+}
+
+function getCanvasSpawnSafeArea() {
+  const canvasBounds = canvas.getBoundingClientRect();
+  const composerBounds = composerWrap.getBoundingClientRect();
+
+  return {
+    left: canvasBounds.left + CANVAS_SPAWN_MARGIN,
+    top: canvasBounds.top + CANVAS_SPAWN_MARGIN,
+    right: canvasBounds.right - CANVAS_SPAWN_MARGIN,
+    bottom: Math.min(
+      canvasBounds.bottom - CANVAS_SPAWN_MARGIN,
+      composerBounds.top - CANVAS_SPAWN_MARGIN,
+    ),
+  };
+}
+
+function getCanvasSpawnOverlap(candidate, thought, gap) {
+  const left = Math.max(candidate.x - gap / 2, thought.x - gap / 2);
+  const right = Math.min(
+    candidate.x + candidate.width + gap / 2,
+    thought.x + thought.width + gap / 2,
+  );
+  const top = Math.max(candidate.y - gap / 2, thought.y - gap / 2);
+  const bottom = Math.min(
+    candidate.y + candidate.height + gap / 2,
+    thought.y + thought.height + gap / 2,
+  );
+
+  return Math.max(0, right - left) * Math.max(0, bottom - top);
+}
+
+function findCanvasSpawnPosition(thought) {
+  const safeArea = getCanvasSpawnSafeArea();
+  const bounds = canvas.getBoundingClientRect();
+  const scale = canvasCamera.scale;
+  const gap = CANVAS_SPAWN_GAP / scale;
+  const centre = clientPointToCanvasWorld(
+    (safeArea.left + safeArea.right) / 2,
+    (safeArea.top + safeArea.bottom) / 2,
+  );
+  const occupied = thoughts.filter((item) => hasCanvasPlacement(item, activeSpaceId));
+  let bestCandidate = null;
+  let smallestOverlap = Infinity;
+
+  for (let ring = 0; ring <= CANVAS_SPAWN_MAX_RINGS; ring += 1) {
+    for (let column = -ring; column <= ring; column += 1) {
+      for (let row = -ring; row <= ring; row += 1) {
+        if (Math.max(Math.abs(column), Math.abs(row)) !== ring) continue;
+
+        const candidate = {
+          x: centre.x - thought.width / 2 + column * (thought.width + gap),
+          y: centre.y - thought.height / 2 + row * (thought.height + gap),
+          width: thought.width,
+          height: thought.height,
+        };
+        const screenLeft = bounds.left + canvasCamera.x + candidate.x * scale;
+        const screenTop = bounds.top + canvasCamera.y + candidate.y * scale;
+        const fitsSafeArea = (
+          screenLeft >= safeArea.left
+          && screenTop >= safeArea.top
+          && screenLeft + candidate.width * scale <= safeArea.right
+          && screenTop + candidate.height * scale <= safeArea.bottom
+        );
+
+        if (!fitsSafeArea) continue;
+
+        const overlap = occupied.reduce(
+          (total, item) => total + getCanvasSpawnOverlap(candidate, item, gap),
+          0,
+        );
+
+        if (overlap === 0) return candidate;
+
+        if (overlap < smallestOverlap) {
+          smallestOverlap = overlap;
+          bestCandidate = candidate;
+        }
+      }
+    }
+  }
+
+  return bestCandidate || {
+    x: centre.x - thought.width / 2,
+    y: centre.y - thought.height / 2,
   };
 }
 
@@ -1929,27 +2023,15 @@ function addThought(rawText) {
     knowledge: createKnowledgeMeta(composerKnowledgeKind),
   };
 
-  if (isCanvasSpace(activeSpaceId)) {
-    const bounds = canvas.getBoundingClientRect();
-    const canvasThoughtCount = thoughts.filter(
-      (thought) => hasCanvasPlacement(thought, activeSpaceId),
-    ).length;
-    const columnOffset = [0, 300, -300][canvasThoughtCount % 3];
-    const rowOffset = Math.floor(canvasThoughtCount / 3) * 140;
-    Object.assign(meta, withCanvasPlacement(meta, activeSpaceId, {
-      x: (bounds.width / 2 - canvasCamera.x) / canvasCamera.scale + columnOffset,
-      y: (bounds.height / 2 - canvasCamera.y) / canvasCamera.scale + rowOffset,
-    }));
-  }
-
   const thought = makeThought(text, {
     id: crypto.randomUUID(),
     createdAt: Date.now(),
     meta,
   });
   if (isCanvasSpace(activeSpaceId)) {
-    thought.x -= thought.width / 2;
-    thought.y -= thought.height / 2;
+    const position = findCanvasSpawnPosition(thought);
+    thought.x = position.x;
+    thought.y = position.y;
     updateCanvasPlacement(thought);
     renderThought(thought);
   }
