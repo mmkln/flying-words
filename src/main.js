@@ -1654,19 +1654,7 @@ function makeThought(text, restoredThought = {}) {
       () => openThoughtKnowledgeKindPicker(thought),
     );
   });
-  let wasSelectedBeforeTextPointerDown = false;
   textElement.title = 'Click again to edit · Drag the card to move it';
-  textElement.addEventListener('pointerdown', (event) => {
-    event.stopPropagation();
-    wasSelectedBeforeTextPointerDown = selectedThoughtId === thought.id;
-    selectThought(thought);
-    element.focus({ preventScroll: true });
-  });
-  textElement.addEventListener('click', (event) => {
-    event.preventDefault();
-    event.stopPropagation();
-    if (wasSelectedBeforeTextPointerDown) startThoughtTextEditing(thought);
-  });
   magnetButton.addEventListener('click', () => handleMagnetButton(thought));
   connectionButton.addEventListener('click', () => handleConnectionButton(thought));
   deleteButton.addEventListener('click', () => removeThought(thought));
