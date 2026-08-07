@@ -1908,7 +1908,7 @@ function addThought(rawText) {
 
 function togglePinned(thought) {
   if (isCanvasSpace(activeSpaceId)) {
-    announce('Canvas cards stay in place without pins.');
+    announce('Board cards stay in place without pins.');
     return;
   }
   if (magnetEditor || connectionEditor) {
@@ -2332,7 +2332,7 @@ function canvasHistoryPlacement(thought) {
   };
 }
 
-function focusCanvasThought(thought, message = 'Thought shown on Canvas.') {
+function focusCanvasThought(thought, message = 'Thought shown on Board.') {
   applyCanvasPlacement(thought);
   const bounds = canvas.getBoundingClientRect();
   canvasCamera.x = bounds.width / 2 - (thought.x + thought.width / 2) * canvasCamera.scale;
@@ -2365,7 +2365,7 @@ function addOrFocusThoughtOnCanvas(thought) {
   historyDialog.close();
   focusCanvasThought(
     thought,
-    existingPlacement ? 'Thought shown on Canvas.' : 'Thought added to Canvas.',
+    existingPlacement ? 'Thought shown on Board.' : 'Thought added to Board.',
   );
 }
 
@@ -2401,7 +2401,7 @@ function focusThoughtFromHistory(thought) {
   members.forEach(renderThought);
   thought.element.classList.add('is-history-focused');
   window.setTimeout(() => thought.element.classList.remove('is-history-focused'), 900);
-  announce('Thought shown on the canvas.');
+  announce('Thought shown on the board.');
 }
 
 function renderHistory() {
@@ -2657,8 +2657,8 @@ function openSpacesOverview() {
 function updateUi() {
   emptyState.hidden = thoughts.some(isThoughtAvailableInActiveSpace);
   if (isCanvasSpace(activeSpaceId)) {
-    emptyStateTitle.textContent = 'Your Canvas is empty';
-    emptyStateDescription.textContent = 'Add a card, then drag the canvas to move or pinch to zoom out.';
+    emptyStateTitle.textContent = 'Your Board is empty';
+    emptyStateDescription.textContent = 'Add a card, then drag the board to move or pinch to zoom out.';
   } else {
     emptyStateTitle.textContent = 'Let your thought take flight';
     emptyStateDescription.textContent = 'Write it below. Drag cards, pin what matters — the rest will move on their own.';

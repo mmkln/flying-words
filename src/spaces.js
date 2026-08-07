@@ -18,7 +18,7 @@ export const SPACES = Object.freeze([
   Object.freeze({ id: SpaceId.ONE, label: 'Space 1', kind: SpaceKind.FLOW }),
   Object.freeze({ id: SpaceId.TWO, label: 'Space 2', kind: SpaceKind.FLOW }),
   Object.freeze({ id: SpaceId.THREE, label: 'Space 3', kind: SpaceKind.FLOW }),
-  Object.freeze({ id: SpaceId.CANVAS, label: 'Canvas', kind: SpaceKind.CANVAS }),
+  Object.freeze({ id: SpaceId.CANVAS, label: 'Board', kind: SpaceKind.CANVAS }),
 ]);
 
 export const DEFAULT_SPACE_ID = SpaceId.ONE;
