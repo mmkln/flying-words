@@ -144,6 +144,7 @@ let connectionEditor = null;
 let composerKnowledgeKind = KnowledgeKind.THOUGHT;
 let knowledgeKindEditor = null;
 let thoughtTextEditor = null;
+let selectedThoughtId = null;
 let viewMode = 'canvas';
 let activeSpaceId = localStorage.getItem(ACTIVE_SPACE_STORAGE_KEY);
 if (!isSpaceId(activeSpaceId)) activeSpaceId = DEFAULT_SPACE_ID;
@@ -443,6 +444,18 @@ function pointerToCanvasWorld(event) {
 
 function getThoughtById(thoughtId) {
   return thoughts.find((thought) => thought.id === thoughtId) || null;
+}
+
+function selectThought(thought) {
+  selectedThoughtId = thought.id;
+  thoughts.forEach((item) => {
+    item.element.classList.toggle('is-selected', item.id === selectedThoughtId);
+  });
+}
+
+function clearThoughtSelection() {
+  selectedThoughtId = null;
+  thoughts.forEach((thought) => thought.element.classList.remove('is-selected'));
 }
 
 function getPersistedMagnetParents(thought) {
@@ -1468,18 +1481,21 @@ function makeThought(text, restoredThought = {}) {
       () => openThoughtKnowledgeKindPicker(thought),
     );
   });
-  textElement.addEventListener('dblclick', (event) => {
-    event.preventDefault();
-    event.stopPropagation();
-    startThoughtTextEditing(thought);
-  });
+  let wasSelectedBeforeTextPointerDown = false;
   textElement.addEventListener('pointerdown', (event) => {
-    // Text has its own interaction: never let the card drag handler cancel
-    // the browser's native double-click sequence.
+    // Text owns its interaction: the first click selects the card, while a
+    // second click enters editing without starting a drag.
     event.stopPropagation();
+    wasSelectedBeforeTextPointerDown = selectedThoughtId === thought.id;
+    selectThought(thought);
     element.focus({ preventScroll: true });
   });
-  textElement.title = 'Double-click to edit';
+  textElement.addEventListener('click', (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    if (wasSelectedBeforeTextPointerDown) startThoughtTextEditing(thought);
+  });
+  textElement.title = 'Click again to edit';
   textEditor.addEventListener('keydown', (event) => {
     event.stopPropagation();
 
@@ -1509,6 +1525,7 @@ function makeThought(text, restoredThought = {}) {
     event.preventDefault();
     startThoughtTextEditing(thought);
   });
+  element.addEventListener('focus', () => selectThought(thought));
   element.addEventListener('pointerenter', () => element.classList.add('is-hovered'));
   element.addEventListener('pointerleave', () => element.classList.remove('is-hovered'));
   return thought;
@@ -1518,6 +1535,7 @@ function replaceThoughts(nextThoughts) {
   if (thoughtTextEditor) {
     finishThoughtTextEditing({ save: true, restoreFocus: false });
   }
+  selectedThoughtId = null;
   knowledgeKindPicker.close();
   magnetEditor = null;
   connectionEditor = null;
@@ -1984,6 +2002,7 @@ function beginDrag(event, thought) {
   if (thoughtTextEditor) return;
   if (magnetEditor || connectionEditor) return;
   if (blockEditsDuringAccountSync()) return;
+  selectThought(thought);
   event.preventDefault();
   if (event.pointerType === 'touch') {
     thought.element.focus({ preventScroll: true });
@@ -2183,6 +2202,7 @@ function startThoughtTextEditing(thought) {
   if (draggedThought) stopDrag();
 
   knowledgeKindPicker.close();
+  selectThought(thought);
   thoughtTextEditor = {
     thoughtId: thought.id,
     previousText: thought.text,
@@ -2244,6 +2264,7 @@ function renderThought(thought) {
   thought.element.classList.toggle('is-pinned', thought.pinned);
   thought.element.classList.toggle('is-canvas-card', canvasThought);
   thought.element.classList.toggle('is-editing', isEditing);
+  thought.element.classList.toggle('is-selected', selectedThoughtId === thought.id);
   const kind = getThoughtKnowledgeKind(thought);
   if (thought.element.dataset.knowledgeKind !== kind) {
     const kindButton = thought.element.querySelector('.thought-kind-button');
@@ -3011,6 +3032,7 @@ window.addEventListener('keydown', (event) => {
   }
 });
 document.addEventListener('pointerdown', (event) => {
+  if (!event.target.closest('.thought-card')) clearThoughtSelection();
   if (event.pointerType !== 'touch' || event.target.closest('.thought-card')) return;
   const focusedThought = document.activeElement?.closest?.('.thought-card');
   focusedThought?.blur();
