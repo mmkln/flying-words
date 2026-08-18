@@ -598,6 +598,21 @@ function findCanvasSpawnPosition(thought) {
   };
 }
 
+function placeThoughtInVisibleCanvas(thought) {
+  const position = findCanvasSpawnPosition(thought);
+
+  thought.x = Math.round(position.x);
+  thought.y = Math.round(position.y);
+  thought.vx = 0;
+  thought.vy = 0;
+  thought.rotation = 0;
+
+  updateCanvasPlacement(thought);
+  showThought(thought);
+  renderThought(thought);
+  thought.element.style.visibility = '';
+}
+
 function getThoughtById(thoughtId) {
   return thoughts.find((thought) => thought.id === thoughtId) || null;
 }
@@ -1598,7 +1613,11 @@ function commitConnectionEditor() {
   announce(`${result.count} thoughts connected.`);
 }
 
-function makeThought(text, restoredThought = {}) {
+function makeThought(
+  text,
+  restoredThought = {},
+  { deferReveal = false } = {},
+) {
   const fragment = template.content.cloneNode(true);
   const element = fragment.querySelector('.thought-card');
   const textElement = fragment.querySelector('.thought-text');
@@ -1634,6 +1653,9 @@ function makeThought(text, restoredThought = {}) {
   };
 
   textElement.textContent = text;
+  if (deferReveal) {
+    element.style.visibility = 'hidden';
+  }
   canvasWorld.append(element);
   measureThought(thought);
   const hasLocalPosition = (
@@ -2011,17 +2033,20 @@ function addThought(rawText) {
     knowledge: createKnowledgeMeta(composerKnowledgeKind),
   };
 
-  const thought = makeThought(text, {
-    id: crypto.randomUUID(),
-    createdAt: Date.now(),
-    meta,
-  });
-  if (isCanvasSpace(activeSpaceId)) {
-    const position = findCanvasSpawnPosition(thought);
-    thought.x = position.x;
-    thought.y = position.y;
-    updateCanvasPlacement(thought);
-    renderThought(thought);
+  const addingToBoard = isCanvasSpace(activeSpaceId);
+  const thought = makeThought(
+    text,
+    {
+      id: crypto.randomUUID(),
+      createdAt: Date.now(),
+      meta,
+    },
+    {
+      deferReveal: addingToBoard,
+    },
+  );
+  if (addingToBoard) {
+    placeThoughtInVisibleCanvas(thought);
   }
   thoughts.push(thought);
   rebuildMagnetComponents();
@@ -2451,24 +2476,6 @@ function formatHistoryDate(createdAt) {
   return new Intl.DateTimeFormat(undefined, options).format(date);
 }
 
-function canvasHistoryPlacement(thought) {
-  const bounds = canvas.getBoundingClientRect();
-  const existingCount = thoughts.filter((item) => (
-    hasCanvasPlacement(item, activeSpaceId)
-  )).length;
-  const radius = existingCount === 0
-    ? 0
-    : 150 + Math.floor((existingCount - 1) / 6) * 92;
-  const angle = existingCount * 2.399963229728653;
-  const centerX = (bounds.width / 2 - canvasCamera.x) / canvasCamera.scale;
-  const centerY = (bounds.height / 2 - canvasCamera.y) / canvasCamera.scale;
-
-  return {
-    x: centerX - thought.width / 2 + Math.cos(angle) * radius,
-    y: centerY - thought.height / 2 + Math.sin(angle) * radius,
-  };
-}
-
 function focusCanvasThought(thought, message = 'Thought shown on Board.') {
   applyCanvasPlacement(thought);
   const bounds = canvas.getBoundingClientRect();
@@ -2488,22 +2495,21 @@ function focusCanvasThought(thought, message = 'Thought shown on Board.') {
 function addOrFocusThoughtOnCanvas(thought) {
   const existingPlacement = getCanvasPlacement(thought, activeSpaceId);
 
-  if (!existingPlacement) {
-    thought.meta = withCanvasPlacement(
-      thought.meta,
-      activeSpaceId,
-      canvasHistoryPlacement(thought),
-    );
-    saveThoughts();
-    if (isCloudMode()) enqueueThoughtUpsert(thought);
-    updateUi();
+  historyDialog.close();
+
+  if (existingPlacement) {
+    focusCanvasThought(thought, 'Thought shown on Board.');
+    return;
   }
 
-  historyDialog.close();
-  focusCanvasThought(
-    thought,
-    existingPlacement ? 'Thought shown on Board.' : 'Thought added to Board.',
-  );
+  placeThoughtInVisibleCanvas(thought);
+  saveThoughts();
+  if (isCloudMode()) enqueueThoughtUpsert(thought);
+
+  rebuildConnectionLayer();
+  updateUi();
+  thought.element.focus({ preventScroll: true });
+  announce('Thought added to Board.');
 }
 
 function focusThoughtFromHistory(thought) {
@@ -2997,7 +3003,7 @@ form.addEventListener('submit', (event) => {
   } finally {
     handlingThoughtSubmit = false;
     resizeComposer();
-    input.focus();
+    input.focus({ preventScroll: true });
   }
 });
 
