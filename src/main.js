@@ -34,6 +34,12 @@ import {
   withCanvasPlacement,
 } from './canvas-placements.js';
 import {
+  getBoardAnchor,
+  hasBoardAnchor,
+  withBoardAnchor,
+  withoutBoardAnchor,
+} from './board-anchors.js';
+import {
   DEFAULT_SPACE_ID,
   SPACES,
   getSpaceCapabilities,
@@ -89,6 +95,10 @@ const historyDialog = document.querySelector('#history-dialog');
 const historyClose = document.querySelector('#history-close');
 const historySearch = document.querySelector('#history-search');
 const historyList = document.querySelector('#history-list');
+const anchorsButton = document.querySelector('#anchors-button');
+const anchorsDialog = document.querySelector('#anchors-dialog');
+const anchorsClose = document.querySelector('#anchors-close');
+const anchorsList = document.querySelector('#anchors-list');
 const spacesButton = document.querySelector('#spaces-button');
 const canvasControls = document.querySelector('#canvas-controls');
 const canvasZoomIn = document.querySelector('#canvas-zoom-in');
@@ -1622,6 +1632,7 @@ function makeThought(
   const element = fragment.querySelector('.thought-card');
   const textElement = fragment.querySelector('.thought-text');
   const kindButton = fragment.querySelector('.thought-kind-button');
+  const anchorButton = fragment.querySelector('.anchor-button');
   const pinButton = fragment.querySelector('.pin-button');
   const magnetButton = fragment.querySelector('.magnet-button');
   const connectionButton = fragment.querySelector('.connection-button');
@@ -1669,6 +1680,7 @@ function makeThought(
   renderThought(thought);
 
   pinButton.addEventListener('click', () => togglePinned(thought));
+  anchorButton.addEventListener('click', () => toggleBoardAnchor(thought));
   kindButton.addEventListener('click', () => openThoughtKnowledgeKindPicker(thought));
   kindButton.addEventListener('keydown', (event) => {
     handleKnowledgeKindTriggerKeyDown(
@@ -2107,6 +2119,26 @@ function togglePinned(thought) {
   if (isCloudMode()) enqueueThoughtUpsert(thought);
 }
 
+function toggleBoardAnchor(thought) {
+  if (!isCanvasSpace(activeSpaceId)) return;
+  if (magnetEditor || connectionEditor) {
+    announce('Finish the current card relationship first.');
+    return;
+  }
+  if (blockEditsDuringAccountSync()) return;
+
+  const anchored = hasBoardAnchor(thought, activeSpaceId);
+  thought.meta = anchored
+    ? withoutBoardAnchor(thought.meta, activeSpaceId)
+    : withBoardAnchor(thought.meta, activeSpaceId);
+
+  renderThought(thought);
+  saveThoughts();
+  if (isCloudMode()) enqueueThoughtUpsert(thought);
+  if (anchorsDialog.open) renderAnchors();
+  announce(anchored ? 'Anchor removed.' : 'Anchor added.');
+}
+
 function detachLocalMagnetChildren(parentId) {
   const changedThoughts = getPersistedMagnetChildren(parentId);
   changedThoughts.forEach((child) => {
@@ -2438,6 +2470,14 @@ function renderThought(thought) {
   pinButton.hidden = canvasThought;
   pinButton.title = thought.pinned ? 'Unpin thought' : 'Pin thought';
   pinButton.setAttribute('aria-label', pinButton.title);
+  const anchorButton = thought.element.querySelector('.anchor-button');
+  const anchored = canvasThought && hasBoardAnchor(thought, activeSpaceId);
+  anchorButton.hidden = !canvasThought;
+  anchorButton.classList.toggle('is-active', anchored);
+  anchorButton.setAttribute('aria-pressed', String(anchored));
+  anchorButton.title = anchored ? 'Remove from anchors' : 'Add to anchors';
+  anchorButton.setAttribute('aria-label', anchorButton.title);
+  thought.element.classList.toggle('is-anchored', anchored);
   renderMagnetThoughtState(thought);
   renderConnectionThoughtState(thought);
 }
@@ -2633,6 +2673,83 @@ function renderHistory() {
   });
 }
 
+function getAnchoredThoughts() {
+  return thoughts
+    .filter((thought) => (
+      hasCanvasPlacement(thought, activeSpaceId)
+      && hasBoardAnchor(thought, activeSpaceId)
+    ))
+    .sort((first, second) => {
+      const firstTime = getBoardAnchor(first, activeSpaceId)?.createdAt || 0;
+      const secondTime = getBoardAnchor(second, activeSpaceId)?.createdAt || 0;
+      return secondTime - firstTime;
+    });
+}
+
+function renderAnchors() {
+  const anchoredThoughts = getAnchoredThoughts();
+  anchorsList.replaceChildren();
+
+  if (!anchoredThoughts.length) {
+    const empty = document.createElement('p');
+    empty.className = 'history-empty';
+    empty.textContent = 'No anchors yet.';
+    anchorsList.append(empty);
+    return;
+  }
+
+  const section = document.createElement('section');
+  const list = document.createElement('ul');
+  section.className = 'history-group';
+
+  anchoredThoughts.forEach((thought) => {
+    const item = document.createElement('li');
+    const row = document.createElement('div');
+    const kindIcon = document.createElement('span');
+    const contentButton = document.createElement('button');
+    const text = document.createElement('span');
+    const removeButton = document.createElement('button');
+
+    row.className = 'history-item anchor-item';
+    kindIcon.className = 'history-kind-icon anchor-kind-icon';
+    renderKnowledgeKindTrigger(kindIcon, getThoughtKnowledgeKind(thought));
+
+    contentButton.type = 'button';
+    contentButton.className = 'history-item-content';
+    contentButton.addEventListener('click', () => {
+      anchorsDialog.close();
+      focusCanvasThought(thought, 'Anchor shown on Board.');
+    });
+
+    text.className = 'history-item-text';
+    text.textContent = thought.text;
+    contentButton.append(text);
+
+    removeButton.type = 'button';
+    removeButton.className = 'anchor-remove';
+    removeButton.textContent = '×';
+    removeButton.setAttribute('aria-label', 'Remove anchor');
+    removeButton.addEventListener('click', () => toggleBoardAnchor(thought));
+
+    row.append(kindIcon, contentButton, removeButton);
+    item.append(row);
+    list.append(item);
+  });
+
+  section.append(list);
+  anchorsList.append(section);
+}
+
+function openAnchors() {
+  if (!isCanvasSpace(activeSpaceId)) return;
+  if (magnetEditor) closeMagnetEditor({ restoreMotion: true });
+  if (connectionEditor) closeConnectionEditor();
+  stopDrag();
+  knowledgeKindPicker.close();
+  renderAnchors();
+  anchorsDialog.showModal();
+}
+
 function openHistory() {
   knowledgeKindPicker.close();
   historySearch.value = '';
@@ -2798,8 +2915,11 @@ function openSpacesOverview() {
 }
 
 function updateUi() {
+  const boardActive = isCanvasSpace(activeSpaceId);
+  anchorsButton.hidden = !boardActive;
+  if (!boardActive && anchorsDialog.open) anchorsDialog.close();
   emptyState.hidden = thoughts.some(isThoughtAvailableInActiveSpace);
-  if (isCanvasSpace(activeSpaceId)) {
+  if (boardActive) {
     emptyStateTitle.textContent = 'Your Board is empty';
     emptyStateDescription.textContent = 'Add a card, then drag the board to move or pinch to zoom out.';
   } else {
@@ -2807,6 +2927,7 @@ function updateUi() {
     emptyStateDescription.textContent = 'Write it below. Drag cards, pin what matters — the rest will move on their own.';
   }
   if (historyDialog.open) renderHistory();
+  if (anchorsDialog.open) renderAnchors();
 }
 
 function announce(message) {
@@ -2819,7 +2940,7 @@ function animate(timestamp) {
   lastTimestamp = timestamp;
   const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 
-  if (viewMode === 'spaces' || historyDialog.open) {
+  if (viewMode === 'spaces' || historyDialog.open || anchorsDialog.open) {
     window.requestAnimationFrame(animate);
     return;
   }
@@ -3018,6 +3139,7 @@ historyButton.addEventListener('click', () => {
   if (connectionEditor) closeConnectionEditor();
   openHistory();
 });
+anchorsButton.addEventListener('click', openAnchors);
 spacesButton.addEventListener('click', openSpacesOverview);
 spacesClose.addEventListener('click', closeSpacesOverview);
 spacesOverview.addEventListener('click', (event) => {
@@ -3040,6 +3162,10 @@ historyClose.addEventListener('click', () => historyDialog.close());
 historySearch.addEventListener('input', renderHistory);
 historyDialog.addEventListener('click', (event) => {
   if (event.target === historyDialog) historyDialog.close();
+});
+anchorsClose.addEventListener('click', () => anchorsDialog.close());
+anchorsDialog.addEventListener('click', (event) => {
+  if (event.target === anchorsDialog) anchorsDialog.close();
 });
 authClose.addEventListener('click', () => authDialog.close());
 authForm.addEventListener('submit', (event) => {
