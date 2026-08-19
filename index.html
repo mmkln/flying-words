@@ -14,8 +14,8 @@
       content="Flying Thoughts — a space for thoughts that move freely."
     />
     <title>Flying Thoughts</title>
-    <script type="module" crossorigin src="/flying-words/assets/index-ftI4qGVg.js"></script>
-    <link rel="stylesheet" crossorigin href="/flying-words/assets/index-CpbZzzUm.css">
+    <script type="module" crossorigin src="/flying-words/assets/index-Bp2tcHNw.js"></script>
+    <link rel="stylesheet" crossorigin href="/flying-words/assets/index-BhzDsE53.css">
   </head>
   <body>
     <main class="app-shell">
@@ -32,6 +32,14 @@
           <rect x="14" y="3" width="7" height="7" rx="1.5"></rect>
           <rect x="3" y="14" width="7" height="7" rx="1.5"></rect>
           <rect x="14" y="14" width="7" height="7" rx="1.5"></rect>
+        </svg>
+      </button>
+      <button class="anchors-button" id="anchors-button" type="button" aria-label="Open anchors" title="Anchors" hidden>
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <circle cx="12" cy="5" r="3"></circle>
+          <path d="M12 8v12"></path>
+          <path d="M5 14a7 7 0 0 0 14 0"></path>
+          <path d="m5 14-2 2M19 14l2 2"></path>
         </svg>
       </button>
       <div class="canvas-controls" id="canvas-controls" role="group" aria-label="Board zoom" hidden>
@@ -131,6 +139,21 @@
       <div class="history-list" id="history-list"></div>
     </dialog>
 
+    <dialog class="history-dialog anchors-dialog" id="anchors-dialog" aria-labelledby="anchors-title">
+      <div class="history-header">
+        <div>
+          <h2 id="anchors-title">Anchors</h2>
+          <p>Quick access to important cards.</p>
+        </div>
+        <button class="history-close" id="anchors-close" type="button" aria-label="Close anchors">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true">
+            <path d="m6 6 12 12M18 6 6 18"></path>
+          </svg>
+        </button>
+      </div>
+      <div class="history-list anchors-list" id="anchors-list"></div>
+    </dialog>
+
     <dialog class="auth-dialog" id="auth-dialog" aria-labelledby="auth-title">
       <button class="dialog-close" id="auth-close" type="button" aria-label="Close">×</button>
       <h2 id="auth-title">Keep thoughts in sync</h2>
@@ -185,6 +208,14 @@
           aria-expanded="false"
         ></button>
         <p class="thought-text"></p>
+        <button class="anchor-btn anchor-button" type="button" title="Add to anchors" aria-label="Add to anchors" aria-pressed="false" hidden>
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <circle cx="12" cy="5" r="3"></circle>
+            <path d="M12 8v12"></path>
+            <path d="M5 14a7 7 0 0 0 14 0"></path>
+            <path d="m5 14-2 2M19 14l2 2"></path>
+          </svg>
+        </button>
         <button class="magnet-btn magnet-button" type="button" title="Create magnetic group" aria-label="Create magnetic group">
           <svg viewBox="0 0 24 24" aria-hidden="true">
             <g transform="rotate(-45 12 12)">
