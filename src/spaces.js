@@ -5,6 +5,7 @@ export const SpaceId = Object.freeze({
   TWO: 'space-2',
   THREE: 'space-3',
   CANVAS: 'canvas-1',
+  SPATIAL: 'spatial-1',
 });
 
 const LEGACY_SPACE_FOUR_ID = 'space-4';
@@ -12,6 +13,7 @@ const LEGACY_SPACE_FOUR_ID = 'space-4';
 export const SpaceKind = Object.freeze({
   FLOW: 'flow',
   CANVAS: 'canvas',
+  SPATIAL: 'spatial',
 });
 
 const SPACE_CAPABILITIES = Object.freeze({
@@ -25,6 +27,11 @@ const SPACE_CAPABILITIES = Object.freeze({
     connections: true,
     camera: true,
   }),
+  [SpaceKind.SPATIAL]: Object.freeze({
+    magnets: false,
+    connections: true,
+    camera: true,
+  }),
 });
 
 export const SPACES = Object.freeze([
@@ -32,6 +39,7 @@ export const SPACES = Object.freeze([
   Object.freeze({ id: SpaceId.TWO, label: 'Space 2', kind: SpaceKind.FLOW }),
   Object.freeze({ id: SpaceId.THREE, label: 'Space 3', kind: SpaceKind.FLOW }),
   Object.freeze({ id: SpaceId.CANVAS, label: 'Board', kind: SpaceKind.CANVAS }),
+  Object.freeze({ id: SpaceId.SPATIAL, label: 'Spatial', kind: SpaceKind.SPATIAL }),
 ]);
 
 export const DEFAULT_SPACE_ID = SpaceId.ONE;
@@ -59,6 +67,14 @@ export function isCanvasSpace(spaceId) {
   return getSpace(spaceId).kind === SpaceKind.CANVAS;
 }
 
+export function isFlowSpace(spaceId) {
+  return getSpace(spaceId).kind === SpaceKind.FLOW;
+}
+
+export function isSpatialSpace(spaceId) {
+  return getSpace(spaceId).kind === SpaceKind.SPATIAL;
+}
+
 export function getThoughtSpaceId(thought) {
   return normalizeSpaceId(thought?.meta?.layout?.spaceId);
 }
@@ -68,6 +84,10 @@ export function isThoughtAvailableInSpace(thought, spaceId) {
 
   if (isCanvasSpace(normalizedSpaceId)) {
     return Boolean(getCanvasPlacement(thought, normalizedSpaceId));
+  }
+
+  if (isSpatialSpace(normalizedSpaceId)) {
+    return true;
   }
 
   return !thought?.pinned || getThoughtSpaceId(thought) === normalizedSpaceId;

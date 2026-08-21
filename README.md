@@ -19,9 +19,16 @@ The repository is configured to deploy from `main` to GitHub Pages through GitHu
 
 - create, drag, pin, and delete thoughts;
 - physics-based motion and card collisions;
+- Board and an on-demand force-directed WebGL Spatial graph with shared semantic links;
 - responsive layouts for phones and desktops;
 - automatic local persistence with `localStorage`;
 - support for the system **Reduce motion** preference.
+
+In Spatial, drag the background to orbit, scroll or pinch to zoom, and drag a
+node to reshape the graph. Click a node to inspect it, use **Focus** to move the
+camera to it, or pin its position when it should stop participating in the
+layout. The Three.js renderer and graph simulation are loaded only when Spatial
+is opened.
 
 ## Do you need a backend?
 

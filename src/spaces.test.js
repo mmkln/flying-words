@@ -10,28 +10,38 @@ import {
   getSpaceCapabilities,
   getThoughtSpaceId,
   isCanvasSpace,
+  isFlowSpace,
   isSpaceId,
+  isSpatialSpace,
   isThoughtAvailableInSpace,
   normalizeSpaceId,
 } from './spaces.js';
 
-test('exposes three stable flow spaces and one fixed Canvas', () => {
-  assert.equal(SPACES.length, 4);
+test('exposes three Flow spaces, one Canvas, and one Spatial view', () => {
+  assert.equal(SPACES.length, 5);
   assert.deepEqual(
     SPACES.map(({ id }) => id),
-    [SpaceId.ONE, SpaceId.TWO, SpaceId.THREE, SpaceId.CANVAS],
+    [SpaceId.ONE, SpaceId.TWO, SpaceId.THREE, SpaceId.CANVAS, SpaceId.SPATIAL],
   );
+  assert.equal(isFlowSpace(SpaceId.ONE), true);
   assert.equal(getSpace(SpaceId.CANVAS).kind, SpaceKind.CANVAS);
   assert.equal(isCanvasSpace(SpaceId.CANVAS), true);
+  assert.equal(getSpace(SpaceId.SPATIAL).kind, SpaceKind.SPATIAL);
+  assert.equal(isSpatialSpace(SpaceId.SPATIAL), true);
 });
 
-test('enables magnets in flow Spaces and connections only on Canvas', () => {
+test('enables magnets in Flow and connections in Canvas and Spatial', () => {
   assert.deepEqual(getSpaceCapabilities(SpaceId.ONE), {
     magnets: true,
     connections: false,
     camera: false,
   });
   assert.deepEqual(getSpaceCapabilities(SpaceId.CANVAS), {
+    magnets: false,
+    connections: true,
+    camera: true,
+  });
+  assert.deepEqual(getSpaceCapabilities(SpaceId.SPATIAL), {
     magnets: false,
     connections: true,
     camera: true,
@@ -71,4 +81,22 @@ test('keeps Canvas placement independent from flying spaces', () => {
 
   assert.equal(isThoughtAvailableInSpace(canvasThought, SpaceId.CANVAS), true);
   assert.equal(isThoughtAvailableInSpace(canvasThought, SpaceId.ONE), true);
+});
+
+test('shows every thought in Spatial while placements only describe fixed positions', () => {
+  const thought = {
+    pinned: false,
+    meta: {
+      spatial: {
+        version: 1,
+        placements: {
+          [SpaceId.SPATIAL]: { x: 10, y: -20, z: 30 },
+        },
+      },
+    },
+  };
+
+  assert.equal(isThoughtAvailableInSpace(thought, SpaceId.SPATIAL), true);
+  assert.equal(isThoughtAvailableInSpace({ pinned: false, meta: {} }, SpaceId.SPATIAL), true);
+  assert.equal(isThoughtAvailableInSpace(thought, SpaceId.ONE), true);
 });

@@ -20,11 +20,11 @@ import {
 import { createThoughtEditor } from './thought-editor.js';
 import {
   MAX_CONNECTIONS_PER_THOUGHT,
-  detachIncomingCanvasConnections,
-  flattenCanvasConnections,
-  getOutgoingCanvasConnections,
-  reconcileCanvasConnections,
-  repairCanvasConnections,
+  detachIncomingConnections,
+  flattenConnections,
+  getOutgoingConnections,
+  reconcileConnections,
+  repairConnections,
 } from './connections.js';
 import { createConnectionRenderer } from './connection-renderer.js';
 import {
@@ -33,6 +33,11 @@ import {
   normalizeCanvasMeta,
   withCanvasPlacement,
 } from './canvas-placements.js';
+import {
+  getSpatialPlacement,
+  withSpatialPlacement,
+  withoutSpatialPlacement,
+} from './spatial-placements.js';
 import {
   getBoardAnchor,
   hasBoardAnchor,
@@ -45,7 +50,9 @@ import {
   getSpaceCapabilities,
   getThoughtSpaceId,
   isCanvasSpace,
+  isFlowSpace,
   isSpaceId,
+  isSpatialSpace,
   isThoughtAvailableInSpace,
 } from './spaces.js';
 
@@ -53,6 +60,8 @@ const STORAGE_KEY = 'flying-thoughts:v1';
 const AUTH_STORAGE_KEY = 'flying-thoughts:auth:v1';
 const ACTIVE_SPACE_STORAGE_KEY = 'flying-thoughts:active-space:v1';
 const CANVAS_CAMERA_STORAGE_PREFIX = 'flying-thoughts:canvas-camera:v1:';
+const SPATIAL_CAMERA_STORAGE_PREFIX = 'flying-thoughts:spatial-camera:v3:';
+const SPATIAL_LAYOUT_STORAGE_PREFIX = 'flying-thoughts:spatial-layout:v2:';
 const PENDING_SYNC_STORAGE_PREFIX = 'flying-thoughts:pending-sync:v1:';
 const ACCOUNT_STORAGE_PREFIX = 'flying-thoughts:account:v1:';
 const OUTBOX_STORAGE_PREFIX = 'flying-thoughts:outbox:v1:';
@@ -81,6 +90,17 @@ const API_URL = ['localhost', '127.0.0.1'].includes(window.location.hostname)
 
 const canvas = document.querySelector('#canvas');
 const canvasWorld = document.querySelector('#canvas-world');
+const spatialWorld = document.querySelector('#spatial-world');
+const spatialFitButton = document.querySelector('#spatial-fit');
+const spatialFocusButton = document.querySelector('#spatial-focus');
+const spatialResetButton = document.querySelector('#spatial-reset');
+const spatialInspector = document.querySelector('#spatial-inspector');
+const spatialInspectorKind = document.querySelector('#spatial-inspector-kind');
+const spatialInspectorKindLabel = document.querySelector('#spatial-inspector-kind-label');
+const spatialInspectorText = document.querySelector('#spatial-inspector-text');
+const spatialInspectorClose = document.querySelector('#spatial-inspector-close');
+const spatialInspectorEdit = document.querySelector('#spatial-inspector-edit');
+const spatialInspectorPin = document.querySelector('#spatial-inspector-pin');
 const connectionLayer = document.querySelector('#connection-layer');
 const form = document.querySelector('#thought-form');
 const input = document.querySelector('#thought-input');
@@ -172,6 +192,8 @@ let connectionEditor = null;
 let composerKnowledgeKind = KnowledgeKind.THOUGHT;
 let knowledgeKindEditor = null;
 let selectedThoughtId = null;
+let spatialView = null;
+let spatialViewPromise = null;
 let viewMode = 'canvas';
 let activeSpaceId = localStorage.getItem(ACTIVE_SPACE_STORAGE_KEY);
 if (!isSpaceId(activeSpaceId)) activeSpaceId = DEFAULT_SPACE_ID;
@@ -182,6 +204,98 @@ const connectionRenderer = createConnectionRenderer({
   layer: connectionLayer,
   getThoughtById,
 });
+
+function buildSpatialGraph() {
+  const availableIds = new Set(thoughts.map((thought) => thought.id));
+  const links = flattenConnections(thoughts).filter(({ sourceId, targetId }) => (
+    availableIds.has(sourceId) && availableIds.has(targetId)
+  ));
+  const connectionCounts = new Map();
+  links.forEach(({ sourceId, targetId }) => {
+    connectionCounts.set(sourceId, (connectionCounts.get(sourceId) || 0) + 1);
+    connectionCounts.set(targetId, (connectionCounts.get(targetId) || 0) + 1);
+  });
+
+  const nodes = thoughts.map((thought) => {
+    const connectionCount = connectionCounts.get(thought.id) || 0;
+    return {
+      id: thought.id,
+      text: thought.text,
+      kind: getThoughtKnowledgeKind(thought),
+      radius: Math.min(13, 5 + Math.sqrt(connectionCount) * 1.6),
+      connectionCount,
+      pinnedPosition: getSpatialPlacement(thought, activeSpaceId),
+    };
+  });
+  return { nodes, links };
+}
+
+async function ensureSpatialView() {
+  if (spatialView) return spatialView;
+  if (!spatialViewPromise) {
+    spatialViewPromise = import('./spatial-view.js')
+      .then(({ createSpatialView }) => {
+        spatialView = createSpatialView({
+          container: spatialWorld,
+          storageKey: `${SPATIAL_CAMERA_STORAGE_PREFIX}spatial-1`,
+          layoutStorageKey: `${SPATIAL_LAYOUT_STORAGE_PREFIX}spatial-1`,
+          onThoughtSelect(thoughtId) {
+            const thought = getThoughtById(thoughtId);
+            if (thought) selectThought(thought);
+          },
+          onThoughtActivate(thoughtId) {
+            const thought = getThoughtById(thoughtId);
+            if (thought) startThoughtTextEditing(thought);
+          },
+          onThoughtMove(thoughtId, position) {
+            if (!isSpatialSpace(activeSpaceId)) return;
+            const thought = getThoughtById(thoughtId);
+            if (!thought || position.pinned !== true) return;
+            thought.meta = withSpatialPlacement(thought.meta, activeSpaceId, position);
+            saveThoughts();
+            if (isCloudMode()) enqueueThoughtUpsert(thought);
+            renderSpatialInspector();
+          },
+          onError(message) {
+            announce(message);
+          },
+        });
+        return spatialView;
+      })
+      .catch((error) => {
+        spatialViewPromise = null;
+        console.error('Unable to initialize Spatial view.', error);
+        announce('3D rendering is unavailable in this browser.');
+        return null;
+      });
+  }
+  return spatialViewPromise;
+}
+
+function refreshSpatialGraph() {
+  if (!spatialView || !isSpatialSpace(activeSpaceId)) return;
+  spatialView.setGraph(buildSpatialGraph());
+  spatialView.setSelectedThought(selectedThoughtId);
+  renderSpatialInspector();
+}
+
+async function activateSpatialView() {
+  canvasWorld.hidden = true;
+  spatialWorld.hidden = false;
+  const view = await ensureSpatialView();
+  if (!view || !isSpatialSpace(activeSpaceId)) return;
+  view.setGraph(buildSpatialGraph());
+  view.setSelectedThought(selectedThoughtId);
+  view.activate();
+  renderSpatialInspector();
+}
+
+function deactivateSpatialView() {
+  spatialView?.deactivate();
+  spatialInspector.hidden = true;
+  spatialWorld.hidden = true;
+  canvasWorld.hidden = false;
+}
 
 const knowledgeKindPicker = createKnowledgeKindPicker({
   menu: knowledgePickerMenu,
@@ -215,11 +329,15 @@ const thoughtEditor = createThoughtEditor({
       saveThoughts();
       if (isCloudMode()) enqueueThoughtUpsert(thought);
       if (historyDialog.open) renderHistory();
-      renderThought(thought);
-      measureThought(thought);
-      if (!isCanvasSpace(activeSpaceId) && thought.pinned) {
-        constrainThought(thought);
-        updatePinnedLayoutMeta(thought);
+      if (isSpatialSpace(activeSpaceId)) {
+        refreshSpatialGraph();
+      } else {
+        renderThought(thought);
+        measureThought(thought);
+        if (isFlowSpace(activeSpaceId) && thought.pinned) {
+          constrainThought(thought);
+          updatePinnedLayoutMeta(thought);
+        }
       }
       rebuildConnectionLayer();
       announce('Thought updated.');
@@ -229,6 +347,10 @@ const thoughtEditor = createThoughtEditor({
   },
   onClose({ thoughtId, restoreFocus }) {
     if (!restoreFocus) return;
+    if (isSpatialSpace(activeSpaceId)) {
+      spatialInspectorEdit.focus({ preventScroll: true });
+      return;
+    }
     getThoughtById(thoughtId)?.element?.focus({ preventScroll: true });
   },
 });
@@ -306,7 +428,8 @@ function updateThoughtKnowledgeKind(thought, kind) {
   if (getThoughtKnowledgeKind(thought) === kind) return;
 
   setThoughtKnowledgeKind(thought, kind);
-  renderThought(thought);
+  if (isSpatialSpace(activeSpaceId)) refreshSpatialGraph();
+  else renderThought(thought);
   saveThoughts();
   if (isCloudMode()) enqueueThoughtUpsert(thought);
   if (historyDialog.open) renderHistory();
@@ -487,6 +610,7 @@ function revealCanvasHud() {
 function renderCanvasCamera() {
   const activeCanvas = isCanvasSpace(activeSpaceId);
   canvas.classList.toggle('is-static-canvas', activeCanvas);
+  canvas.classList.toggle('is-spatial-canvas', isSpatialSpace(activeSpaceId));
   canvasWorld.style.transform = activeCanvas
     ? `translate3d(${canvasCamera.x}px, ${canvasCamera.y}px, 0) scale(${canvasCamera.scale})`
     : '';
@@ -629,16 +753,62 @@ function getThoughtById(thoughtId) {
   return thoughts.find((thought) => thought.id === thoughtId) || null;
 }
 
+function renderSpatialInspector() {
+  const thought = selectedThoughtId ? getThoughtById(selectedThoughtId) : null;
+  const visible = Boolean(thought && isSpatialSpace(activeSpaceId));
+  spatialInspector.hidden = !visible;
+  spatialFocusButton.disabled = !visible;
+  if (!visible) return;
+
+  const kind = getThoughtKnowledgeKind(thought);
+  renderKnowledgeKindTrigger(spatialInspectorKind, kind);
+  spatialInspectorKindLabel.textContent = getKnowledgeKindLabel(kind);
+  spatialInspectorText.textContent = thought.text;
+  const pinned = getSpatialPlacement(thought, activeSpaceId)?.pinned === true;
+  spatialInspectorPin.textContent = pinned ? 'Unpin position' : 'Pin position';
+  spatialInspectorPin.setAttribute('aria-pressed', String(pinned));
+}
+
+function toggleSpatialPositionPin() {
+  if (!isSpatialSpace(activeSpaceId) || !selectedThoughtId) return;
+  if (blockEditsDuringAccountSync()) return;
+  const thought = getThoughtById(selectedThoughtId);
+  if (!thought) return;
+
+  const pinned = getSpatialPlacement(thought, activeSpaceId)?.pinned === true;
+  if (pinned) {
+    thought.meta = withoutSpatialPlacement(thought.meta, activeSpaceId);
+    spatialView?.setThoughtPinned(thought.id, false);
+  } else {
+    const position = spatialView?.setThoughtPinned(thought.id, true)
+      || spatialView?.getThoughtPosition(thought.id);
+    if (!position) return;
+    thought.meta = withSpatialPlacement(thought.meta, activeSpaceId, {
+      ...position,
+      pinned: true,
+    });
+  }
+
+  saveThoughts();
+  if (isCloudMode()) enqueueThoughtUpsert(thought);
+  renderSpatialInspector();
+  announce(pinned ? 'Spatial position released.' : 'Spatial position pinned.');
+}
+
 function selectThought(thought) {
   selectedThoughtId = thought.id;
   thoughts.forEach((item) => {
     item.element.classList.toggle('is-selected', item.id === selectedThoughtId);
   });
+  spatialView?.setSelectedThought(selectedThoughtId);
+  renderSpatialInspector();
 }
 
 function clearThoughtSelection() {
   selectedThoughtId = null;
   thoughts.forEach((thought) => thought.element.classList.remove('is-selected'));
+  spatialView?.setSelectedThought(null);
+  renderSpatialInspector();
 }
 
 function getPersistedMagnetParents(thought) {
@@ -838,7 +1008,11 @@ function normalizedLayout(thought) {
 }
 
 function updatePinnedLayoutMeta(thought) {
-  if (!thought.pinned || !isThoughtAvailableInActiveSpace(thought)) return;
+  if (
+    !isFlowSpace(activeSpaceId)
+    || !thought.pinned
+    || !isThoughtAvailableInActiveSpace(thought)
+  ) return;
 
   thought.meta = {
     ...(thought.meta || {}),
@@ -986,7 +1160,7 @@ function getVisibilityState(value) {
 
 function isThoughtActive(thought) {
   if (!isThoughtAvailableInActiveSpace(thought)) return false;
-  if (isCanvasSpace(activeSpaceId)) return true;
+  if (isCanvasSpace(activeSpaceId) || isSpatialSpace(activeSpaceId)) return true;
   const component = getMagnetComponent(thought);
   return isMagnetComponentPinned(component)
     || getVisibilityState(component).status !== 'dormant';
@@ -1031,6 +1205,7 @@ function calculateVisibleTarget() {
 
 function showThought(thought) {
   if (!isThoughtAvailableInActiveSpace(thought)) return;
+  if (isSpatialSpace(activeSpaceId)) return;
   if (isCanvasSpace(activeSpaceId)) {
     thought.element.hidden = false;
     return;
@@ -1044,7 +1219,7 @@ function showThought(thought) {
 }
 
 function hideThought(thought) {
-  if (isCanvasSpace(activeSpaceId)) return;
+  if (isCanvasSpace(activeSpaceId) || isSpatialSpace(activeSpaceId)) return;
   const component = getMagnetComponent(thought);
   if (!component) return;
   const members = getMagnetComponentMembers(component);
@@ -1225,6 +1400,14 @@ function maybeSpawnThought(timestamp, reducedMotion) {
 
 function initializeThoughtVisibility() {
   visibilityStates.clear();
+
+  if (isSpatialSpace(activeSpaceId)) {
+    thoughts.forEach((thought) => {
+      thought.element.hidden = true;
+    });
+    nextSpawnAt = 0;
+    return;
+  }
 
   if (isCanvasSpace(activeSpaceId)) {
     thoughts.forEach((thought) => {
@@ -1527,6 +1710,14 @@ function renderConnectionUi() {
 }
 
 function rebuildConnectionLayer() {
+  if (isSpatialSpace(activeSpaceId)) {
+    connectionRenderer.setConnections([]);
+    magnetPhysics.syncConnections([]);
+    connectionRenderer.update();
+    refreshSpatialGraph();
+    return;
+  }
+
   if (!getSpaceCapabilities(activeSpaceId).connections) {
     connectionRenderer.setConnections([]);
     magnetPhysics.syncConnections([]);
@@ -1539,7 +1730,7 @@ function rebuildConnectionLayer() {
       .filter(isThoughtAvailableInActiveSpace)
       .map((thought) => thought.id),
   );
-  const connections = flattenCanvasConnections(thoughts).filter((connection) => (
+  const connections = flattenConnections(thoughts).filter((connection) => (
     availableThoughtIds.has(connection.sourceId)
     && availableThoughtIds.has(connection.targetId)
   ));
@@ -1560,7 +1751,7 @@ function openConnectionEditor(source) {
   connectionEditor = {
     sourceId: source.id,
     selectedTargetIds: new Set(
-      getOutgoingCanvasConnections(source)
+      getOutgoingConnections(source)
         .map((connection) => connection.targetId),
     ),
   };
@@ -1624,7 +1815,7 @@ function commitConnectionEditor() {
     return;
   }
 
-  const result = reconcileCanvasConnections(source, editor.selectedTargetIds);
+  const result = reconcileConnections(source, editor.selectedTargetIds);
   closeConnectionEditor();
 
   if (result.changed) {
@@ -1687,10 +1878,11 @@ function makeThought(
   );
   if (!hasLocalPosition) {
     if (isCanvasSpace(activeSpaceId)) applyCanvasPlacement(thought);
-    else applyPinnedLayout(thought);
+    else if (isFlowSpace(activeSpaceId)) applyPinnedLayout(thought);
   }
-  if (!isCanvasSpace(activeSpaceId)) constrainThought(thought);
+  if (isFlowSpace(activeSpaceId)) constrainThought(thought);
   renderThought(thought);
+  if (isSpatialSpace(activeSpaceId)) element.hidden = true;
 
   pinButton.addEventListener('click', () => togglePinned(thought));
   anchorButton.addEventListener('click', () => toggleBoardAnchor(thought));
@@ -1733,7 +1925,7 @@ function replaceThoughts(nextThoughts) {
   thoughts = nextThoughts.map((thought) => makeThought(thought.text, thought));
   const repairedThoughts = new Set([
     ...repairMagnetRelations(),
-    ...repairCanvasConnections(thoughts),
+    ...repairConnections(thoughts),
   ]);
   rebuildMagnetComponents({ preserveVisibility: false });
   initializeThoughtVisibility();
@@ -2033,7 +2225,7 @@ async function restoreAuthenticatedThoughts() {
   return ready;
 }
 
-function addThought(rawText) {
+async function addThought(rawText) {
   const text = rawText.trim();
   if (!text) return false;
 
@@ -2058,7 +2250,9 @@ function addThought(rawText) {
     knowledge: createKnowledgeMeta(composerKnowledgeKind),
   };
 
-  const addingToBoard = isCanvasSpace(activeSpaceId);
+  const targetSpaceId = activeSpaceId;
+  const addingToBoard = isCanvasSpace(targetSpaceId);
+  const addingToSpatial = isSpatialSpace(targetSpaceId);
   const thought = makeThought(
     text,
     {
@@ -2067,16 +2261,20 @@ function addThought(rawText) {
       meta,
     },
     {
-      deferReveal: addingToBoard,
+      deferReveal: addingToBoard || addingToSpatial,
     },
   );
   if (addingToBoard) {
     placeThoughtInVisibleCanvas(thought);
   }
+  if (addingToSpatial) {
+    thought.element.hidden = true;
+  }
   thoughts.push(thought);
   rebuildMagnetComponents();
   updateUi();
   saveThoughts();
+  if (addingToSpatial && activeSpaceId === targetSpaceId) refreshSpatialGraph();
 
   if (isCloudMode()) {
     enqueueThoughtUpsert(thought);
@@ -2089,8 +2287,10 @@ function addThought(rawText) {
 }
 
 function togglePinned(thought) {
-  if (isCanvasSpace(activeSpaceId)) {
-    announce('Board cards stay in place without pins.');
+  if (isCanvasSpace(activeSpaceId) || isSpatialSpace(activeSpaceId)) {
+    announce(isSpatialSpace(activeSpaceId)
+      ? 'Spatial cards stay in place without pins.'
+      : 'Board cards stay in place without pins.');
     return;
   }
   if (magnetEditor || connectionEditor) {
@@ -2178,7 +2378,7 @@ function removeThought(thought) {
   if (blockEditsDuringAccountSync()) return;
   if (knowledgeKindEditor?.thoughtId === thought.id) knowledgeKindPicker.close();
   if (isPersistedMagnetParent(thought)) detachLocalMagnetChildren(thought.id);
-  const changedConnectionSources = detachIncomingCanvasConnections(thoughts, thought.id);
+  const changedConnectionSources = detachIncomingConnections(thoughts, thought.id);
   if (isCloudMode()) changedConnectionSources.forEach(enqueueThoughtUpsert);
   if (isCloudMode()) enqueueThoughtDelete(thought.id);
   removeThoughtElement(thought);
@@ -2248,7 +2448,7 @@ function activateDrag(candidate) {
   dragCandidate = null;
   dragOffset = candidate.dragOffset;
 
-  if (!isCanvasSpace(activeSpaceId)) {
+  if (isFlowSpace(activeSpaceId)) {
     magnetPhysics.beginDrag(draggedThought.id);
   }
 
@@ -2565,7 +2765,23 @@ function addOrFocusThoughtOnCanvas(thought) {
   announce('Thought added to Board.');
 }
 
-function focusThoughtFromHistory(thought) {
+async function addOrFocusThoughtInSpatial(thought) {
+  historyDialog.close();
+  const view = await ensureSpatialView();
+  if (!isSpatialSpace(activeSpaceId)) return;
+
+  selectThought(thought);
+  updateUi();
+  view?.focusThought(thought.id);
+  announce('Thought focused in Spatial.');
+}
+
+async function focusThoughtFromHistory(thought) {
+  if (isSpatialSpace(activeSpaceId)) {
+    await addOrFocusThoughtInSpatial(thought);
+    return;
+  }
+
   if (isCanvasSpace(activeSpaceId)) {
     addOrFocusThoughtOnCanvas(thought);
     return;
@@ -2675,7 +2891,7 @@ function renderHistory() {
         );
       });
       contentButton.append(text, details);
-      contentButton.addEventListener('click', () => focusThoughtFromHistory(thought));
+      contentButton.addEventListener('click', () => void focusThoughtFromHistory(thought));
       row.append(kindButton, contentButton);
       item.append(row);
       list.append(item);
@@ -2789,6 +3005,7 @@ function renderSpacesOverview() {
     tile.type = 'button';
     tile.className = 'space-tile';
     tile.dataset.spaceId = space.id;
+    tile.classList.toggle('is-spatial', isSpatialSpace(space.id));
     tile.classList.toggle('is-active', space.id === activeSpaceId);
     tile.setAttribute('aria-label', `Open ${space.label}`);
     if (space.id === activeSpaceId) tile.setAttribute('aria-current', 'true');
@@ -2806,30 +3023,44 @@ function renderSpacesOverview() {
     tile.append(surface, label);
 
     const isCanvasPreview = isCanvasSpace(space.id);
+    const isSpatialPreview = isSpatialSpace(space.id);
+    const isPositionedPreview = isCanvasPreview || isSpatialPreview;
     const previewThoughts = thoughts.filter((thought) => (
       isCanvasPreview
         ? hasCanvasPlacement(thought, space.id)
-        : thought.pinned && getThoughtSpaceId(thought) === space.id
-    ));
-    const canvasPositions = previewThoughts.map((thought) => (
-      getCanvasPlacement(thought, space.id)
-    ));
-    const minCanvasX = Math.min(...canvasPositions.map((position) => position?.x ?? 0), 0);
-    const maxCanvasX = Math.max(...canvasPositions.map((position) => position?.x ?? 0), 1);
-    const minCanvasY = Math.min(...canvasPositions.map((position) => position?.y ?? 0), 0);
-    const maxCanvasY = Math.max(...canvasPositions.map((position) => position?.y ?? 0), 1);
+        : isSpatialPreview
+          ? true
+          : thought.pinned && getThoughtSpaceId(thought) === space.id
+    )).slice(0, 80);
+    const previewPositions = previewThoughts.map((thought, index) => {
+      if (isSpatialPreview) {
+        const placement = getSpatialPlacement(thought, space.id);
+        if (placement) return placement;
+        const angle = index * 2.399963;
+        const radius = 40 + Math.sqrt(index + 1) * 34;
+        return {
+          x: Math.cos(angle) * radius,
+          y: Math.sin(angle) * radius,
+        };
+      }
+      return getCanvasPlacement(thought, space.id);
+    });
+    const minCanvasX = Math.min(...previewPositions.map((position) => position?.x ?? 0), 0);
+    const maxCanvasX = Math.max(...previewPositions.map((position) => position?.x ?? 0), 1);
+    const minCanvasY = Math.min(...previewPositions.map((position) => position?.y ?? 0), 0);
+    const maxCanvasY = Math.max(...previewPositions.map((position) => position?.y ?? 0), 1);
     const canvasRangeX = Math.max(1, maxCanvasX - minCanvasX);
     const canvasRangeY = Math.max(1, maxCanvasY - minCanvasY);
 
-    previewThoughts.forEach((thought) => {
+    previewThoughts.forEach((thought, index) => {
         const preview = document.createElement('span');
         const layout = thought.meta?.layout;
-        const canvasPlacement = getCanvasPlacement(thought, space.id);
-        const x = isCanvasPreview
-          ? 0.08 + ((canvasPlacement?.x ?? 0) - minCanvasX) / canvasRangeX * 0.84
+        const positionedPlacement = previewPositions[index];
+        const x = isPositionedPreview
+          ? 0.08 + ((positionedPlacement?.x ?? 0) - minCanvasX) / canvasRangeX * 0.84
           : Number.isFinite(layout?.x) ? layout.x : 0.5;
-        const y = isCanvasPreview
-          ? 0.08 + ((canvasPlacement?.y ?? 0) - minCanvasY) / canvasRangeY * 0.84
+        const y = isPositionedPreview
+          ? 0.08 + ((positionedPlacement?.y ?? 0) - minCanvasY) / canvasRangeY * 0.84
           : Number.isFinite(layout?.y) ? layout.y : 0.5;
         const width = Math.min(
           34,
@@ -2858,6 +3089,7 @@ function closeSpacesOverview({ restoreFocus = true } = {}) {
   viewMode = 'canvas';
   renderCanvasCamera();
   spacesOverview.hidden = true;
+  if (isSpatialSpace(activeSpaceId)) void activateSpatialView();
   if (restoreFocus) spacesButton.focus();
 }
 
@@ -2868,6 +3100,7 @@ function switchSpace(spaceId) {
   if (connectionEditor) closeConnectionEditor();
   stopDrag();
   stopCanvasPan();
+  deactivateSpatialView();
   if (canvasScaleAnimationId) {
     cancelAnimationFrame(canvasScaleAnimationId);
     canvasScaleAnimationId = null;
@@ -2882,6 +3115,18 @@ function switchSpace(spaceId) {
   canvasHudExpanded = false;
   renderCanvasCamera();
 
+  if (isSpatialSpace(activeSpaceId)) {
+    initializeThoughtVisibility();
+    rebuildConnectionLayer();
+    updateUi();
+    closeSpacesOverview();
+    void activateSpatialView();
+
+    const label = SPACES.find((space) => space.id === activeSpaceId)?.label;
+    announce(`${label || 'Space'} opened.`);
+    return;
+  }
+
   thoughts.forEach((thought) => {
     if (!isThoughtAvailableInActiveSpace(thought)) {
       thought.element.hidden = true;
@@ -2891,7 +3136,7 @@ function switchSpace(spaceId) {
     measureThought(thought);
     if (isCanvasSpace(activeSpaceId)) {
       applyCanvasPlacement(thought);
-    } else if (thought.pinned) {
+    } else if (isFlowSpace(activeSpaceId) && thought.pinned) {
       applyPinnedLayout(thought);
       constrainThought(thought);
     }
@@ -2911,11 +3156,14 @@ function openSpacesOverview() {
   if (magnetEditor) closeMagnetEditor({ restoreMotion: true });
   if (connectionEditor) closeConnectionEditor();
   stopDrag();
+  spatialView?.deactivate();
   knowledgeKindPicker.close();
 
-  thoughts
-    .filter((thought) => thought.pinned && isThoughtAvailableInActiveSpace(thought))
-    .forEach(updatePinnedLayoutMeta);
+  if (isFlowSpace(activeSpaceId)) {
+    thoughts
+      .filter((thought) => thought.pinned && isThoughtAvailableInActiveSpace(thought))
+      .forEach(updatePinnedLayoutMeta);
+  }
   saveThoughts();
 
   viewMode = 'spaces';
@@ -2929,18 +3177,23 @@ function openSpacesOverview() {
 
 function updateUi() {
   const boardActive = isCanvasSpace(activeSpaceId);
+  const spatialActive = isSpatialSpace(activeSpaceId);
   anchorsButton.hidden = !boardActive;
   if (!boardActive && anchorsDialog.open) anchorsDialog.close();
   emptyState.hidden = thoughts.some(isThoughtAvailableInActiveSpace);
   if (boardActive) {
     emptyStateTitle.textContent = 'Your Board is empty';
     emptyStateDescription.textContent = 'Add a card, then drag the board to move or pinch to zoom out.';
+  } else if (spatialActive) {
+    emptyStateTitle.textContent = 'Your knowledge graph is empty';
+    emptyStateDescription.textContent = 'Add a thought below. Connections will shape the graph automatically.';
   } else {
     emptyStateTitle.textContent = 'Let your thought take flight';
     emptyStateDescription.textContent = 'Write it below. Drag cards, pin what matters — the rest will move on their own.';
   }
   if (historyDialog.open) renderHistory();
   if (anchorsDialog.open) renderAnchors();
+  renderSpatialInspector();
 }
 
 function announce(message) {
@@ -2955,6 +3208,11 @@ function animate(timestamp) {
   const motionScale = reducedMotion ? REDUCED_MOTION_TIME_SCALE : 1;
 
   if (viewMode === 'spaces' || historyDialog.open || anchorsDialog.open) {
+    window.requestAnimationFrame(animate);
+    return;
+  }
+
+  if (isSpatialSpace(activeSpaceId)) {
     window.requestAnimationFrame(animate);
     return;
   }
@@ -3123,7 +3381,7 @@ input.addEventListener('keydown', (event) => {
   form.requestSubmit();
 });
 
-form.addEventListener('submit', (event) => {
+form.addEventListener('submit', async (event) => {
   event.preventDefault();
   if (handlingThoughtSubmit) return;
 
@@ -3133,7 +3391,7 @@ form.addEventListener('submit', (event) => {
   handlingThoughtSubmit = true;
   input.value = '';
   try {
-    const added = addThought(submittedText);
+    const added = await addThought(submittedText);
     if (!added && !input.value) input.value = submittedText;
   } finally {
     handlingThoughtSubmit = false;
@@ -3141,6 +3399,22 @@ form.addEventListener('submit', (event) => {
     input.focus({ preventScroll: true });
   }
 });
+
+spatialFitButton.addEventListener('click', () => {
+  if (!spatialView?.fitAll()) announce('The Spatial graph is empty.');
+});
+spatialFocusButton.addEventListener('click', () => {
+  if (!selectedThoughtId || !spatialView?.focusThought(selectedThoughtId)) {
+    announce('Select a node to focus it.');
+  }
+});
+spatialResetButton.addEventListener('click', () => spatialView?.resetView());
+spatialInspectorClose.addEventListener('click', clearThoughtSelection);
+spatialInspectorEdit.addEventListener('click', () => {
+  const thought = selectedThoughtId ? getThoughtById(selectedThoughtId) : null;
+  if (thought) startThoughtTextEditing(thought);
+});
+spatialInspectorPin.addEventListener('click', toggleSpatialPositionPin);
 
 accountButton.addEventListener('click', () => {
   if (magnetEditor) closeMagnetEditor({ restoreMotion: true });
@@ -3251,11 +3525,15 @@ canvasControls.addEventListener('focusout', () => {
 });
 window.addEventListener('resize', () => {
   knowledgeKindPicker.close();
+  if (isSpatialSpace(activeSpaceId)) {
+    spatialView?.resize();
+    return;
+  }
   getActiveThoughts().forEach((thought) => {
     measureThought(thought);
     if (isCanvasSpace(activeSpaceId)) {
       applyCanvasPlacement(thought);
-    } else if (thought.pinned) {
+    } else if (isFlowSpace(activeSpaceId) && thought.pinned) {
       applyPinnedLayout(thought);
       constrainThought(thought);
     }
@@ -3281,7 +3559,7 @@ window.addEventListener('keydown', (event) => {
     const currentIndex = focusedIndex >= 0
       ? focusedIndex
       : SPACES.findIndex((space) => space.id === activeSpaceId);
-    const columnCount = 2;
+    const columnCount = window.matchMedia('(max-width: 560px)').matches ? 2 : 3;
     let nextIndex = currentIndex;
 
     if (event.key === 'ArrowLeft' && currentIndex % columnCount > 0) nextIndex -= 1;
@@ -3308,6 +3586,27 @@ window.addEventListener('keydown', (event) => {
     return;
   }
 
+  const typing = event.target instanceof HTMLElement && event.target.matches(
+    'input, textarea, [contenteditable="true"]',
+  );
+  if (isSpatialSpace(activeSpaceId) && !typing && !thoughtFocusDialog.open) {
+    if (event.key === 'Escape' && selectedThoughtId) {
+      event.preventDefault();
+      clearThoughtSelection();
+      return;
+    }
+    if (event.key.toLowerCase() === 'f' && selectedThoughtId) {
+      event.preventDefault();
+      spatialView?.focusThought(selectedThoughtId);
+      return;
+    }
+    if (event.key === '0') {
+      event.preventDefault();
+      spatialView?.fitAll();
+      return;
+    }
+  }
+
   if (!magnetEditor) return;
 
   if (event.key === 'Escape') {
@@ -3323,7 +3622,9 @@ window.addEventListener('keydown', (event) => {
   }
 });
 document.addEventListener('pointerdown', (event) => {
-  if (!event.target.closest('.thought-card')) clearThoughtSelection();
+  if (!event.target.closest('.thought-card, .spatial-toolbar, .spatial-inspector')) {
+    clearThoughtSelection();
+  }
   if (event.pointerType !== 'touch' || event.target.closest('.thought-card')) return;
   const focusedThought = document.activeElement?.closest?.('.thought-card');
   focusedThought?.blur();
@@ -3341,6 +3642,7 @@ window.addEventListener('beforeunload', () => {
 
 replaceThoughts(thoughts);
 renderCanvasCamera();
+if (isSpatialSpace(activeSpaceId)) void activateSpatialView();
 updateAccountButton();
 if (auth) void restoreAuthenticatedThoughts();
 window.addEventListener('online', () => {
