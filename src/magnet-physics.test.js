@@ -27,13 +27,13 @@ function sync(engine, thoughts, relations) {
   });
 }
 
-function simulate(engine, thoughtIds, frameDelta, seconds) {
+function simulate(engine, thoughtIds, frameDelta, seconds, motionScale = 1) {
   const frames = Math.round(seconds / frameDelta);
   for (let frame = 0; frame < frames; frame += 1) {
     engine.advance(frameDelta, {
       activeThoughtIds: new Set(thoughtIds),
       hoveredComponentIds: new Set(),
-      reducedMotion: false,
+      motionScale,
     });
   }
 }
@@ -120,6 +120,21 @@ test('fixed timestep produces the same cloud motion at 60 and 120 FPS', () => {
     assert.ok(Math.abs(thought.vx - comparison.vx) < 0.05);
     assert.ok(Math.abs(thought.vy - comparison.vy) < 0.05);
   });
+});
+
+test('reduced motion keeps cards moving at the configured time scale', () => {
+  const regularThought = makeThought('regular', { vx: 40 });
+  const reducedThought = makeThought('reduced', { vx: 40 });
+  const regularEngine = createMagnetPhysics();
+  const reducedEngine = createMagnetPhysics();
+
+  sync(regularEngine, [regularThought], []);
+  sync(reducedEngine, [reducedThought], []);
+  simulate(regularEngine, [regularThought.id], 1 / 60, 2);
+  simulate(reducedEngine, [reducedThought.id], 1 / 60, 2, 0.25);
+
+  assert.ok(reducedThought.x > 0);
+  assert.ok(Math.abs(reducedThought.x - regularThought.x * 0.25) < 0.05);
 });
 
 test('semantic connection pulls standalone components together without moving their center of mass', () => {

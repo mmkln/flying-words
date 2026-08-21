@@ -66,6 +66,8 @@ const TARGET_VISIBLE_DENSITY = 0.35;
 const RESPAWN_DELAY_MIN = 800;
 const RESPAWN_DELAY_MAX = 1400;
 const SPAWN_MARGIN = 20;
+const REDUCED_MOTION_TIME_SCALE = 0.25;
+const reducedMotionQuery = window.matchMedia('(prefers-reduced-motion: reduce)');
 const MIN_CANVAS_SCALE = 0.3;
 const MAX_CANVAS_SCALE = 1;
 const CANVAS_SPAWN_MARGIN = 20;
@@ -1116,8 +1118,19 @@ function spawnThoughtFromEdge(thought, reducedMotion = false) {
       randomBetween(0, Math.max(0, bounds.width - groupWidth)) - group.minX,
       randomBetween(0, Math.max(0, bounds.height - groupHeight)) - group.minY,
     );
-    magnetPhysics.setComponentVelocity(component.id, 0, 0);
-    members.forEach(renderThought);
+
+    const angle = randomBetween(0, Math.PI * 2);
+    const speed = randomBetween(14, 18);
+    magnetPhysics.setComponentVelocity(
+      component.id,
+      Math.cos(angle) * speed,
+      Math.sin(angle) * speed,
+    );
+
+    members.forEach((member) => {
+      member.rotation = 0;
+      renderThought(member);
+    });
     return;
   }
 
@@ -2938,7 +2951,8 @@ function announce(message) {
 function animate(timestamp) {
   const delta = Math.min((timestamp - lastTimestamp) / 1000, 0.05);
   lastTimestamp = timestamp;
-  const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  const reducedMotion = reducedMotionQuery.matches;
+  const motionScale = reducedMotion ? REDUCED_MOTION_TIME_SCALE : 1;
 
   if (viewMode === 'spaces' || historyDialog.open || anchorsDialog.open) {
     window.requestAnimationFrame(animate);
@@ -2978,7 +2992,7 @@ function animate(timestamp) {
     magnetPhysics.advance(delta, {
       activeThoughtIds: new Set(activeThoughts.map((thought) => thought.id)),
       hoveredComponentIds,
-      reducedMotion,
+      motionScale,
     });
   }
 

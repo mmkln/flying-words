@@ -759,13 +759,9 @@ export function createMagnetPhysics(customOptions = {}) {
   function advance(frameDelta, context = {}) {
     const activeThoughtIds = context.activeThoughtIds || new Set(thoughtsById.keys());
     const hoveredComponentIds = context.hoveredComponentIds || new Set();
-    if (context.reducedMotion) {
-      exportWorldState();
-      accumulator = 0;
-      return;
-    }
+    const motionScale = clamp(finite(context.motionScale, 1), 0.1, 1);
 
-    accumulator += Math.min(Math.max(0, finite(frameDelta)), 0.05);
+    accumulator += Math.min(Math.max(0, finite(frameDelta)), 0.05) * motionScale;
     let substeps = 0;
     while (accumulator >= options.fixedStep && substeps < options.maxSubsteps) {
       fixedStep(options.fixedStep, { activeThoughtIds, hoveredComponentIds });
