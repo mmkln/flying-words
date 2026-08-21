@@ -1059,6 +1059,7 @@ kbd { padding: 1px 4px; border: 1px solid rgba(114,104,143,.25); border-bottom-w
   .history-dialog { width: 100%; }
   .composer-wrap { bottom: 16px; width: min(100% - 20px, 680px); }
   .composer { padding-left: 15px; border-radius: 16px; }
+  .composer textarea { font-size: 16px; }
   .composer-tip { display: none; }
   .thought-card { max-width: min(280px, calc(100vw - 30px)); }
 }
