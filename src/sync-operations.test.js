@@ -4,6 +4,7 @@ import test from 'node:test';
 import {
   applyThoughtPatch,
   diffMetaPatch,
+  isPausedBoardPlacementOnlyOperation,
   mergeMetaPatch,
   mergeThoughtPatches,
   metaPatchFromThought,
@@ -72,4 +73,42 @@ test('meta diff preserves new values and emits null for deletion', () => {
     connections: null,
     spatial: {},
   });
+});
+
+test('paused Board-only patches can be superseded by a new arrangement', () => {
+  for (const status of ['blocked', 'conflict']) {
+    assert.equal(isPausedBoardPlacementOnlyOperation({
+      type: 'patch',
+      status,
+      patch: {
+        meta_patch: {
+          canvas: { version: 2, placements: { 'canvas-1': { x: 20, y: 30 } } },
+        },
+      },
+    }), true);
+  }
+});
+
+test('active or content-bearing cloud changes are never discarded for arrangement', () => {
+  const canvas = { version: 2, placements: { 'canvas-1': { x: 20, y: 30 } } };
+
+  assert.equal(isPausedBoardPlacementOnlyOperation({
+    type: 'patch',
+    status: 'pending',
+    patch: { meta_patch: { canvas } },
+  }), false);
+  assert.equal(isPausedBoardPlacementOnlyOperation({
+    type: 'patch',
+    status: 'blocked',
+    patch: { text: 'Keep me', meta_patch: { canvas } },
+  }), false);
+  assert.equal(isPausedBoardPlacementOnlyOperation({
+    type: 'patch',
+    status: 'conflict',
+    patch: { meta_patch: { canvas, connections: { version: 1 } } },
+  }), false);
+  assert.equal(isPausedBoardPlacementOnlyOperation({
+    type: 'delete',
+    status: 'blocked',
+  }), false);
 });

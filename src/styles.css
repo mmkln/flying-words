@@ -688,6 +688,8 @@ button { -webkit-tap-highlight-color: transparent; }
   display: flex;
   align-items: center;
   gap: 14px;
+  width: max-content;
+  max-width: min(420px, calc(100vw - 24px));
   padding: 8px 9px 8px 14px;
   border: 1px solid var(--border-subtle);
   border-radius: 14px;
@@ -701,6 +703,7 @@ button { -webkit-tap-highlight-color: transparent; }
 }
 
 .board-arrange-toast[hidden] { display: none; }
+.board-arrange-toast span { min-width: 0; line-height: 1.35; }
 .board-arrange-toast button {
   padding: 7px 10px;
   border: 0;
@@ -1111,12 +1114,13 @@ kbd { padding: 1px 4px; border: 1px solid rgba(114,104,143,.25); border-bottom-w
 
 .thought-card[hidden] { display: none; }
 
-/* Board cards share the same logical footprint as the server placement API. */
+/* Board collision geometry stays fixed in layout code, not in the visual card. */
 .thought-card.is-canvas-card {
   box-sizing: border-box;
-  width: var(--board-card-width, 280px);
-  height: var(--board-card-height, 96px);
-  max-width: var(--board-card-width, 280px);
+  width: auto;
+  height: auto;
+  max-width: min(var(--board-card-width, 280px), calc(100vw - 30px));
+  max-height: var(--board-card-height, 96px);
 }
 
 .thought-card:hover { border-color: rgba(99, 78, 171, .34); box-shadow: 0 15px 32px rgba(68, 50, 124, .15), inset 0 1px rgba(255,255,255,.9); }

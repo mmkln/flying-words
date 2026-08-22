@@ -61,3 +61,18 @@ export function diffMetaPatch(previousMeta = {}, nextMeta = {}) {
       Object.hasOwn(nextMeta || {}, key) ? cloneJson(nextMeta[key]) : null,
     ]));
 }
+
+export function isPausedBoardPlacementOnlyOperation(operation) {
+  if (!['blocked', 'conflict'].includes(operation?.status)) return false;
+  if (operation.type !== 'patch') return false;
+
+  const patchKeys = Object.keys(operation.patch || {});
+  const metaPatchKeys = Object.keys(operation.patch?.meta_patch || {});
+
+  return (
+    patchKeys.length === 1
+    && patchKeys[0] === 'meta_patch'
+    && metaPatchKeys.length === 1
+    && metaPatchKeys[0] === 'canvas'
+  );
+}

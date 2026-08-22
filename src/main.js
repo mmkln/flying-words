@@ -69,6 +69,7 @@ import {
 import {
   applyThoughtPatch,
   diffMetaPatch,
+  isPausedBoardPlacementOnlyOperation,
   mergeThoughtPatches,
   metaPatchFromThought,
 } from './sync-operations.js';
@@ -123,6 +124,7 @@ const boardMinimap = document.querySelector('#board-minimap');
 const boardMinimapCanvas = document.querySelector('#board-minimap-canvas');
 const boardArrangeButton = document.querySelector('#board-arrange-button');
 const boardArrangeToast = document.querySelector('#board-arrange-toast');
+const boardArrangeToastMessage = boardArrangeToast.querySelector('span');
 const boardArrangeUndo = document.querySelector('#board-arrange-undo');
 const spatialWorld = document.querySelector('#spatial-world');
 const spatialFitButton = document.querySelector('#spatial-fit');
@@ -345,7 +347,6 @@ function renderBoardArrangeControl() {
   );
   boardArrangeButton.disabled = (
     boardArrangeInFlight
-    || cloudUnavailable
     || Boolean(magnetEditor || connectionEditor)
   );
   boardArrangeButton.classList.toggle('is-working', boardArrangeInFlight);
@@ -364,10 +365,22 @@ function hideBoardArrangeUndo() {
 }
 
 function showBoardArrangeUndo(snapshot) {
+  showBoardArrangeMessage('Board arranged', {
+    snapshot,
+    duration: 15_000,
+  });
+}
+
+function showBoardArrangeMessage(message, {
+  snapshot = null,
+  duration = 5_000,
+} = {}) {
   window.clearTimeout(boardArrangeToastTimer);
   boardArrangeUndoSnapshot = snapshot;
+  boardArrangeToastMessage.textContent = message;
+  boardArrangeUndo.hidden = !snapshot;
   boardArrangeToast.hidden = false;
-  boardArrangeToastTimer = window.setTimeout(hideBoardArrangeUndo, 15_000);
+  boardArrangeToastTimer = window.setTimeout(hideBoardArrangeUndo, duration);
 }
 
 function renderThemeButton() {
@@ -912,6 +925,15 @@ function getCanvasSpawnSafeArea() {
   };
 }
 
+function getBoardLogicalFootprint(x, y) {
+  return {
+    x,
+    y,
+    width: boardGeometry.cardWidth,
+    height: boardGeometry.cardHeight,
+  };
+}
+
 function getCanvasSpawnOverlap(candidate, thought, gap) {
   const left = Math.max(candidate.x - gap / 2, thought.x - gap / 2);
   const right = Math.min(
@@ -936,7 +958,13 @@ function findCanvasSpawnPosition(thought) {
     (safeArea.left + safeArea.right) / 2,
     (safeArea.top + safeArea.bottom) / 2,
   );
-  const occupied = thoughts.filter((item) => hasCanvasPlacement(item, activeSpaceId));
+  const logicalSize = {
+    width: boardGeometry.cardWidth,
+    height: boardGeometry.cardHeight,
+  };
+  const occupied = thoughts
+    .filter((item) => hasCanvasPlacement(item, activeSpaceId))
+    .map((item) => getBoardLogicalFootprint(item.x, item.y));
   let bestCandidate = null;
   let smallestOverlap = Infinity;
 
@@ -945,12 +973,10 @@ function findCanvasSpawnPosition(thought) {
       for (let row = -ring; row <= ring; row += 1) {
         if (Math.max(Math.abs(column), Math.abs(row)) !== ring) continue;
 
-        const candidate = {
-          x: centre.x - thought.width / 2 + column * (thought.width + gap),
-          y: centre.y - thought.height / 2 + row * (thought.height + gap),
-          width: thought.width,
-          height: thought.height,
-        };
+        const candidate = getBoardLogicalFootprint(
+          centre.x - logicalSize.width / 2 + column * (logicalSize.width + gap),
+          centre.y - logicalSize.height / 2 + row * (logicalSize.height + gap),
+        );
         const screenLeft = bounds.left + canvasCamera.x + candidate.x * scale;
         const screenTop = bounds.top + canvasCamera.y + candidate.y * scale;
         const fitsSafeArea = (
@@ -977,10 +1003,10 @@ function findCanvasSpawnPosition(thought) {
     }
   }
 
-  return bestCandidate || {
-    x: centre.x - thought.width / 2,
-    y: centre.y - thought.height / 2,
-  };
+  return bestCandidate || getBoardLogicalFootprint(
+    centre.x - logicalSize.width / 2,
+    centre.y - logicalSize.height / 2,
+  );
 }
 
 function placeThoughtInVisibleCanvas(thought) {
@@ -2869,9 +2895,41 @@ async function waitForOutboxToSettle(accountId) {
   if (outboxFlushInFlight) {
     throw new Error('Cloud changes are still syncing. Try again in a moment.');
   }
-  if (loadOutbox(accountId).length) {
-    throw new Error('Resolve the paused cloud change before arranging the Board.');
+
+  const pausedOperations = loadOutbox(accountId);
+  if (!pausedOperations.length) return;
+
+  if (pausedOperations.every(isPausedBoardPlacementOnlyOperation)) {
+    // A newly requested arrangement supersedes old Board coordinates. Fetch the
+    // authoritative records before removing them so a failed request never loses
+    // the device's paused operation.
+    const records = await requestApi('/thoughts/');
+    if (auth?.id !== accountId) throw new Error('The signed-in account changed.');
+
+    const currentOperations = loadOutbox(accountId);
+    const pausedOperationIds = new Set(
+      pausedOperations.map((operation) => operation.operationId),
+    );
+    const outboxIsUnchanged = (
+      currentOperations.length === pausedOperations.length
+      && currentOperations.every((operation) => (
+        pausedOperationIds.has(operation.operationId)
+        && isPausedBoardPlacementOnlyOperation(operation)
+      ))
+    );
+    if (!outboxIsUnchanged) {
+      throw new Error('The Board changed while cloud data was being refreshed. Try again.');
+    }
+
+    saveOutbox(accountId, []);
+    applyServerThoughts(records);
+    announce('An old paused Board position was replaced with the latest cloud version.');
+    return;
   }
+
+  throw new Error(
+    'A paused text, relationship, creation, or deletion change must be resolved before arranging the Board.',
+  );
 }
 
 async function prepareCloudBoardLayout() {
@@ -2881,7 +2939,14 @@ async function prepareCloudBoardLayout() {
   if (!navigator.onLine) {
     throw new Error('Connect to the internet before arranging the saved Board.');
   }
-  if (!await ensureSyncCapabilities() || !syncCapabilities?.board_layout?.includes(1)) {
+  const compatible = await ensureSyncCapabilities();
+  if (compatible && !syncCapabilities?.board_layout?.includes(1)) {
+    // A page opened before a backend restart can hold a valid-but-stale health
+    // response. Refresh once so the new capability works without a page reload.
+    syncCapabilities = null;
+    await ensureSyncCapabilities();
+  }
+  if (!syncCapabilities?.board_layout?.includes(1)) {
     throw new Error('The server needs the Board layout update first.');
   }
 
@@ -2926,10 +2991,15 @@ function boardPositionsMatch(first, second) {
 async function arrangeBoard() {
   if (boardArrangeInFlight || !isCanvasSpace(activeSpaceId)) return;
   if (magnetEditor || connectionEditor || thoughtEditor.isOpen()) {
-    announce('Finish editing the current card first.');
+    const message = 'Finish editing the current card first.';
+    announce(message);
+    showBoardArrangeMessage(message);
     return;
   }
-  if (auth && blockEditsDuringAccountSync()) return;
+  if (auth && blockEditsDuringAccountSync()) {
+    showBoardArrangeMessage('Wait until your saved thoughts finish loading.');
+    return;
+  }
 
   boardArrangeInFlight = true;
   canvas.classList.add('is-arranging');
@@ -2941,12 +3011,16 @@ async function arrangeBoard() {
 
     const before = captureBoardPositions();
     if (before.length < 2) {
-      announce('Add at least two cards to arrange the Board.');
+      const message = 'Add at least two cards to arrange the Board.';
+      announce(message);
+      showBoardArrangeMessage(message);
       return;
     }
     const positions = calculateBoardGraphLayout(getBoardGraphLayoutInput());
     if (boardPositionsMatch(before, positions)) {
-      announce('The Board is already arranged.');
+      const message = 'The Board is already arranged.';
+      announce(message);
+      showBoardArrangeMessage(message);
       return;
     }
 
@@ -2966,9 +3040,13 @@ async function arrangeBoard() {
   } catch (error) {
     if (error instanceof ApiError && error.status === 409) {
       await loadServerThoughts();
-      announce('The Board changed elsewhere, so the latest version was reloaded.');
+      const message = 'The Board changed elsewhere. The latest version was reloaded.';
+      announce(message);
+      showBoardArrangeMessage(message);
     } else {
-      announce(`Could not arrange the Board: ${error.message}`);
+      const message = `Could not arrange the Board: ${error.message}`;
+      announce(message);
+      showBoardArrangeMessage(message, { duration: 8_000 });
     }
   } finally {
     boardArrangeInFlight = false;
@@ -3016,9 +3094,13 @@ async function undoBoardArrange() {
     if (error instanceof ApiError && error.status === 409) {
       await loadServerThoughts();
       hideBoardArrangeUndo();
-      announce('The Board changed elsewhere, so the latest version was reloaded.');
+      const message = 'The Board changed elsewhere. The latest version was reloaded.';
+      announce(message);
+      showBoardArrangeMessage(message);
     } else {
-      announce(`Could not undo the arrangement: ${error.message}`);
+      const message = `Could not undo the arrangement: ${error.message}`;
+      announce(message);
+      showBoardArrangeMessage(message, { duration: 8_000 });
     }
   } finally {
     boardArrangeInFlight = false;
