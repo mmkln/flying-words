@@ -82,6 +82,7 @@ function linkEndpointId(endpoint, fallbackId) {
 
 export function createSpatialView({
   container,
+  theme = 'light',
   storageKey,
   layoutStorageKey,
   onThoughtSelect = () => {},
@@ -161,9 +162,9 @@ export function createSpatialView({
 
   const edgeGeometry = new THREE.BufferGeometry();
   const edgeMaterial = new THREE.LineBasicMaterial({
-    color: 0x8d91aa,
+    color: theme === 'dark' ? 0xaaa4bd : 0x8d91aa,
     transparent: true,
-    opacity: 0.42,
+    opacity: theme === 'dark' ? 0.5 : 0.42,
   });
   const edgeLines = new THREE.LineSegments(edgeGeometry, edgeMaterial);
   edgeLines.frustumCulled = false;
@@ -171,7 +172,7 @@ export function createSpatialView({
 
   const activeEdgeGeometry = new THREE.BufferGeometry();
   const activeEdgeMaterial = new THREE.LineBasicMaterial({
-    color: 0x7055c5,
+    color: theme === 'dark' ? 0x9d84ef : 0x7055c5,
     transparent: true,
     opacity: 0.9,
   });
@@ -189,7 +190,9 @@ export function createSpatialView({
   const scale = new THREE.Vector3(1, 1, 1);
   const identityQuaternion = new THREE.Quaternion();
   const color = new THREE.Color();
-  const backgroundColor = new THREE.Color(0xdedbea);
+  const backgroundColor = new THREE.Color(
+    theme === 'dark' ? 0x17151f : 0xdedbea,
+  );
   const white = new THREE.Color(0xffffff);
   const projection = new THREE.Matrix4();
   const frustum = new THREE.Frustum();
@@ -269,6 +272,20 @@ export function createSpatialView({
   function requestRender() {
     if (!active || renderFrame !== null) return;
     renderFrame = requestAnimationFrame(renderNow);
+  }
+
+  function setTheme(nextTheme) {
+    theme = nextTheme === 'dark' ? 'dark' : 'light';
+    const dark = theme === 'dark';
+    backgroundColor.set(dark ? 0x17151f : 0xdedbea);
+    edgeMaterial.color.set(dark ? 0xaaa4bd : 0x8d91aa);
+    edgeMaterial.opacity = dark ? 0.5 : 0.42;
+    activeEdgeMaterial.color.set(dark ? 0x9d84ef : 0x7055c5);
+    edgeMaterial.needsUpdate = true;
+    activeEdgeMaterial.needsUpdate = true;
+    nodeInstancesDirty = true;
+    edgeGeometryDirty = true;
+    requestRender();
   }
 
   const layout = createSpatialGraphLayout({
@@ -830,6 +847,7 @@ export function createSpatialView({
     resize,
     setGraph,
     setSelectedThought,
+    setTheme,
     setThoughtPinned,
   };
 }

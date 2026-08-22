@@ -60,6 +60,12 @@ import {
   mergeThoughtPatches,
   metaPatchFromThought,
 } from './sync-operations.js';
+import {
+  ThemeMode,
+  nextThemeMode,
+  normalizeThemeMode,
+  resolveTheme,
+} from './theme.js';
 
 const STORAGE_KEY = 'flying-thoughts:v1';
 const AUTH_STORAGE_KEY = 'flying-thoughts:auth:v1';
@@ -72,6 +78,7 @@ const ACCOUNT_STORAGE_PREFIX = 'flying-thoughts:account:v1:';
 const LEGACY_OUTBOX_STORAGE_PREFIX = 'flying-thoughts:outbox:v1:';
 const OUTBOX_STORAGE_PREFIX = 'flying-thoughts:outbox:v2:';
 const QUARANTINED_OUTBOX_STORAGE_PREFIX = 'flying-thoughts:outbox-quarantine:v1:';
+const THEME_STORAGE_KEY = 'flying-thoughts:theme:v1';
 const MAX_THOUGHTS = 1000;
 const MAX_THOUGHT_TEXT_LENGTH = 2000;
 const THOUGHT_TEXT_WARNING_THRESHOLD = 1700;
@@ -84,6 +91,7 @@ const RESPAWN_DELAY_MAX = 1400;
 const SPAWN_MARGIN = 20;
 const REDUCED_MOTION_TIME_SCALE = 0.25;
 const reducedMotionQuery = window.matchMedia('(prefers-reduced-motion: reduce)');
+const systemThemeQuery = window.matchMedia('(prefers-color-scheme: dark)');
 const MIN_CANVAS_SCALE = 0.3;
 const MAX_CANVAS_SCALE = 1;
 const CANVAS_SPAWN_MARGIN = 20;
@@ -139,6 +147,7 @@ const canvasResetZoom = document.querySelector('#canvas-reset-zoom');
 const spacesOverview = document.querySelector('#spaces-overview');
 const spacesClose = document.querySelector('#spaces-close');
 const spacesGrid = document.querySelector('#spaces-grid');
+const themeButton = document.querySelector('#theme-button');
 const accountButton = document.querySelector('#account-button');
 const authDialog = document.querySelector('#auth-dialog');
 const authForm = document.querySelector('#auth-form');
@@ -210,6 +219,8 @@ let knowledgeKindEditor = null;
 let selectedThoughtId = null;
 let spatialView = null;
 let spatialViewPromise = null;
+let themeMode = normalizeThemeMode(document.documentElement.dataset.themeMode);
+let resolvedTheme = resolveTheme(themeMode, systemThemeQuery.matches);
 let viewMode = 'canvas';
 let activeSpaceId = localStorage.getItem(ACTIVE_SPACE_STORAGE_KEY);
 if (!isSpaceId(activeSpaceId)) activeSpaceId = DEFAULT_SPACE_ID;
@@ -220,6 +231,38 @@ const connectionRenderer = createConnectionRenderer({
   layer: connectionLayer,
   getThoughtById,
 });
+
+function renderThemeButton() {
+  const labels = {
+    [ThemeMode.SYSTEM]: 'System',
+    [ThemeMode.LIGHT]: 'Light',
+    [ThemeMode.DARK]: 'Dark',
+  };
+  const label = labels[themeMode];
+  themeButton.dataset.mode = themeMode;
+  themeButton.title = `Appearance: ${label}`;
+  themeButton.setAttribute('aria-label', `Appearance: ${label}`);
+}
+
+function applyTheme() {
+  resolvedTheme = resolveTheme(themeMode, systemThemeQuery.matches);
+  document.documentElement.dataset.theme = resolvedTheme;
+  document.documentElement.dataset.themeMode = themeMode;
+  document.querySelector('meta[name="theme-color"]')?.setAttribute(
+    'content',
+    resolvedTheme === ThemeMode.DARK ? '#0e0d14' : '#f9f8fe',
+  );
+  spatialView?.setTheme(resolvedTheme);
+  renderThemeButton();
+}
+
+function storeThemeMode() {
+  try {
+    localStorage.setItem(THEME_STORAGE_KEY, themeMode);
+  } catch {
+    // The selected theme still applies for this session when storage is disabled.
+  }
+}
 
 function buildSpatialGraph() {
   const availableIds = new Set(thoughts.map((thought) => thought.id));
@@ -253,6 +296,7 @@ async function ensureSpatialView() {
       .then(({ createSpatialView }) => {
         spatialView = createSpatialView({
           container: spatialWorld,
+          theme: resolvedTheme,
           storageKey: `${SPATIAL_CAMERA_STORAGE_PREFIX}spatial-1`,
           layoutStorageKey: `${SPATIAL_LAYOUT_STORAGE_PREFIX}spatial-1`,
           onThoughtSelect(thoughtId) {
@@ -3928,6 +3972,18 @@ window.addEventListener('beforeunload', () => {
   saveThoughts();
 });
 
+themeButton.addEventListener('click', () => {
+  themeMode = nextThemeMode(themeMode);
+  storeThemeMode();
+  applyTheme();
+  announce(`Appearance changed to ${themeMode}.`);
+});
+
+systemThemeQuery.addEventListener('change', () => {
+  if (themeMode === ThemeMode.SYSTEM) applyTheme();
+});
+
+applyTheme();
 replaceThoughts(thoughts);
 renderCanvasCamera();
 if (isSpatialSpace(activeSpaceId)) void activateSpatialView();
