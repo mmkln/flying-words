@@ -9,6 +9,8 @@ const MAX_VISIBLE_CONNECTIONS = 8000;
 const NODE_HIT_PADDING = 8;
 const DRAG_THRESHOLD = 5;
 const CAMERA_TWEEN_DURATION = 280;
+const CONNECTION_SOURCE_COLOR = 0x7055c5;
+const CONNECTION_TARGET_COLOR = 0x248af0;
 
 const KIND_COLORS = Object.freeze({
   thought: 0x7055c5,
@@ -86,6 +88,7 @@ export function createSpatialView({
   storageKey,
   layoutStorageKey,
   onThoughtSelect = () => {},
+  onConnectionTargetToggle = () => {},
   onThoughtActivate = () => {},
   onThoughtMove = () => {},
   onError = () => {},
@@ -210,6 +213,7 @@ export function createSpatialView({
   let selectedThoughtId = null;
   let hoveredThoughtId = null;
   let neighbourIds = new Set();
+  let connectionSelection = null;
   let active = false;
   let renderFrame = null;
   let drag = null;
@@ -331,12 +335,30 @@ export function createSpatialView({
 
       const selected = node.id === selectedThoughtId;
       const hovered = node.id === hoveredThoughtId;
-      const dimmed = Boolean(
+      const connectionSource = node.id === connectionSelection?.sourceId;
+      const connectionTarget = connectionSelection?.targetIds.has(node.id) === true;
+      const dimmedByConnectionSelection = Boolean(
+        connectionSelection && !connectionSource && !connectionTarget,
+      );
+      const dimmedByThoughtSelection = Boolean(
         selectedThoughtId
         && !selected
         && !neighbourIds.has(node.id),
       );
-      const visualScale = selected ? 1.34 : hovered ? 1.17 : dimmed ? 0.76 : 1;
+      const dimmed = dimmedByConnectionSelection || (
+        !connectionSelection && dimmedByThoughtSelection
+      );
+      const visualScale = connectionSource
+        ? 1.38
+        : connectionTarget
+          ? 1.23
+          : selected
+            ? 1.34
+            : hovered
+              ? 1.17
+              : dimmed
+                ? 0.76
+                : 1;
       const radius = Math.max(5, node.radius || 7);
 
       position.set(node.x, node.y, node.z);
@@ -348,7 +370,13 @@ export function createSpatialView({
       matrix.compose(position, identityQuaternion, scale);
       hitMesh.setMatrixAt(instanceId, matrix);
 
-      color.setHex(KIND_COLORS[node.kind] || KIND_COLORS.thought);
+      color.setHex(
+        connectionSource
+          ? CONNECTION_SOURCE_COLOR
+          : connectionTarget
+            ? CONNECTION_TARGET_COLOR
+            : KIND_COLORS[node.kind] || KIND_COLORS.thought,
+      );
       if (dimmed) color.lerp(backgroundColor, 0.68);
       else if (selected) color.lerp(white, 0.2);
       else if (hovered) color.lerp(white, 0.1);
@@ -376,13 +404,42 @@ export function createSpatialView({
         : nodesById.get(link.targetId);
       if (!source || !target) return;
 
+      const sourceIsEditing = source.id === connectionSelection?.sourceId;
+      const targetIsSelected = connectionSelection?.targetIds.has(target.id) === true;
+      if (sourceIsEditing && !targetIsSelected) return;
+
       const highlighted = Boolean(
+        sourceIsEditing && targetIsSelected,
+      ) || Boolean(
         selectedThoughtId
         && (source.id === selectedThoughtId || target.id === selectedThoughtId),
       );
       const positions = highlighted ? activePositions : basePositions;
       positions.push(source.x, source.y, source.z, target.x, target.y, target.z);
     });
+
+    if (connectionSelection) {
+      const source = nodesById.get(connectionSelection.sourceId);
+      const existingTargetIds = new Set(
+        links
+          .filter((link) => (
+            linkEndpointId(link.source, link.sourceId) === connectionSelection.sourceId
+          ))
+          .map((link) => linkEndpointId(link.target, link.targetId)),
+      );
+      if (source) {
+        connectionSelection.targetIds.forEach((targetId) => {
+          if (existingTargetIds.has(targetId)) return;
+          const target = nodesById.get(targetId);
+          if (target) {
+            activePositions.push(
+              source.x, source.y, source.z,
+              target.x, target.y, target.z,
+            );
+          }
+        });
+      }
+    }
 
     edgeGeometry.setAttribute(
       'position',
@@ -392,7 +449,7 @@ export function createSpatialView({
       'position',
       new THREE.Float32BufferAttribute(activePositions, 3),
     );
-    edgeMaterial.opacity = selectedThoughtId ? 0.1 : 0.42;
+    edgeMaterial.opacity = selectedThoughtId || connectionSelection ? 0.1 : 0.42;
     edgeGeometryDirty = false;
   }
 
@@ -409,10 +466,12 @@ export function createSpatialView({
       })
       .sort((first, second) => {
         const priority = (node) => {
+          if (node.id === connectionSelection?.sourceId) return 0;
+          if (connectionSelection?.targetIds.has(node.id)) return 1;
           if (node.id === selectedThoughtId) return 0;
-          if (neighbourIds.has(node.id)) return 1;
-          if (node.id === hoveredThoughtId) return 2;
-          return 3;
+          if (neighbourIds.has(node.id)) return 2;
+          if (node.id === hoveredThoughtId) return 3;
+          return 4;
         };
         const priorityDifference = priority(first) - priority(second);
         if (priorityDifference) return priorityDifference;
@@ -421,7 +480,8 @@ export function createSpatialView({
         return camera.position.distanceToSquared(first) - camera.position.distanceToSquared(second);
       })
       .filter((node) => (
-        !selectedThoughtId
+        connectionSelection
+        || !selectedThoughtId
         || node.id === selectedThoughtId
         || neighbourIds.has(node.id)
         || node.id === hoveredThoughtId
@@ -457,7 +517,12 @@ export function createSpatialView({
         || box.bottom < other.top
         || box.top > other.bottom
       ));
-      const isPriority = node.id === selectedThoughtId || node.id === hoveredThoughtId;
+      const isPriority = (
+        node.id === connectionSelection?.sourceId
+        || connectionSelection?.targetIds.has(node.id)
+        || node.id === selectedThoughtId
+        || node.id === hoveredThoughtId
+      );
       if (!overlaps || isPriority) {
         visible.push(candidate);
         occupied.push(box);
@@ -481,6 +546,11 @@ export function createSpatialView({
       label.dataset.thoughtId = node.id;
       label.classList.toggle('is-selected', node.id === selectedThoughtId);
       label.classList.toggle('is-neighbour', neighbourIds.has(node.id));
+      label.classList.toggle('is-connection-source', node.id === connectionSelection?.sourceId);
+      label.classList.toggle(
+        'is-connection-target',
+        connectionSelection?.targetIds.has(node.id) === true,
+      );
       label.style.setProperty(
         '--spatial-kind-color',
         KIND_CSS_COLORS[node.kind] || KIND_CSS_COLORS.thought,
@@ -559,6 +629,22 @@ export function createSpatialView({
   function setSelectedThought(thoughtId) {
     selectedThoughtId = nodesById.has(thoughtId) ? thoughtId : null;
     updateNeighbourIds();
+    nodeInstancesDirty = true;
+    edgeGeometryDirty = true;
+    requestRender();
+  }
+
+  function setConnectionSelection(selection) {
+    connectionSelection = selection && typeof selection.sourceId === 'string'
+      ? {
+          sourceId: selection.sourceId,
+          targetIds: new Set(selection.targetIds || []),
+        }
+      : null;
+    renderer.domElement.classList.toggle(
+      'is-connection-selecting',
+      Boolean(connectionSelection),
+    );
     nodeInstancesDirty = true;
     edgeGeometryDirty = true;
     requestRender();
@@ -703,6 +789,16 @@ export function createSpatialView({
     if (!active || event.button !== 0) return;
     const thoughtId = pickThought(event);
     if (!thoughtId) return;
+
+    if (connectionSelection) {
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      if (thoughtId !== connectionSelection.sourceId) {
+        onConnectionTargetToggle(thoughtId);
+      }
+      return;
+    }
+
     const node = layout.getNode(thoughtId);
     if (!node) return;
 
@@ -773,6 +869,7 @@ export function createSpatialView({
   }
 
   function handleDoubleClick(event) {
+    if (connectionSelection) return;
     const thoughtId = pickThought(event);
     if (!thoughtId) return;
     event.preventDefault();
@@ -846,6 +943,7 @@ export function createSpatialView({
     resetView,
     resize,
     setGraph,
+    setConnectionSelection,
     setSelectedThought,
     setTheme,
     setThoughtPinned,

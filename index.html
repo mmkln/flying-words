@@ -102,6 +102,26 @@
             aria-label="Board minimap. Click or drag to navigate. Use arrow keys to pan."
           ></canvas>
         </aside>
+        <button
+          class="board-arrange-button"
+          id="board-arrange-button"
+          type="button"
+          aria-label="Arrange Board by connections"
+          title="Arrange Board by connections"
+          hidden
+        >
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <circle cx="6" cy="7" r="2.25"></circle>
+            <circle cx="18" cy="6" r="2.25"></circle>
+            <circle cx="16" cy="18" r="2.25"></circle>
+            <circle cx="5" cy="17" r="2.25"></circle>
+            <path d="m8.2 6.8 7.6-.6M17.4 8.2l-1 7.6M13.9 18l-6.7-.7M6.4 9.1l-.9 5.7"></path>
+          </svg>
+        </button>
+        <div class="board-arrange-toast" id="board-arrange-toast" role="status" hidden>
+          <span>Board arranged</span>
+          <button id="board-arrange-undo" type="button">Undo</button>
+        </div>
         <div
           class="spatial-world"
           id="spatial-world"
@@ -126,6 +146,7 @@
             <p id="spatial-inspector-text"></p>
             <footer>
               <button id="spatial-inspector-edit" type="button">Edit</button>
+              <button id="spatial-inspector-connect" type="button">Connect</button>
               <button id="spatial-inspector-pin" type="button">Pin position</button>
             </footer>
           </aside>
@@ -245,11 +266,13 @@
     <dialog class="thought-focus-dialog" id="thought-focus-dialog" aria-labelledby="thought-focus-title">
       <form class="thought-focus-form" id="thought-focus-form">
         <header class="thought-focus-header">
-          <span
+          <button
             class="knowledge-picker-trigger thought-focus-kind-icon"
             id="thought-focus-kind"
-            aria-hidden="true"
-          ></span>
+            type="button"
+            aria-haspopup="listbox"
+            aria-expanded="false"
+          ></button>
           <h2 id="thought-focus-title" class="sr-only">Edit thought</h2>
         </header>
 

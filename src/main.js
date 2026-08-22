@@ -27,6 +27,7 @@ import {
 } from './connections.js';
 import { createConnectionRenderer } from './connection-renderer.js';
 import { createCanvasMinimap } from './canvas-minimap.js';
+import { calculateBoardGraphLayout } from './board-graph-layout.js';
 import {
   getCanvasPlacement,
   hasCanvasPlacement,
@@ -38,6 +39,11 @@ import {
   applyBoardGeometryCss,
   normalizeBoardGeometry,
 } from './board-geometry.js';
+import {
+  clientPointToBoardWorld,
+  getBoardSpawnGap,
+  zoomBoardCameraAtClientPoint,
+} from './board-coordinate-space.js';
 import {
   getSpatialPlacement,
   withSpatialPlacement,
@@ -115,6 +121,9 @@ const canvas = document.querySelector('#canvas');
 const canvasWorld = document.querySelector('#canvas-world');
 const boardMinimap = document.querySelector('#board-minimap');
 const boardMinimapCanvas = document.querySelector('#board-minimap-canvas');
+const boardArrangeButton = document.querySelector('#board-arrange-button');
+const boardArrangeToast = document.querySelector('#board-arrange-toast');
+const boardArrangeUndo = document.querySelector('#board-arrange-undo');
 const spatialWorld = document.querySelector('#spatial-world');
 const spatialFitButton = document.querySelector('#spatial-fit');
 const spatialFocusButton = document.querySelector('#spatial-focus');
@@ -125,6 +134,7 @@ const spatialInspectorKindLabel = document.querySelector('#spatial-inspector-kin
 const spatialInspectorText = document.querySelector('#spatial-inspector-text');
 const spatialInspectorClose = document.querySelector('#spatial-inspector-close');
 const spatialInspectorEdit = document.querySelector('#spatial-inspector-edit');
+const spatialInspectorConnect = document.querySelector('#spatial-inspector-connect');
 const spatialInspectorPin = document.querySelector('#spatial-inspector-pin');
 const connectionLayer = document.querySelector('#connection-layer');
 const form = document.querySelector('#thought-form');
@@ -206,6 +216,11 @@ let dragOffset = { x: 0, y: 0 };
 let canvasPan = null;
 let canvasScaleAnimationId = null;
 let canvasMinimapFrame = null;
+let boardArrangeAnimationFrame = null;
+let boardArrangeAnimationFinish = null;
+let boardArrangeInFlight = false;
+let boardArrangeUndoSnapshot = null;
+let boardArrangeToastTimer = null;
 let canvasHudTimer = null;
 let canvasHudVisible = false;
 let canvasHudExpanded = false;
@@ -282,6 +297,7 @@ function getCanvasMinimapSnapshot() {
 }
 
 function scheduleCanvasMinimapRender() {
+  renderBoardArrangeControl();
   const visible = (
     isCanvasSpace(activeSpaceId)
     && viewMode !== 'spaces'
@@ -300,6 +316,50 @@ function scheduleCanvasMinimapRender() {
     canvasMinimapFrame = null;
     canvasMinimap.render(getCanvasMinimapSnapshot());
   });
+}
+
+function getBoardThoughts() {
+  return thoughts.filter((thought) => hasCanvasPlacement(thought, activeSpaceId));
+}
+
+function renderBoardArrangeControl() {
+  const visible = (
+    isCanvasSpace(activeSpaceId)
+    && viewMode !== 'spaces'
+    && getBoardThoughts().length > 1
+  );
+  boardArrangeButton.hidden = !visible;
+  if (!visible) return;
+
+  const cloudUnavailable = Boolean(auth) && (
+    !isCloudMode()
+    || !navigator.onLine
+  );
+  boardArrangeButton.disabled = (
+    boardArrangeInFlight
+    || cloudUnavailable
+    || Boolean(magnetEditor || connectionEditor)
+  );
+  boardArrangeButton.classList.toggle('is-working', boardArrangeInFlight);
+
+  if (boardArrangeInFlight) boardArrangeButton.title = 'Arranging Board…';
+  else if (cloudUnavailable) boardArrangeButton.title = 'Connect to arrange the saved Board';
+  else boardArrangeButton.title = 'Arrange Board by connections';
+  boardArrangeButton.setAttribute('aria-label', boardArrangeButton.title);
+}
+
+function hideBoardArrangeUndo() {
+  window.clearTimeout(boardArrangeToastTimer);
+  boardArrangeToastTimer = null;
+  boardArrangeUndoSnapshot = null;
+  boardArrangeToast.hidden = true;
+}
+
+function showBoardArrangeUndo(snapshot) {
+  window.clearTimeout(boardArrangeToastTimer);
+  boardArrangeUndoSnapshot = snapshot;
+  boardArrangeToast.hidden = false;
+  boardArrangeToastTimer = window.setTimeout(hideBoardArrangeUndo, 15_000);
 }
 
 function renderThemeButton() {
@@ -373,6 +433,10 @@ async function ensureSpatialView() {
           onThoughtSelect(thoughtId) {
             const thought = getThoughtById(thoughtId);
             if (thought) selectThought(thought);
+          },
+          onConnectionTargetToggle(thoughtId) {
+            const thought = getThoughtById(thoughtId);
+            if (thought) toggleConnectionCandidate(thought);
           },
           onThoughtActivate(thoughtId) {
             const thought = getThoughtById(thoughtId);
@@ -554,11 +618,27 @@ function openThoughtKnowledgeKindPicker(
   });
 }
 
+function openThoughtFocusKnowledgeKindPicker() {
+  const thought = selectedThoughtId
+    ? getThoughtById(selectedThoughtId)
+    : null;
+
+  if (!thought || !thoughtEditor.isOpen()) return;
+
+  openThoughtKnowledgeKindPicker(thought, thoughtFocusKind);
+}
+
 function updateThoughtKnowledgeKind(thought, kind) {
   if (blockEditsDuringAccountSync()) return;
   if (getThoughtKnowledgeKind(thought) === kind) return;
 
   setThoughtKnowledgeKind(thought, kind);
+  if (thoughtEditor.isOpen() && selectedThoughtId === thought.id) {
+    renderKnowledgeKindTrigger(thoughtFocusKind, kind);
+    window.requestAnimationFrame(() => {
+      thoughtFocusEditor.focus({ preventScroll: true });
+    });
+  }
   if (isSpatialSpace(activeSpaceId)) refreshSpatialGraph();
   else renderThought(thought);
   saveThoughts();
@@ -802,10 +882,7 @@ function updateCanvasPlacement(thought) {
 
 function clientPointToCanvasWorld(clientX, clientY) {
   const bounds = canvas.getBoundingClientRect();
-  return {
-    x: (clientX - bounds.left - canvasCamera.x) / canvasCamera.scale,
-    y: (clientY - bounds.top - canvasCamera.y) / canvasCamera.scale,
-  };
+  return clientPointToBoardWorld({ x: clientX, y: clientY }, bounds, canvasCamera);
 }
 
 function pointerToCanvasWorld(event) {
@@ -846,7 +923,7 @@ function findCanvasSpawnPosition(thought) {
   const safeArea = getCanvasSpawnSafeArea();
   const bounds = canvas.getBoundingClientRect();
   const scale = canvasCamera.scale;
-  const gap = boardGeometry.gap / scale;
+  const gap = getBoardSpawnGap(boardGeometry);
   const centre = clientPointToCanvasWorld(
     (safeArea.left + safeArea.right) / 2,
     (safeArea.top + safeArea.bottom) / 2,
@@ -933,6 +1010,10 @@ function renderSpatialInspector() {
   spatialInspectorKindLabel.textContent = getKnowledgeKindLabel(kind);
   spatialInspectorText.textContent = thought.text;
   const pinned = getSpatialPlacement(thought, activeSpaceId)?.pinned === true;
+  const editingConnections = Boolean(connectionEditor);
+  spatialInspectorConnect.disabled = editingConnections;
+  spatialInspectorEdit.disabled = editingConnections;
+  spatialInspectorPin.disabled = editingConnections;
   spatialInspectorPin.textContent = pinned ? 'Unpin position' : 'Pin position';
   spatialInspectorPin.setAttribute('aria-pressed', String(pinned));
 }
@@ -1709,6 +1790,14 @@ function renderRelationshipUi() {
   );
   canvas.classList.toggle('is-magnet-editing', Boolean(magnetEditor));
   canvas.classList.toggle('is-connection-editing', Boolean(connectionEditor));
+  spatialView?.setConnectionSelection(
+    isSpatialSpace(activeSpaceId) && connectionEditor
+      ? {
+          sourceId: connectionEditor.sourceId,
+          targetIds: [...connectionEditor.selectedTargetIds],
+        }
+      : null,
+  );
   knowledgePickerTrigger.disabled = Boolean(magnetEditor || connectionEditor);
   thoughts.forEach((thought) => {
     renderMagnetThoughtState(thought);
@@ -2593,6 +2682,308 @@ async function flushOutbox() {
   }
 }
 
+function captureBoardPositions() {
+  return getBoardThoughts()
+    .map((thought) => {
+      const placement = getCanvasPlacement(thought, activeSpaceId);
+      return {
+        id: thought.id,
+        x: placement.x,
+        y: placement.y,
+      };
+    })
+    .sort((first, second) => first.id.localeCompare(second.id));
+}
+
+function getBoardGraphLayoutInput() {
+  const boardThoughts = getBoardThoughts();
+  const boardIds = new Set(boardThoughts.map(({ id }) => id));
+  return {
+    cards: boardThoughts.map((thought) => {
+      const placement = getCanvasPlacement(thought, activeSpaceId);
+      return {
+        id: thought.id,
+        x: placement.x,
+        y: placement.y,
+        width: boardGeometry.cardWidth,
+        height: boardGeometry.cardHeight,
+      };
+    }),
+    connections: flattenConnections(thoughts).filter(({ sourceId, targetId }) => (
+      boardIds.has(sourceId) && boardIds.has(targetId)
+    )),
+    magnetRelations: getEffectiveMagnetRelations().filter(({ parentId, childId }) => (
+      boardIds.has(parentId) && boardIds.has(childId)
+    )),
+    geometry: boardGeometry,
+  };
+}
+
+function finishBoardArrangeAnimation() {
+  boardArrangeAnimationFinish?.();
+}
+
+function animateBoardPositions(positions) {
+  finishBoardArrangeAnimation();
+  const targets = new Map(positions.map((position) => [position.id, position]));
+  const starts = new Map(getBoardThoughts().map((thought) => [thought.id, {
+    x: thought.x,
+    y: thought.y,
+  }]));
+  const duration = reducedMotionQuery.matches ? 0 : 360;
+
+  return new Promise((resolve) => {
+    let finished = false;
+    const startedAt = performance.now();
+
+    function finish() {
+      if (finished) return;
+      finished = true;
+      if (boardArrangeAnimationFrame) cancelAnimationFrame(boardArrangeAnimationFrame);
+      boardArrangeAnimationFrame = null;
+      boardArrangeAnimationFinish = null;
+      targets.forEach((target, thoughtId) => {
+        const thought = getThoughtById(thoughtId);
+        if (!thought) return;
+        thought.x = target.x;
+        thought.y = target.y;
+        thought.vx = 0;
+        thought.vy = 0;
+        thought.rotation = 0;
+        renderThought(thought);
+      });
+      rebuildConnectionLayer();
+      scheduleCanvasMinimapRender();
+      resolve();
+    }
+
+    boardArrangeAnimationFinish = finish;
+    if (duration === 0) {
+      finish();
+      return;
+    }
+
+    function frame(timestamp) {
+      const progress = Math.min(1, (timestamp - startedAt) / duration);
+      const eased = 1 - (1 - progress) ** 3;
+      targets.forEach((target, thoughtId) => {
+        const thought = getThoughtById(thoughtId);
+        const start = starts.get(thoughtId);
+        if (!thought || !start) return;
+        thought.x = start.x + (target.x - start.x) * eased;
+        thought.y = start.y + (target.y - start.y) * eased;
+        renderThought(thought);
+      });
+      connectionRenderer.update();
+      scheduleCanvasMinimapRender();
+
+      if (progress < 1) boardArrangeAnimationFrame = requestAnimationFrame(frame);
+      else finish();
+    }
+
+    boardArrangeAnimationFrame = requestAnimationFrame(frame);
+  });
+}
+
+function stageBoardPositions(positions, records = null) {
+  const recordById = new Map((records || []).map((record) => [record.id, record]));
+  const staged = positions.map((position) => {
+    const thought = getThoughtById(position.id);
+    if (!thought) return null;
+
+    const record = recordById.get(position.id);
+    if (records && !record) {
+      throw new Error('The server returned an incomplete Board layout.');
+    }
+
+    if (record) {
+      thought.meta = cloneMeta(record.meta || {});
+      thought.revision = record.revision;
+      const serverPosition = getCanvasPlacement(thought, activeSpaceId);
+      if (!serverPosition) {
+        throw new Error('The server returned an invalid Board position.');
+      }
+      return { id: thought.id, ...serverPosition };
+    }
+
+    thought.meta = withCanvasPlacement(thought.meta, activeSpaceId, position);
+    return {
+      id: thought.id,
+      ...getCanvasPlacement(thought, activeSpaceId),
+    };
+  }).filter(Boolean);
+
+  return staged;
+}
+
+async function waitForOutboxToSettle(accountId) {
+  await flushOutbox();
+  for (let attempt = 0; outboxFlushInFlight && attempt < 600; attempt += 1) {
+    await new Promise((resolve) => window.setTimeout(resolve, 30));
+    if (auth?.id !== accountId) throw new Error('The signed-in account changed.');
+  }
+
+  if (outboxFlushInFlight) {
+    throw new Error('Cloud changes are still syncing. Try again in a moment.');
+  }
+  if (loadOutbox(accountId).length) {
+    throw new Error('Resolve the paused cloud change before arranging the Board.');
+  }
+}
+
+async function prepareCloudBoardLayout() {
+  if (!isCloudMode()) {
+    throw new Error('Wait until your saved thoughts finish loading.');
+  }
+  if (!navigator.onLine) {
+    throw new Error('Connect to the internet before arranging the saved Board.');
+  }
+  if (!await ensureSyncCapabilities() || !syncCapabilities?.board_layout?.includes(1)) {
+    throw new Error('The server needs the Board layout update first.');
+  }
+
+  const accountId = auth.id;
+  await waitForOutboxToSettle(accountId);
+  if (auth?.id !== accountId) throw new Error('The signed-in account changed.');
+}
+
+async function persistCloudBoardPositions(positions) {
+  const positionsById = new Map(positions.map((position) => [position.id, position]));
+  const boardThoughts = getBoardThoughts();
+  if (
+    positionsById.size !== boardThoughts.length
+    || boardThoughts.some((thought) => !positionsById.has(thought.id))
+  ) {
+    throw new Error('The Board changed while it was being arranged.');
+  }
+
+  return requestApi('/thoughts/board-layout/', {
+    method: 'POST',
+    body: {
+      board_id: activeSpaceId,
+      placements: boardThoughts.map((thought) => ({
+        id: thought.id,
+        x: positionsById.get(thought.id).x,
+        y: positionsById.get(thought.id).y,
+        base_revision: thought.revision,
+      })),
+    },
+  });
+}
+
+function boardPositionsMatch(first, second) {
+  if (first.length !== second.length) return false;
+  const secondById = new Map(second.map((position) => [position.id, position]));
+  return first.every((position) => {
+    const other = secondById.get(position.id);
+    return other && position.x === other.x && position.y === other.y;
+  });
+}
+
+async function arrangeBoard() {
+  if (boardArrangeInFlight || !isCanvasSpace(activeSpaceId)) return;
+  if (magnetEditor || connectionEditor || thoughtEditor.isOpen()) {
+    announce('Finish editing the current card first.');
+    return;
+  }
+  if (auth && blockEditsDuringAccountSync()) return;
+
+  boardArrangeInFlight = true;
+  canvas.classList.add('is-arranging');
+  renderBoardArrangeControl();
+  hideBoardArrangeUndo();
+
+  try {
+    if (auth) await prepareCloudBoardLayout();
+
+    const before = captureBoardPositions();
+    if (before.length < 2) {
+      announce('Add at least two cards to arrange the Board.');
+      return;
+    }
+    const positions = calculateBoardGraphLayout(getBoardGraphLayoutInput());
+    if (boardPositionsMatch(before, positions)) {
+      announce('The Board is already arranged.');
+      return;
+    }
+
+    let records = null;
+    if (auth) {
+      const response = await persistCloudBoardPositions(positions);
+      records = response.thoughts;
+    }
+    const stagedPositions = stageBoardPositions(positions, records);
+    await animateBoardPositions(stagedPositions);
+    saveThoughts();
+    showBoardArrangeUndo({
+      spaceId: activeSpaceId,
+      positions: before,
+    });
+    announce('Board arranged by connections.');
+  } catch (error) {
+    if (error instanceof ApiError && error.status === 409) {
+      await loadServerThoughts();
+      announce('The Board changed elsewhere, so the latest version was reloaded.');
+    } else {
+      announce(`Could not arrange the Board: ${error.message}`);
+    }
+  } finally {
+    boardArrangeInFlight = false;
+    canvas.classList.remove('is-arranging');
+    renderBoardArrangeControl();
+  }
+}
+
+async function undoBoardArrange() {
+  const snapshot = boardArrangeUndoSnapshot;
+  if (
+    !snapshot
+    || boardArrangeInFlight
+    || snapshot.spaceId !== activeSpaceId
+    || !isCanvasSpace(activeSpaceId)
+  ) return;
+
+  const currentIds = new Set(getBoardThoughts().map(({ id }) => id));
+  if (
+    snapshot.positions.length !== currentIds.size
+    || snapshot.positions.some(({ id }) => !currentIds.has(id))
+  ) {
+    hideBoardArrangeUndo();
+    announce('The Board changed, so that arrangement can no longer be undone.');
+    return;
+  }
+
+  boardArrangeInFlight = true;
+  canvas.classList.add('is-arranging');
+  renderBoardArrangeControl();
+
+  try {
+    if (auth) await prepareCloudBoardLayout();
+    let records = null;
+    if (auth) {
+      const response = await persistCloudBoardPositions(snapshot.positions);
+      records = response.thoughts;
+    }
+    const stagedPositions = stageBoardPositions(snapshot.positions, records);
+    await animateBoardPositions(stagedPositions);
+    saveThoughts();
+    hideBoardArrangeUndo();
+    announce('Board arrangement undone.');
+  } catch (error) {
+    if (error instanceof ApiError && error.status === 409) {
+      await loadServerThoughts();
+      hideBoardArrangeUndo();
+      announce('The Board changed elsewhere, so the latest version was reloaded.');
+    } else {
+      announce(`Could not undo the arrangement: ${error.message}`);
+    }
+  } finally {
+    boardArrangeInFlight = false;
+    canvas.classList.remove('is-arranging');
+    renderBoardArrangeControl();
+  }
+}
+
 function applyServerThoughts(records) {
   const layouts = new Map(thoughts.map((thought) => [thought.id, thought]));
   const serverThoughts = records.slice(0, MAX_THOUGHTS).map((record) => (
@@ -2700,6 +3091,11 @@ async function addThought(rawText) {
 
   if (magnetEditor || connectionEditor) {
     announce('Finish the current card relationship first.');
+    return false;
+  }
+
+  if (boardArrangeInFlight) {
+    announce('Wait until the Board finishes arranging.');
     return false;
   }
 
@@ -2876,6 +3272,7 @@ function beginDrag(event, thought) {
   if (event.button !== 0) return;
   if (event.target.closest('button, select, input, textarea, a')) return;
   if (thoughtEditor.isOpen()) return;
+  if (boardArrangeInFlight) return;
   if (magnetEditor || connectionEditor) return;
   if (blockEditsDuringAccountSync()) return;
 
@@ -2994,6 +3391,7 @@ function stopDrag(event, { cancelled = !event } = {}) {
   thought.element.classList.remove('is-dragging');
 
   if (isCanvasSpace(activeSpaceId)) {
+    hideBoardArrangeUndo();
     updateCanvasPlacement(thought);
     draggedThought = null;
     saveThoughts();
@@ -3048,11 +3446,12 @@ function setCanvasScale(nextScale, clientX, clientY, { persist = true, revealHud
   if (scale === canvasCamera.scale) return;
 
   const bounds = canvas.getBoundingClientRect();
-  const worldX = (clientX - bounds.left - canvasCamera.x) / canvasCamera.scale;
-  const worldY = (clientY - bounds.top - canvasCamera.y) / canvasCamera.scale;
-  canvasCamera.scale = scale;
-  canvasCamera.x = clientX - bounds.left - worldX * scale;
-  canvasCamera.y = clientY - bounds.top - worldY * scale;
+  canvasCamera = zoomBoardCameraAtClientPoint(
+    canvasCamera,
+    scale,
+    { x: clientX, y: clientY },
+    bounds,
+  );
   renderCanvasCamera();
   if (revealHud) revealCanvasHud();
   if (persist) saveCanvasCamera();
@@ -3130,7 +3529,6 @@ function startThoughtTextEditing(thought) {
     thoughtFocusKind,
     getThoughtKnowledgeKind(thought),
   );
-  thoughtFocusKind.removeAttribute('title');
   thoughtEditor.open({
     thoughtId: thought.id,
     text: thought.text,
@@ -3573,6 +3971,7 @@ function switchSpace(spaceId) {
   if (magnetEditor) closeMagnetEditor({ restoreMotion: true });
   if (connectionEditor) closeConnectionEditor();
   stopDrag();
+  finishBoardArrangeAnimation();
   stopCanvasPan();
   deactivateSpatialView();
   if (canvasScaleAnimationId) {
@@ -3631,6 +4030,7 @@ function openSpacesOverview() {
   if (magnetEditor) closeMagnetEditor({ restoreMotion: true });
   if (connectionEditor) closeConnectionEditor();
   stopDrag();
+  finishBoardArrangeAnimation();
   spatialView?.deactivate();
   knowledgeKindPicker.close();
 
@@ -3669,6 +4069,7 @@ function updateUi() {
   if (historyDialog.open) renderHistory();
   if (anchorsDialog.open) renderAnchors();
   renderSpatialInspector();
+  renderBoardArrangeControl();
 }
 
 function announce(message) {
@@ -3855,6 +4256,11 @@ knowledgePickerTrigger.addEventListener('keydown', (event) => {
   handleKnowledgeKindTriggerKeyDown(event, openComposerKnowledgeKindPicker);
 });
 
+thoughtFocusKind.addEventListener('click', openThoughtFocusKnowledgeKindPicker);
+thoughtFocusKind.addEventListener('keydown', (event) => {
+  handleKnowledgeKindTriggerKeyDown(event, openThoughtFocusKnowledgeKindPicker);
+});
+
 input.addEventListener('input', resizeComposer);
 input.addEventListener('keydown', (event) => {
   if (event.isComposing || event.key !== 'Enter' || event.shiftKey) return;
@@ -3895,6 +4301,10 @@ spatialInspectorEdit.addEventListener('click', () => {
   const thought = selectedThoughtId ? getThoughtById(selectedThoughtId) : null;
   if (thought) startThoughtTextEditing(thought);
 });
+spatialInspectorConnect.addEventListener('click', () => {
+  const thought = selectedThoughtId ? getThoughtById(selectedThoughtId) : null;
+  if (thought) openConnectionEditor(thought);
+});
 spatialInspectorPin.addEventListener('click', toggleSpatialPositionPin);
 
 accountButton.addEventListener('click', () => {
@@ -3910,6 +4320,8 @@ historyButton.addEventListener('click', () => {
 });
 anchorsButton.addEventListener('click', openAnchors);
 spacesButton.addEventListener('click', openSpacesOverview);
+boardArrangeButton.addEventListener('click', () => void arrangeBoard());
+boardArrangeUndo.addEventListener('click', () => void undoBoardArrange());
 spacesClose.addEventListener('click', closeSpacesOverview);
 spacesOverview.addEventListener('click', (event) => {
   if (event.target === spacesOverview) closeSpacesOverview();
@@ -4103,7 +4515,9 @@ window.addEventListener('keydown', (event) => {
   }
 });
 document.addEventListener('pointerdown', (event) => {
-  if (!event.target.closest('.thought-card, .spatial-toolbar, .spatial-inspector')) {
+  if (!event.target.closest(
+    '.thought-card, .spatial-toolbar, .spatial-inspector, .thought-focus-dialog',
+  )) {
     clearThoughtSelection();
   }
   if (event.pointerType !== 'touch' || event.target.closest('.thought-card')) return;
@@ -4111,6 +4525,7 @@ document.addEventListener('pointerdown', (event) => {
   focusedThought?.blur();
 });
 window.addEventListener('beforeunload', () => {
+  finishBoardArrangeAnimation();
   if (magnetEditor) {
     const editor = magnetEditor;
     thoughts.forEach((thought) => {
@@ -4143,6 +4558,7 @@ if (legacyOutboxQuarantined) {
 }
 if (auth) void restoreAuthenticatedThoughts();
 window.addEventListener('online', () => {
+  renderBoardArrangeControl();
   if (!auth) return;
   if (!serverStateReady) {
     void restoreAuthenticatedThoughts();
@@ -4156,4 +4572,5 @@ window.addEventListener('online', () => {
     void flushOutbox();
   }
 });
+window.addEventListener('offline', renderBoardArrangeControl);
 window.requestAnimationFrame(animate);
