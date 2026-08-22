@@ -11,6 +11,13 @@ npm run dev
 
 Open the address shown by Vite (usually `http://localhost:5173`).
 
+If the local API uses a different port, override it for the current shell:
+
+```powershell
+$env:VITE_API_URL = 'http://127.0.0.1:8001/api/v1'
+npm run dev
+```
+
 ## GitHub Pages
 
 The repository is configured to deploy from `main` to GitHub Pages through GitHub Actions. After pushing, set **Settings → Pages → Source** to **GitHub Actions**. The site will be available at `https://mmkln.github.io/flying-words/` after the workflow finishes.
@@ -22,6 +29,8 @@ The repository is configured to deploy from `main` to GitHub Pages through GitHu
 - Board and an on-demand force-directed WebGL Spatial graph with shared semantic links;
 - responsive layouts for phones and desktops;
 - automatic local persistence with `localStorage`;
+- revision-checked cloud synchronization that patches only changed metadata
+  namespaces and pauses stale writes instead of overwriting server data;
 - support for the system **Reduce motion** preference.
 
 In Spatial, drag the background to orbit, scroll or pinch to zoom, and drag a

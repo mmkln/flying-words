@@ -24,7 +24,6 @@ import {
   flattenConnections,
   getOutgoingConnections,
   reconcileConnections,
-  repairConnections,
 } from './connections.js';
 import { createConnectionRenderer } from './connection-renderer.js';
 import {
@@ -55,6 +54,12 @@ import {
   isSpatialSpace,
   isThoughtAvailableInSpace,
 } from './spaces.js';
+import {
+  applyThoughtPatch,
+  diffMetaPatch,
+  mergeThoughtPatches,
+  metaPatchFromThought,
+} from './sync-operations.js';
 
 const STORAGE_KEY = 'flying-thoughts:v1';
 const AUTH_STORAGE_KEY = 'flying-thoughts:auth:v1';
@@ -64,7 +69,9 @@ const SPATIAL_CAMERA_STORAGE_PREFIX = 'flying-thoughts:spatial-camera:v3:';
 const SPATIAL_LAYOUT_STORAGE_PREFIX = 'flying-thoughts:spatial-layout:v2:';
 const PENDING_SYNC_STORAGE_PREFIX = 'flying-thoughts:pending-sync:v1:';
 const ACCOUNT_STORAGE_PREFIX = 'flying-thoughts:account:v1:';
-const OUTBOX_STORAGE_PREFIX = 'flying-thoughts:outbox:v1:';
+const LEGACY_OUTBOX_STORAGE_PREFIX = 'flying-thoughts:outbox:v1:';
+const OUTBOX_STORAGE_PREFIX = 'flying-thoughts:outbox:v2:';
+const QUARANTINED_OUTBOX_STORAGE_PREFIX = 'flying-thoughts:outbox-quarantine:v1:';
 const MAX_THOUGHTS = 1000;
 const MAX_THOUGHT_TEXT_LENGTH = 2000;
 const THOUGHT_TEXT_WARNING_THRESHOLD = 1700;
@@ -84,9 +91,12 @@ const CANVAS_SPAWN_GAP = 18;
 const CANVAS_SPAWN_MAX_RINGS = 8;
 const LOCAL_API_URL = 'http://127.0.0.1:8000/api/v1';
 const PRODUCTION_API_URL = 'https://mxllwords.pythonanywhere.com/api/v1';
-const API_URL = ['localhost', '127.0.0.1'].includes(window.location.hostname)
-  ? LOCAL_API_URL
-  : PRODUCTION_API_URL;
+const CONFIGURED_API_URL = import.meta.env.VITE_API_URL?.trim().replace(/\/$/, '');
+const API_URL = CONFIGURED_API_URL || (
+  ['localhost', '127.0.0.1'].includes(window.location.hostname)
+    ? LOCAL_API_URL
+    : PRODUCTION_API_URL
+);
 
 const canvas = document.querySelector('#canvas');
 const canvasWorld = document.querySelector('#canvas-world');
@@ -150,6 +160,7 @@ const thoughtFocusKind = document.querySelector('#thought-focus-kind');
 const thoughtFocusDiscard = document.querySelector('#thought-focus-discard');
 
 let auth = loadAuth();
+const legacyOutboxQuarantined = auth ? quarantineLegacyOutbox(auth.id) : false;
 const initialPendingThoughts = auth ? loadPendingThoughts(auth.id) : [];
 const initialGuestThoughts = initialPendingThoughts.length
   ? initialPendingThoughts
@@ -166,6 +177,7 @@ if (auth && !initialPendingThoughts.length && initialGuestThoughts.length) {
   storePendingThoughts(auth.id, initialGuestThoughts);
 }
 let syncInFlight = false;
+let serverStateReady = !auth;
 let syncOperationId = 0;
 const visibilityStates = new Map();
 const componentByThoughtId = new Map();
@@ -185,8 +197,12 @@ let nextSpawnAt = 0;
 let saveTimer;
 let handlingThoughtSubmit = false;
 let outboxFlushInFlight = false;
+let activeOutboxOperation = null;
 let outboxRetryTimer;
 let outboxRetryDelay = 2000;
+let syncCapabilities = null;
+let syncCapabilitiesPromise = null;
+let syncCompatibilityAnnounced = false;
 let magnetEditor = null;
 let connectionEditor = null;
 let composerKnowledgeKind = KnowledgeKind.THOUGHT;
@@ -253,7 +269,7 @@ async function ensureSpatialView() {
             if (!thought || position.pinned !== true) return;
             thought.meta = withSpatialPlacement(thought.meta, activeSpaceId, position);
             saveThoughts();
-            if (isCloudMode()) enqueueThoughtUpsert(thought);
+            if (isCloudMode()) enqueueThoughtMetaPatch(thought, ['spatial']);
             renderSpatialInspector();
           },
           onError(message) {
@@ -327,7 +343,7 @@ const thoughtEditor = createThoughtEditor({
     if (text !== thought.text) {
       thought.text = text;
       saveThoughts();
-      if (isCloudMode()) enqueueThoughtUpsert(thought);
+      if (isCloudMode()) enqueueThoughtPatch(thought, { text: thought.text });
       if (historyDialog.open) renderHistory();
       if (isSpatialSpace(activeSpaceId)) {
         refreshSpatialGraph();
@@ -431,7 +447,7 @@ function updateThoughtKnowledgeKind(thought, kind) {
   if (isSpatialSpace(activeSpaceId)) refreshSpatialGraph();
   else renderThought(thought);
   saveThoughts();
-  if (isCloudMode()) enqueueThoughtUpsert(thought);
+  if (isCloudMode()) enqueueThoughtMetaPatch(thought, ['knowledge']);
   if (historyDialog.open) renderHistory();
   announce(`Knowledge type changed to ${getKnowledgeKindLabel(kind)}.`);
 }
@@ -472,11 +488,11 @@ function storeAuth() {
 }
 
 function isCloudMode() {
-  return Boolean(auth) && !syncPending;
+  return Boolean(auth) && !syncPending && serverStateReady;
 }
 
 function blockEditsDuringAccountSync() {
-  if (!auth || (!syncPending && !syncInFlight)) return false;
+  if (!auth || (serverStateReady && !syncPending && !syncInFlight)) return false;
 
   announce('Your local thoughts are being synced. Please try again in a moment.');
   return true;
@@ -494,6 +510,23 @@ function outboxStorageKey(accountId) {
   return `${OUTBOX_STORAGE_PREFIX}${accountId}`;
 }
 
+function quarantineLegacyOutbox(accountId) {
+  const legacyKey = `${LEGACY_OUTBOX_STORAGE_PREFIX}${accountId}`;
+  const raw = localStorage.getItem(legacyKey);
+  if (!raw) return false;
+
+  try {
+    const quarantineKey = `${QUARANTINED_OUTBOX_STORAGE_PREFIX}${accountId}`;
+    if (!localStorage.getItem(quarantineKey)) {
+      localStorage.setItem(quarantineKey, raw);
+    }
+    localStorage.removeItem(legacyKey);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 function currentThoughtStorageKey() {
   return auth ? accountStorageKey(auth.id) : STORAGE_KEY;
 }
@@ -506,8 +539,23 @@ function loadOutbox(accountId) {
     return operations.filter((operation) => (
       typeof operation?.operationId === 'string'
       && typeof operation?.thoughtId === 'string'
-      && (operation.type === 'upsert' || operation.type === 'delete')
-      && (operation.type === 'delete' || typeof operation.payload?.text === 'string')
+      && ['create', 'patch', 'delete'].includes(operation.type)
+      && ['pending', 'blocked', 'conflict'].includes(operation.status)
+      && (
+        (operation.type === 'create' && typeof operation.payload?.text === 'string')
+        || (
+          operation.type === 'patch'
+          && Number.isInteger(operation.baseRevision)
+          && operation.baseRevision >= 1
+          && operation.patch
+          && typeof operation.patch === 'object'
+        )
+        || (
+          operation.type === 'delete'
+          && Number.isInteger(operation.baseRevision)
+          && operation.baseRevision >= 0
+        )
+      )
     ));
   } catch {
     return [];
@@ -790,7 +838,7 @@ function toggleSpatialPositionPin() {
   }
 
   saveThoughts();
-  if (isCloudMode()) enqueueThoughtUpsert(thought);
+  if (isCloudMode()) enqueueThoughtMetaPatch(thought, ['spatial']);
   renderSpatialInspector();
   announce(pinned ? 'Spatial position released.' : 'Spatial position pinned.');
 }
@@ -1085,6 +1133,9 @@ function normalizeThoughts(data) {
       vy: Number.isFinite(thought.vy) ? thought.vy : randomVelocity(),
       rotation: Number.isFinite(thought.rotation) ? thought.rotation : randomBetween(-2.5, 2.5),
       pinned: Boolean(thought.pinned),
+      revision: Number.isInteger(thought.revision) && thought.revision >= 0
+        ? thought.revision
+        : 0,
       meta: thought.meta && typeof thought.meta === 'object' && !Array.isArray(thought.meta)
         ? normalizeCanvasMeta(thought.meta)
         : {},
@@ -1669,7 +1720,9 @@ function commitMagnetEditor() {
 
   closeMagnetEditor();
   saveThoughts();
-  if (isCloudMode()) changedThoughts.forEach(enqueueThoughtUpsert);
+  if (isCloudMode()) {
+    changedThoughts.forEach((thought) => enqueueThoughtMetaPatch(thought, ['magnet']));
+  }
   announce(`${editor.selectedChildIds.size} thoughts connected.`);
 }
 
@@ -1821,7 +1874,7 @@ function commitConnectionEditor() {
   if (result.changed) {
     rebuildConnectionLayer();
     saveThoughts();
-    if (isCloudMode()) enqueueThoughtUpsert(source);
+    if (isCloudMode()) enqueueThoughtMetaPatch(source, ['connections']);
   }
 
   announce(`${result.count} thoughts connected.`);
@@ -1858,6 +1911,9 @@ function makeThought(
       ? restoredThought.rotation
       : randomBetween(-2.5, 2.5),
     pinned: Boolean(restoredThought.pinned),
+    revision: Number.isInteger(restoredThought.revision) && restoredThought.revision >= 0
+      ? restoredThought.revision
+      : 0,
     meta: restoredThought.meta && typeof restoredThought.meta === 'object'
       ? cloneMeta(restoredThought.meta)
       : {},
@@ -1923,17 +1979,13 @@ function replaceThoughts(nextThoughts) {
   stopDrag();
   thoughts.forEach((thought) => thought.element?.remove());
   thoughts = nextThoughts.map((thought) => makeThought(thought.text, thought));
-  const repairedThoughts = new Set([
-    ...repairMagnetRelations(),
-    ...repairConnections(thoughts),
-  ]);
+  repairMagnetRelations();
   rebuildMagnetComponents({ preserveVisibility: false });
   initializeThoughtVisibility();
   renderRelationshipUi();
   rebuildConnectionLayer();
   updateUi();
   saveThoughts();
-  if (isCloudMode()) repairedThoughts.forEach(enqueueThoughtUpsert);
 }
 
 function measureThought(thought) {
@@ -1948,6 +2000,7 @@ function apiThoughtToClientThought(record, layout = {}) {
     color: record.color,
     pinned: record.is_pinned,
     meta: record.meta || {},
+    revision: Number.isInteger(record.revision) ? record.revision : 0,
     x: layout.x,
     y: layout.y,
     vx: layout.vx,
@@ -1966,53 +2019,120 @@ function applyOutboxOperations(source, operations) {
       return;
     }
 
-    const existing = merged.get(operation.thoughtId) || {};
-    merged.set(operation.thoughtId, apiThoughtToClientThought(
-      {
-        ...operation.payload,
-        id: operation.thoughtId,
-      },
-      existing,
-    ));
+    const existing = merged.get(operation.thoughtId);
+    if (operation.type === 'create') {
+      merged.set(operation.thoughtId, apiThoughtToClientThought(
+        {
+          ...operation.payload,
+          id: operation.thoughtId,
+          revision: existing?.revision || 0,
+        },
+        existing,
+      ));
+      return;
+    }
+
+    if (operation.type === 'patch' && existing) {
+      merged.set(operation.thoughtId, applyThoughtPatch(existing, operation.patch));
+    }
   });
 
   return [...merged.values()];
 }
 
-function enqueueThoughtUpsert(thought) {
+function enqueueThoughtCreate(thought) {
   if (!isCloudMode()) return;
 
   const accountId = auth.id;
   const operations = loadOutbox(accountId).filter(
     (operation) => operation.thoughtId !== thought.id,
   );
-  const payload = serializeThoughtsForSync([thought])[0];
 
   operations.push({
     operationId: crypto.randomUUID(),
     thoughtId: thought.id,
-    type: 'upsert',
-    payload,
+    type: 'create',
+    status: 'pending',
+    payload: serializeThoughtsForSync([thought])[0],
   });
   saveOutbox(accountId, operations);
   void flushOutbox();
 }
 
-function enqueueThoughtDelete(thoughtId) {
+function enqueueThoughtPatch(thought, patch) {
+  if (!isCloudMode()) return;
+  if (thought.revision === 0) {
+    enqueueThoughtCreate(thought);
+    return;
+  }
+
+  const accountId = auth.id;
+  const operations = loadOutbox(accountId);
+  const existing = operations.find((operation) => (
+    operation.thoughtId === thought.id
+    && operation.type === 'patch'
+    && operation.status === 'pending'
+    && operation.operationId !== activeOutboxOperation?.operationId
+  ));
+
+  if (existing) {
+    existing.patch = mergeThoughtPatches(existing.patch, patch);
+  } else {
+    operations.push({
+      operationId: crypto.randomUUID(),
+      thoughtId: thought.id,
+      type: 'patch',
+      status: 'pending',
+      baseRevision: thought.revision,
+      patch,
+    });
+  }
+
+  saveOutbox(accountId, operations);
+  void flushOutbox();
+}
+
+function enqueueThoughtMetaPatch(thought, keys) {
+  enqueueThoughtPatch(thought, {
+    meta_patch: metaPatchFromThought(thought, keys),
+  });
+}
+
+function enqueueThoughtDelete(thought) {
   if (!isCloudMode()) return;
 
   const accountId = auth.id;
   const operations = loadOutbox(accountId).filter(
-    (operation) => operation.thoughtId !== thoughtId,
+    (operation) => operation.thoughtId !== thought.id,
   );
+
+  const createIsInFlight = (
+    activeOutboxOperation?.thoughtId === thought.id
+    && activeOutboxOperation.type === 'create'
+  );
+  if (thought.revision === 0 && !createIsInFlight) {
+    saveOutbox(accountId, operations);
+    return;
+  }
 
   operations.push({
     operationId: crypto.randomUUID(),
-    thoughtId,
+    thoughtId: thought.id,
     type: 'delete',
+    status: 'pending',
+    baseRevision: thought.revision,
   });
   saveOutbox(accountId, operations);
   void flushOutbox();
+}
+
+class ApiError extends Error {
+  constructor(status, payload) {
+    super(apiErrorMessage(payload));
+    this.name = 'ApiError';
+    this.status = status;
+    this.payload = payload;
+  }
 }
 
 async function requestApi(path, {
@@ -2043,7 +2163,7 @@ async function requestApi(path, {
   }
 
   const payload = await response.json().catch(() => null);
-  if (!response.ok) throw new Error(apiErrorMessage(payload));
+  if (!response.ok) throw new ApiError(response.status, payload);
   return payload;
 }
 
@@ -2057,6 +2177,30 @@ function apiErrorMessage(payload) {
   }
 
   return 'The server could not complete that request.';
+}
+
+async function ensureSyncCapabilities() {
+  if (syncCapabilities?.revision_sync === true) return true;
+  if (!syncCapabilitiesPromise) {
+    syncCapabilitiesPromise = requestApi('/health/', { authSnapshot: null })
+      .then((payload) => {
+        syncCapabilities = payload?.sync_schema === 2
+          ? payload.capabilities
+          : null;
+        return syncCapabilities?.revision_sync === true;
+      })
+      .catch(() => false)
+      .finally(() => {
+        syncCapabilitiesPromise = null;
+      });
+  }
+
+  const compatible = await syncCapabilitiesPromise;
+  if (!compatible && !syncCompatibilityAnnounced) {
+    syncCompatibilityAnnounced = true;
+    announce('Cloud changes are paused until the server update is complete.');
+  }
+  return compatible;
 }
 
 async function refreshAccessToken(authSnapshot = auth) {
@@ -2090,8 +2234,114 @@ function scheduleOutboxRetry(accountId) {
   }, delay);
 }
 
+function patchFromCreatePayload(current, payload) {
+  const patch = {};
+  if (current.text !== payload.text) patch.text = payload.text;
+  if (current.color !== payload.color) patch.color = payload.color;
+  if (current.is_pinned !== payload.is_pinned) patch.is_pinned = payload.is_pinned;
+  const metaPatch = diffMetaPatch(current.meta || {}, payload.meta || {});
+  if (Object.keys(metaPatch).length) patch.meta_patch = metaPatch;
+  return patch;
+}
+
+function setLocalThoughtRevision(thoughtId, revision) {
+  if (!Number.isInteger(revision)) return;
+  const thought = getThoughtById(thoughtId);
+  if (!thought) return;
+  thought.revision = revision;
+  saveThoughts();
+}
+
+function rebaseQueuedThoughtOperations(operations, completedOperation, current) {
+  return operations.flatMap((operation) => {
+    if (operation.operationId === completedOperation.operationId) return [];
+    if (operation.thoughtId !== completedOperation.thoughtId) return [operation];
+
+    if (operation.type === 'create') {
+      const patch = patchFromCreatePayload(current, operation.payload);
+      if (!Object.keys(patch).length) return [];
+      const { payload, ...rest } = operation;
+      return [{
+        ...rest,
+        type: 'patch',
+        status: 'pending',
+        baseRevision: current.revision,
+        patch,
+      }];
+    }
+
+    return [{
+      ...operation,
+      baseRevision: current.revision,
+    }];
+  });
+}
+
+async function executeOutboxOperation(operation) {
+  if (operation.type === 'create') {
+    return requestApi(`/thoughts/${operation.thoughtId}/sync/`, {
+      method: 'PUT',
+      body: operation.payload,
+    });
+  }
+  if (operation.type === 'patch') {
+    return requestApi(`/thoughts/${operation.thoughtId}/sync/`, {
+      method: 'PATCH',
+      body: {
+        base_revision: operation.baseRevision,
+        ...operation.patch,
+      },
+    });
+  }
+  await requestApi(
+    `/thoughts/${operation.thoughtId}/sync/?base_revision=${operation.baseRevision}`,
+    { method: 'DELETE' },
+  );
+  return null;
+}
+
+function blockOutboxOperation(accountId, operation, error) {
+  const operations = loadOutbox(accountId);
+  const stored = operations.find((item) => item.operationId === operation.operationId);
+  if (!stored) return;
+  stored.status = error.status === 409 ? 'conflict' : 'blocked';
+  stored.error = error.message;
+  if (error.payload?.current) stored.serverThought = error.payload.current;
+  saveOutbox(accountId, operations);
+}
+
+function rebaseRejectedCreate(accountId, operation, current) {
+  const sameCreation = (
+    Date.parse(current?.created_at) === Date.parse(operation.payload?.created_at)
+  );
+  if (!current || !sameCreation || !Number.isInteger(current.revision)) return false;
+
+  const operations = loadOutbox(accountId);
+  const stored = operations.find((item) => item.operationId === operation.operationId);
+  if (!stored) return true;
+  const patch = patchFromCreatePayload(current, stored.payload);
+  if (!Object.keys(patch).length) {
+    saveOutbox(accountId, operations.filter(
+      (item) => item.operationId !== operation.operationId,
+    ));
+  } else {
+    const { payload, ...rest } = stored;
+    Object.assign(stored, rest, {
+      type: 'patch',
+      status: 'pending',
+      baseRevision: current.revision,
+      patch,
+    });
+    delete stored.payload;
+    saveOutbox(accountId, operations);
+  }
+  setLocalThoughtRevision(operation.thoughtId, current.revision);
+  return true;
+}
+
 async function flushOutbox() {
   if (!isCloudMode() || outboxFlushInFlight || !navigator.onLine) return;
+  if (!await ensureSyncCapabilities()) return;
 
   const accountId = auth.id;
   outboxFlushInFlight = true;
@@ -2099,27 +2349,44 @@ async function flushOutbox() {
 
   try {
     while (auth?.id === accountId && navigator.onLine) {
-      const operation = loadOutbox(accountId)[0];
+      const operation = loadOutbox(accountId).find((item) => item.status === 'pending');
       if (!operation) break;
+      activeOutboxOperation = operation;
 
-      if (operation.type === 'upsert') {
-        await requestApi(`/thoughts/${operation.thoughtId}/sync/`, {
-          method: 'PUT',
-          body: operation.payload,
-        });
-      } else {
-        await requestApi(`/thoughts/${operation.thoughtId}/sync/`, {
-          method: 'DELETE',
-        });
+      let result;
+      try {
+        result = await executeOutboxOperation(operation);
+      } catch (error) {
+        if (
+          error instanceof ApiError
+          && error.status === 428
+          && operation.type === 'create'
+          && rebaseRejectedCreate(accountId, operation, error.payload?.current)
+        ) {
+          activeOutboxOperation = null;
+          continue;
+        }
+        if (error instanceof ApiError && error.status >= 400 && error.status < 500) {
+          blockOutboxOperation(accountId, operation, error);
+          announce(error.status === 409
+            ? 'A cloud change conflicts with a newer version and was paused.'
+            : `A cloud change was paused: ${error.message}`);
+          activeOutboxOperation = null;
+          continue;
+        }
+        throw error;
       }
 
       if (auth?.id !== accountId) return;
 
-      const remaining = loadOutbox(accountId).filter(
-        (item) => item.operationId !== operation.operationId,
-      );
+      const storedOperations = loadOutbox(accountId);
+      const remaining = result
+        ? rebaseQueuedThoughtOperations(storedOperations, operation, result)
+        : storedOperations.filter((item) => item.operationId !== operation.operationId);
       saveOutbox(accountId, remaining);
+      if (result) setLocalThoughtRevision(operation.thoughtId, result.revision);
       outboxRetryDelay = 2000;
+      activeOutboxOperation = null;
     }
   } catch (error) {
     if (auth?.id === accountId) {
@@ -2127,6 +2394,7 @@ async function flushOutbox() {
       scheduleOutboxRetry(accountId);
     }
   } finally {
+    activeOutboxOperation = null;
     outboxFlushInFlight = false;
     if (auth?.id && auth.id !== accountId && isCloudMode()) {
       void flushOutbox();
@@ -2147,7 +2415,7 @@ function applyServerThoughts(records) {
 }
 
 async function loadServerThoughts() {
-  if (!isCloudMode()) return false;
+  if (!auth || syncPending) return false;
 
   try {
     const records = await requestApi('/thoughts/');
@@ -2162,6 +2430,10 @@ async function loadServerThoughts() {
 
 async function syncGuestThoughts() {
   if (!auth || syncInFlight) return false;
+  if (!await ensureSyncCapabilities()) {
+    syncPending = true;
+    return false;
+  }
 
   const accountId = auth.id;
   let pending = loadPendingThoughts(accountId);
@@ -2221,6 +2493,7 @@ async function restoreAuthenticatedThoughts() {
     ready = await loadServerThoughts();
   }
 
+  if (ready && auth) serverStateReady = true;
   if (isCloudMode()) void flushOutbox();
   return ready;
 }
@@ -2277,7 +2550,7 @@ async function addThought(rawText) {
   if (addingToSpatial && activeSpaceId === targetSpaceId) refreshSpatialGraph();
 
   if (isCloudMode()) {
-    enqueueThoughtUpsert(thought);
+    enqueueThoughtCreate(thought);
     announce('Thought added.');
   } else {
     announce('Thought added locally. Sign in to save thoughts to your account.');
@@ -2329,7 +2602,10 @@ function togglePinned(thought) {
   saveThoughts();
   announce(thought.pinned ? 'Thought pinned.' : 'Thought unpinned.');
 
-  if (isCloudMode()) enqueueThoughtUpsert(thought);
+  if (isCloudMode()) enqueueThoughtPatch(thought, {
+    is_pinned: thought.pinned,
+    meta_patch: metaPatchFromThought(thought, ['layout']),
+  });
 }
 
 function toggleBoardAnchor(thought) {
@@ -2347,7 +2623,7 @@ function toggleBoardAnchor(thought) {
 
   renderThought(thought);
   saveThoughts();
-  if (isCloudMode()) enqueueThoughtUpsert(thought);
+  if (isCloudMode()) enqueueThoughtMetaPatch(thought, ['navigation']);
   if (anchorsDialog.open) renderAnchors();
   announce(anchored ? 'Anchor removed.' : 'Anchor added.');
 }
@@ -2366,7 +2642,9 @@ function detachLocalMagnetChildren(parentId) {
   if (!changedThoughts.length) return;
   rebuildMagnetComponents();
   saveThoughts();
-  if (isCloudMode()) changedThoughts.forEach(enqueueThoughtUpsert);
+  if (isCloudMode()) {
+    changedThoughts.forEach((child) => enqueueThoughtMetaPatch(child, ['magnet']));
+  }
   renderRelationshipUi();
 }
 
@@ -2379,8 +2657,12 @@ function removeThought(thought) {
   if (knowledgeKindEditor?.thoughtId === thought.id) knowledgeKindPicker.close();
   if (isPersistedMagnetParent(thought)) detachLocalMagnetChildren(thought.id);
   const changedConnectionSources = detachIncomingConnections(thoughts, thought.id);
-  if (isCloudMode()) changedConnectionSources.forEach(enqueueThoughtUpsert);
-  if (isCloudMode()) enqueueThoughtDelete(thought.id);
+  if (isCloudMode()) {
+    changedConnectionSources.forEach((source) => (
+      enqueueThoughtMetaPatch(source, ['connections'])
+    ));
+    enqueueThoughtDelete(thought);
+  }
   removeThoughtElement(thought);
 }
 
@@ -2524,14 +2806,14 @@ function stopDrag(event, { cancelled = !event } = {}) {
     updateCanvasPlacement(thought);
     draggedThought = null;
     saveThoughts();
-    if (isCloudMode()) enqueueThoughtUpsert(thought);
+    if (isCloudMode()) enqueueThoughtMetaPatch(thought, ['canvas']);
     return;
   }
 
   magnetPhysics.endDrag(thought.id);
   if (thought.pinned) {
     updatePinnedLayoutMeta(thought);
-    if (isCloudMode()) enqueueThoughtUpsert(thought);
+    if (isCloudMode()) enqueueThoughtMetaPatch(thought, ['layout']);
   }
   draggedThought = null;
   scheduleSave();
@@ -2757,7 +3039,7 @@ function addOrFocusThoughtOnCanvas(thought) {
 
   placeThoughtInVisibleCanvas(thought);
   saveThoughts();
-  if (isCloudMode()) enqueueThoughtUpsert(thought);
+  if (isCloudMode()) enqueueThoughtMetaPatch(thought, ['canvas']);
 
   rebuildConnectionLayer();
   updateUi();
@@ -3326,7 +3608,9 @@ async function authenticate(mode) {
       refresh: payload.refresh,
       email: payload.user?.email || email,
     };
+    serverStateReady = false;
     storeAuth();
+    const quarantinedLegacyOutbox = quarantineLegacyOutbox(auth.id);
     const cachedAccountThoughts = applyOutboxOperations(
       loadAccountThoughts(auth.id),
       loadOutbox(auth.id),
@@ -3340,6 +3624,9 @@ async function authenticate(mode) {
     }
     replaceThoughts(mergeThoughts(cachedAccountThoughts, thoughtsToSync));
     updateAccountButton();
+    if (quarantinedLegacyOutbox) {
+      announce('Older unsynced changes were paused to protect server data.');
+    }
     authPassword.value = '';
     const ready = await restoreAuthenticatedThoughts();
     authDialog.close();
@@ -3359,6 +3646,7 @@ function signOut(message = 'Signed out. Local thoughts stay on this browser.') {
   window.clearTimeout(outboxRetryTimer);
   outboxRetryDelay = 2000;
   auth = null;
+  serverStateReady = true;
   syncPending = false;
   syncOperationId += 1;
   syncInFlight = false;
@@ -3644,9 +3932,16 @@ replaceThoughts(thoughts);
 renderCanvasCamera();
 if (isSpatialSpace(activeSpaceId)) void activateSpatialView();
 updateAccountButton();
+if (legacyOutboxQuarantined) {
+  announce('Older unsynced changes were paused to protect server data.');
+}
 if (auth) void restoreAuthenticatedThoughts();
 window.addEventListener('online', () => {
   if (!auth) return;
+  if (!serverStateReady) {
+    void restoreAuthenticatedThoughts();
+    return;
+  }
   if (syncPending) {
     void syncGuestThoughts().then(() => {
       if (isCloudMode()) void flushOutbox();
