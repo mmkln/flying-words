@@ -38,8 +38,8 @@
           : '#f9f8fe';
       })();
     </script>
-    <script type="module" crossorigin src="/flying-words/assets/index-COUV-oVi.js"></script>
-    <link rel="stylesheet" crossorigin href="/flying-words/assets/index-Bxz4SqwD.css">
+    <script type="module" crossorigin src="/flying-words/assets/index-CqOcb9f0.js"></script>
+    <link rel="stylesheet" crossorigin href="/flying-words/assets/index-W-9Nus3L.css">
   </head>
   <body>
     <main class="app-shell">
@@ -142,6 +142,13 @@
             <header>
               <span class="spatial-inspector-kind" id="spatial-inspector-kind" aria-hidden="true"></span>
               <span class="spatial-inspector-kind-label" id="spatial-inspector-kind-label"></span>
+              <button
+                id="spatial-inspector-more"
+                type="button"
+                aria-label="More actions"
+                aria-haspopup="menu"
+                aria-expanded="false"
+              >•••</button>
               <button id="spatial-inspector-close" type="button" aria-label="Close thought details">×</button>
             </header>
             <p id="spatial-inspector-text"></p>
@@ -150,6 +157,18 @@
               <button id="spatial-inspector-connect" type="button">Connect</button>
               <button id="spatial-inspector-pin" type="button">Pin position</button>
             </footer>
+            <div
+              class="spatial-inspector-menu"
+              id="spatial-inspector-menu"
+              role="menu"
+              hidden
+            >
+              <button
+                id="spatial-inspector-delete"
+                type="button"
+                role="menuitem"
+              >Delete thought…</button>
+            </div>
           </aside>
         </div>
         <div class="empty-state" id="empty-state">
@@ -160,6 +179,21 @@
           <p>Write it below. Drag cards, pin what matters — the rest will move on their own.</p>
         </div>
       </section>
+
+      <dialog
+        class="delete-thought-dialog"
+        id="delete-thought-dialog"
+        aria-labelledby="delete-thought-title"
+      >
+        <section>
+          <h2 id="delete-thought-title">Delete thought?</h2>
+          <p id="delete-thought-message"></p>
+          <footer>
+            <button id="delete-thought-cancel" type="button">Cancel</button>
+            <button id="delete-thought-confirm" type="button">Delete</button>
+          </footer>
+        </section>
+      </dialog>
 
       <div class="composer-wrap">
         <form class="composer" id="thought-form">
