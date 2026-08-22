@@ -34,6 +34,11 @@ import {
   withCanvasPlacement,
 } from './canvas-placements.js';
 import {
+  DEFAULT_BOARD_GEOMETRY,
+  applyBoardGeometryCss,
+  normalizeBoardGeometry,
+} from './board-geometry.js';
+import {
   getSpatialPlacement,
   withSpatialPlacement,
   withoutSpatialPlacement,
@@ -96,7 +101,6 @@ const systemThemeQuery = window.matchMedia('(prefers-color-scheme: dark)');
 const MIN_CANVAS_SCALE = 0.3;
 const MAX_CANVAS_SCALE = 1;
 const CANVAS_SPAWN_MARGIN = 20;
-const CANVAS_SPAWN_GAP = 18;
 const CANVAS_SPAWN_MAX_RINGS = 8;
 const LOCAL_API_URL = 'http://127.0.0.1:8000/api/v1';
 const PRODUCTION_API_URL = 'https://mxllwords.pythonanywhere.com/api/v1';
@@ -229,6 +233,7 @@ let viewMode = 'canvas';
 let activeSpaceId = localStorage.getItem(ACTIVE_SPACE_STORAGE_KEY);
 if (!isSpaceId(activeSpaceId)) activeSpaceId = DEFAULT_SPACE_ID;
 let canvasCamera = loadCanvasCamera(activeSpaceId);
+let boardGeometry = applyBoardGeometryCss(DEFAULT_BOARD_GEOMETRY);
 canvasHudVisible = isCanvasSpace(activeSpaceId) && canvasCamera.scale < MAX_CANVAS_SCALE;
 
 const connectionRenderer = createConnectionRenderer({
@@ -841,7 +846,7 @@ function findCanvasSpawnPosition(thought) {
   const safeArea = getCanvasSpawnSafeArea();
   const bounds = canvas.getBoundingClientRect();
   const scale = canvasCamera.scale;
-  const gap = CANVAS_SPAWN_GAP / scale;
+  const gap = boardGeometry.gap / scale;
   const centre = clientPointToCanvasWorld(
     (safeArea.left + safeArea.right) / 2,
     (safeArea.top + safeArea.bottom) / 2,
@@ -894,6 +899,10 @@ function findCanvasSpawnPosition(thought) {
 }
 
 function placeThoughtInVisibleCanvas(thought) {
+  // Board collision coordinates use the server-owned fixed logical footprint,
+  // so measure only after the Board class has set that footprint on the DOM.
+  thought.element.classList.add('is-canvas-card');
+  measureThought(thought);
   const position = findCanvasSpawnPosition(thought);
 
   thought.x = Math.round(position.x);
@@ -2040,6 +2049,7 @@ function makeThought(
     element.style.visibility = 'hidden';
   }
   canvasWorld.append(element);
+  element.classList.toggle('is-canvas-card', isCanvasSpace(activeSpaceId));
   measureThought(thought);
   const hasLocalPosition = (
     Number.isFinite(restoredThought.x) && Number.isFinite(restoredThought.y)
@@ -2279,6 +2289,27 @@ async function requestApi(path, {
   return payload;
 }
 
+async function loadBoardGeometry() {
+  try {
+    boardGeometry = applyBoardGeometryCss(
+      normalizeBoardGeometry(await requestApi('/board-spec/', { authSnapshot: null })),
+    );
+  } catch {
+    // The CSS fallback uses the same version 1 geometry while the API is down.
+    return;
+  }
+
+  if (!isCanvasSpace(activeSpaceId)) return;
+
+  getActiveThoughts().forEach((thought) => {
+    renderThought(thought);
+    measureThought(thought);
+    applyCanvasPlacement(thought);
+    renderThought(thought);
+  });
+  rebuildConnectionLayer();
+}
+
 function apiErrorMessage(payload) {
   if (!payload) return 'The server could not complete that request.';
   if (typeof payload.detail === 'string') return payload.detail;
@@ -2361,6 +2392,51 @@ function setLocalThoughtRevision(thoughtId, revision) {
   const thought = getThoughtById(thoughtId);
   if (!thought) return;
   thought.revision = revision;
+  saveThoughts();
+}
+
+function operationChangesBoardPlacement(operation) {
+  if (operation.type === 'create') {
+    return Object.hasOwn(operation.payload?.meta || {}, 'canvas');
+  }
+  return (
+    operation.type === 'patch'
+    && Object.hasOwn(operation.patch?.meta_patch || {}, 'canvas')
+  );
+}
+
+function applyServerBoardPlacement(operation, record, remainingOperations) {
+  if (
+    !record
+    || !operationChangesBoardPlacement(operation)
+    || remainingOperations.some((item) => (
+      item.thoughtId === operation.thoughtId
+      && item.status === 'pending'
+      && operationChangesBoardPlacement(item)
+    ))
+  ) {
+    return;
+  }
+
+  const thought = getThoughtById(operation.thoughtId);
+  if (!thought) return;
+
+  const nextMeta = cloneMeta(thought.meta);
+  if (Object.hasOwn(record.meta || {}, 'canvas')) {
+    nextMeta.canvas = cloneMeta(record.meta.canvas);
+  } else {
+    delete nextMeta.canvas;
+  }
+  thought.meta = nextMeta;
+  thought.revision = record.revision;
+
+  if (isCanvasSpace(activeSpaceId)) {
+    renderThought(thought);
+    measureThought(thought);
+    applyCanvasPlacement(thought);
+    renderThought(thought);
+    rebuildConnectionLayer();
+  }
   saveThoughts();
 }
 
@@ -2496,7 +2572,10 @@ async function flushOutbox() {
         ? rebaseQueuedThoughtOperations(storedOperations, operation, result)
         : storedOperations.filter((item) => item.operationId !== operation.operationId);
       saveOutbox(accountId, remaining);
-      if (result) setLocalThoughtRevision(operation.thoughtId, result.revision);
+      if (result) {
+        applyServerBoardPlacement(operation, result, remaining);
+        setLocalThoughtRevision(operation.thoughtId, result.revision);
+      }
       outboxRetryDelay = 2000;
       activeOutboxOperation = null;
     }
@@ -3528,6 +3607,7 @@ function switchSpace(spaceId) {
       return;
     }
 
+    thought.element.classList.toggle('is-canvas-card', isCanvasSpace(activeSpaceId));
     measureThought(thought);
     if (isCanvasSpace(activeSpaceId)) {
       applyCanvasPlacement(thought);
@@ -4055,6 +4135,7 @@ systemThemeQuery.addEventListener('change', () => {
 applyTheme();
 replaceThoughts(thoughts);
 renderCanvasCamera();
+void loadBoardGeometry();
 if (isSpatialSpace(activeSpaceId)) void activateSpatialView();
 updateAccountButton();
 if (legacyOutboxQuarantined) {
