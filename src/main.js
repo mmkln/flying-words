@@ -26,6 +26,7 @@ import {
   reconcileConnections,
 } from './connections.js';
 import { createConnectionRenderer } from './connection-renderer.js';
+import { createCanvasMinimap } from './canvas-minimap.js';
 import {
   getCanvasPlacement,
   hasCanvasPlacement,
@@ -108,6 +109,8 @@ const API_URL = CONFIGURED_API_URL || (
 
 const canvas = document.querySelector('#canvas');
 const canvasWorld = document.querySelector('#canvas-world');
+const boardMinimap = document.querySelector('#board-minimap');
+const boardMinimapCanvas = document.querySelector('#board-minimap-canvas');
 const spatialWorld = document.querySelector('#spatial-world');
 const spatialFitButton = document.querySelector('#spatial-fit');
 const spatialFocusButton = document.querySelector('#spatial-focus');
@@ -198,6 +201,7 @@ let dragCandidate = null;
 let dragOffset = { x: 0, y: 0 };
 let canvasPan = null;
 let canvasScaleAnimationId = null;
+let canvasMinimapFrame = null;
 let canvasHudTimer = null;
 let canvasHudVisible = false;
 let canvasHudExpanded = false;
@@ -232,6 +236,67 @@ const connectionRenderer = createConnectionRenderer({
   getThoughtById,
 });
 
+const canvasMinimap = createCanvasMinimap({
+  canvas: boardMinimapCanvas,
+  onNavigate(worldPoint) {
+    if (!isCanvasSpace(activeSpaceId)) return;
+    const bounds = canvas.getBoundingClientRect();
+    canvasCamera.x = bounds.width / 2 - worldPoint.x * canvasCamera.scale;
+    canvasCamera.y = bounds.height / 2 - worldPoint.y * canvasCamera.scale;
+    renderCanvasCamera();
+    saveCanvasCamera();
+  },
+});
+
+function getCanvasMinimapSnapshot() {
+  const bounds = canvas.getBoundingClientRect();
+  const cards = thoughts
+    .filter((thought) => hasCanvasPlacement(thought, activeSpaceId))
+    .map((thought) => ({
+      id: thought.id,
+      x: thought.x,
+      y: thought.y,
+      width: thought.width || 280,
+      height: thought.height || 96,
+      selected: thought.id === selectedThoughtId,
+    }));
+  const cardIds = new Set(cards.map(({ id }) => id));
+  const connections = flattenConnections(thoughts).filter(({ sourceId, targetId }) => (
+    cardIds.has(sourceId) && cardIds.has(targetId)
+  ));
+
+  return {
+    cards,
+    connections,
+    camera: { ...canvasCamera },
+    viewport: {
+      width: bounds.width,
+      height: bounds.height,
+    },
+  };
+}
+
+function scheduleCanvasMinimapRender() {
+  const visible = (
+    isCanvasSpace(activeSpaceId)
+    && viewMode !== 'spaces'
+    && thoughts.some((thought) => hasCanvasPlacement(thought, activeSpaceId))
+  );
+  boardMinimap.hidden = !visible;
+
+  if (!visible) {
+    if (canvasMinimapFrame) cancelAnimationFrame(canvasMinimapFrame);
+    canvasMinimapFrame = null;
+    return;
+  }
+  if (canvasMinimapFrame) return;
+
+  canvasMinimapFrame = requestAnimationFrame(() => {
+    canvasMinimapFrame = null;
+    canvasMinimap.render(getCanvasMinimapSnapshot());
+  });
+}
+
 function renderThemeButton() {
   const labels = {
     [ThemeMode.SYSTEM]: 'System',
@@ -254,6 +319,7 @@ function applyTheme() {
   );
   spatialView?.setTheme(resolvedTheme);
   renderThemeButton();
+  scheduleCanvasMinimapRender();
 }
 
 function storeThemeMode() {
@@ -707,6 +773,7 @@ function renderCanvasCamera() {
     ? `translate3d(${canvasCamera.x}px, ${canvasCamera.y}px, 0) scale(${canvasCamera.scale})`
     : '';
   renderCanvasHud();
+  scheduleCanvasMinimapRender();
 }
 
 function applyCanvasPlacement(thought) {
@@ -1807,6 +1874,7 @@ function renderConnectionUi() {
 }
 
 function rebuildConnectionLayer() {
+  scheduleCanvasMinimapRender();
   if (isSpatialSpace(activeSpaceId)) {
     connectionRenderer.setConnections([]);
     magnetPhysics.syncConnections([]);
@@ -3019,6 +3087,7 @@ function renderThought(thought) {
   thought.element.classList.toggle('is-anchored', anchored);
   renderMagnetThoughtState(thought);
   renderConnectionThoughtState(thought);
+  if (canvasThought) scheduleCanvasMinimapRender();
 }
 
 function historyGroup(createdAt) {
