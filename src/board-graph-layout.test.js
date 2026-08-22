@@ -100,3 +100,28 @@ test('keeps the overall layout centred on the existing Board content', () => {
   assert.ok(Math.abs(before.x - after.x) <= 1);
   assert.ok(Math.abs(before.y - after.y) <= 1);
 });
+
+test('keeps a large dense graph collision-free', () => {
+  const cards = Array.from({ length: 95 }, (_, index) => (
+    card(`card-${String(index).padStart(3, '0')}`, 0, 0)
+  ));
+  const connections = cards.slice(1).map(({ id }) => ({
+    sourceId: cards[0].id,
+    targetId: id,
+    spacing: 'normal',
+  }));
+  const result = calculateBoardGraphLayout({ cards, connections, geometry });
+
+  for (let firstIndex = 0; firstIndex < result.length; firstIndex += 1) {
+    for (let secondIndex = firstIndex + 1; secondIndex < result.length; secondIndex += 1) {
+      assert.equal(
+        rectanglesOverlap(
+          { ...result[firstIndex], width: geometry.cardWidth, height: geometry.cardHeight },
+          { ...result[secondIndex], width: geometry.cardWidth, height: geometry.cardHeight },
+          geometry.gap,
+        ),
+        false,
+      );
+    }
+  }
+});

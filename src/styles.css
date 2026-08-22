@@ -265,7 +265,7 @@ button { -webkit-tap-highlight-color: transparent; }
 
 .spatial-inspector header {
   display: grid;
-  grid-template-columns: 24px 1fr 28px;
+  grid-template-columns: 24px 1fr 28px 28px;
   align-items: center;
   gap: 7px;
 }
@@ -286,19 +286,25 @@ button { -webkit-tap-highlight-color: transparent; }
   font-weight: 620;
 }
 
+#spatial-inspector-more,
 #spatial-inspector-close {
+  display: grid;
   width: 28px;
   height: 28px;
   padding: 0;
+  place-items: center;
   border: 0;
-  border-radius: 50%;
+  border-radius: 8px;
   color: #777087;
   cursor: pointer;
   background: transparent;
-  font-size: 20px;
 }
 
+#spatial-inspector-more { font-size: 16px; letter-spacing: 1px; }
+#spatial-inspector-close { border-radius: 50%; font-size: 20px; }
+#spatial-inspector-more:hover:not(:disabled),
 #spatial-inspector-close:hover { background: rgba(78, 64, 120, .08); }
+#spatial-inspector-more:disabled { cursor: default; opacity: .42; }
 
 #spatial-inspector-text {
   max-height: min(34vh, 260px);
@@ -326,6 +332,63 @@ button { -webkit-tap-highlight-color: transparent; }
   border-color: rgba(112, 85, 197, .3);
   color: #5f43bd;
 }
+
+.spatial-inspector-menu {
+  position: absolute;
+  z-index: 2;
+  top: 48px;
+  right: 12px;
+  min-width: 156px;
+  padding: 5px;
+  border: 1px solid var(--border-subtle);
+  border-radius: 12px;
+  background: var(--surface-elevated);
+  box-shadow: var(--shadow-panel);
+}
+
+.spatial-inspector-menu button {
+  width: 100%;
+  padding: 8px 10px;
+  border: 0;
+  border-radius: 8px;
+  color: #c84149;
+  cursor: pointer;
+  background: transparent;
+  font: inherit;
+  font-size: 12px;
+  text-align: left;
+}
+
+.spatial-inspector-menu button:hover { background: rgba(200, 65, 73, .1); }
+
+.delete-thought-dialog {
+  width: min(400px, calc(100vw - 32px));
+  padding: 0;
+  border: 1px solid var(--border-subtle);
+  border-radius: 18px;
+  color: var(--text-primary);
+  background: var(--surface-elevated);
+  box-shadow: var(--shadow-panel);
+}
+
+.delete-thought-dialog::backdrop { background: var(--backdrop); }
+.delete-thought-dialog section { display: grid; gap: 14px; padding: 20px; }
+.delete-thought-dialog h2,
+.delete-thought-dialog p { margin: 0; }
+.delete-thought-dialog p { color: var(--text-secondary); line-height: 1.5; }
+.delete-thought-dialog footer { display: flex; justify-content: flex-end; gap: 8px; }
+
+.delete-thought-dialog button {
+  min-height: 36px;
+  padding: 0 13px;
+  border: 0;
+  border-radius: 10px;
+  cursor: pointer;
+  font: inherit;
+}
+
+#delete-thought-cancel { color: var(--text-secondary); background: var(--surface-muted); }
+#delete-thought-confirm { color: #fff; background: #c84149; }
 
 .thought-space.is-static-canvas {
   cursor: grab;
@@ -1533,6 +1596,7 @@ kbd { padding: 1px 4px; border: 1px solid rgba(114,104,143,.25); border-bottom-w
 
 .spatial-toolbar p,
 .spatial-inspector-kind-label,
+#spatial-inspector-more,
 #spatial-inspector-close { color: var(--text-tertiary); }
 
 .spatial-label { color: var(--text-secondary); }

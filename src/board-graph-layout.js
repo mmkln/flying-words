@@ -203,6 +203,11 @@ function simulateComponent(component, cardsById, semanticLinks, magneticLinks, g
     .strength(0.34)
     .iterations(1);
   const isolatedCloud = component.isolatedCloud && component.memberIds.length > 1;
+  const tickCount = Math.max(
+    100,
+    Math.min(320, Math.round(64_000 / nodes.length)),
+  );
+  const collisionIterations = nodes.length > 300 ? 1 : 2;
   const simulation = forceSimulation(nodes, 2)
     .randomSource(random)
     .force('connections', connectionForce)
@@ -215,14 +220,19 @@ function simulateComponent(component, cardsById, semanticLinks, magneticLinks, g
     .force('collision', createRectangleCollisionForce({
       gap: geometry.gap + 2,
       strength: 0.94,
-      iterations: 2,
+      iterations: collisionIterations,
     }))
+    .alphaDecay(1 - 0.001 ** (1 / tickCount))
     .velocityDecay(0.42)
     .stop();
 
-  for (let tick = 0; tick < 320; tick += 1) simulation.tick();
+  for (let tick = 0; tick < tickCount; tick += 1) simulation.tick();
   simulation.stop();
-  separateRectangles(nodes, geometry.gap + 2);
+  separateRectangles(
+    nodes,
+    geometry.gap + 2,
+    nodes.length > 300 ? 18 : nodes.length > 120 ? 56 : 120,
+  );
 
   const bounds = componentBounds(nodes);
   nodes.forEach((node) => {
@@ -299,6 +309,84 @@ function currentBoardCentre(cards) {
   };
 }
 
+function placeWithoutOverlaps(positions, links, gap) {
+  const degree = new Map(positions.map(({ id }) => [id, 0]));
+  links.forEach(({ sourceId, targetId }) => {
+    degree.set(sourceId, (degree.get(sourceId) || 0) + 1);
+    degree.set(targetId, (degree.get(targetId) || 0) + 1);
+  });
+  const desiredCentre = {
+    x: positions.reduce((sum, position) => sum + position.x, 0) / positions.length,
+    y: positions.reduce((sum, position) => sum + position.y, 0) / positions.length,
+  };
+  const ordered = [...positions].sort((first, second) => (
+    (degree.get(second.id) || 0) - (degree.get(first.id) || 0)
+    || first.id.localeCompare(second.id)
+  ));
+  const placed = [];
+
+  ordered.forEach((position, positionIndex) => {
+    const isFree = (candidate) => placed.every(
+      (other) => !rectanglesOverlap(candidate, other, gap),
+    );
+    let resolved = { ...position };
+
+    if (!isFree(resolved)) {
+      const stepX = Math.max(1, Math.round((position.width + gap) / 2));
+      const stepY = Math.max(1, Math.round((position.height + gap) / 2));
+      const offsetRotation = hashString(position.id);
+      resolved = null;
+
+      for (let ring = 1; ring <= positions.length * 3 + 12 && !resolved; ring += 1) {
+        const offsets = [];
+        for (let column = -ring; column <= ring; column += 1) {
+          offsets.push({ column, row: -ring });
+          offsets.push({ column, row: ring });
+        }
+        for (let row = -ring + 1; row < ring; row += 1) {
+          offsets.push({ column: -ring, row });
+          offsets.push({ column: ring, row });
+        }
+
+        const rotation = offsetRotation % offsets.length;
+        for (let index = 0; index < offsets.length; index += 1) {
+          const offset = offsets[(index + rotation) % offsets.length];
+          const candidate = {
+            ...position,
+            x: position.x + offset.column * stepX,
+            y: position.y + offset.row * stepY,
+          };
+          if (isFree(candidate)) {
+            resolved = candidate;
+            break;
+          }
+        }
+      }
+
+      if (!resolved) {
+        resolved = { ...position };
+        do {
+          resolved.x += (position.width + gap) * (positions.length + positionIndex + 1);
+        } while (!isFree(resolved));
+      }
+    }
+
+    placed.push(resolved);
+  });
+
+  const resolvedCentre = {
+    x: placed.reduce((sum, position) => sum + position.x, 0) / placed.length,
+    y: placed.reduce((sum, position) => sum + position.y, 0) / placed.length,
+  };
+  const translateX = Math.round(desiredCentre.x - resolvedCentre.x);
+  const translateY = Math.round(desiredCentre.y - resolvedCentre.y);
+  return placed.map((position) => ({
+    ...position,
+    x: position.x + translateX,
+    y: position.y + translateY,
+  }));
+}
+
 export function calculateBoardGraphLayout({
   cards = [],
   connections = [],
@@ -357,37 +445,13 @@ export function calculateBoardGraphLayout({
     height: node.height,
   }));
 
-  // Integer persistence can erase a sub-pixel gap, so make one final exact
-  // pass using the same rectangle contract as the backend.
-  for (let pass = 0; pass < 120; pass += 1) {
-    let moved = false;
-    for (let firstIndex = 0; firstIndex < positions.length; firstIndex += 1) {
-      for (let secondIndex = firstIndex + 1; secondIndex < positions.length; secondIndex += 1) {
-        const first = positions[firstIndex];
-        const second = positions[secondIndex];
-        if (!rectanglesOverlap(first, second, resolvedGeometry.gap)) continue;
-        moved = true;
-        const overlapX = Math.min(
-          first.x + first.width + resolvedGeometry.gap - second.x,
-          second.x + second.width + resolvedGeometry.gap - first.x,
-        );
-        const overlapY = Math.min(
-          first.y + first.height + resolvedGeometry.gap - second.y,
-          second.y + second.height + resolvedGeometry.gap - first.y,
-        );
-        if (overlapX < overlapY) {
-          const direction = second.x >= first.x ? 1 : -1;
-          second.x += direction * Math.max(1, Math.ceil(overlapX));
-        } else {
-          const direction = second.y >= first.y ? 1 : -1;
-          second.y += direction * Math.max(1, Math.ceil(overlapY));
-        }
-      }
-    }
-    if (!moved) break;
-  }
+  const collisionFreePositions = placeWithoutOverlaps(
+    positions,
+    [...graph.semanticLinks, ...graph.magneticLinks],
+    resolvedGeometry.gap,
+  );
 
-  return positions
+  return collisionFreePositions
     .map(({ id, x, y }) => ({ id, x, y }))
     .sort((first, second) => first.id.localeCompare(second.id));
 }

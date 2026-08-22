@@ -136,6 +136,13 @@ const spatialInspectorClose = document.querySelector('#spatial-inspector-close')
 const spatialInspectorEdit = document.querySelector('#spatial-inspector-edit');
 const spatialInspectorConnect = document.querySelector('#spatial-inspector-connect');
 const spatialInspectorPin = document.querySelector('#spatial-inspector-pin');
+const spatialInspectorMore = document.querySelector('#spatial-inspector-more');
+const spatialInspectorMenu = document.querySelector('#spatial-inspector-menu');
+const spatialInspectorDelete = document.querySelector('#spatial-inspector-delete');
+const deleteThoughtDialog = document.querySelector('#delete-thought-dialog');
+const deleteThoughtMessage = document.querySelector('#delete-thought-message');
+const deleteThoughtCancel = document.querySelector('#delete-thought-cancel');
+const deleteThoughtConfirm = document.querySelector('#delete-thought-confirm');
 const connectionLayer = document.querySelector('#connection-layer');
 const form = document.querySelector('#thought-form');
 const input = document.querySelector('#thought-input');
@@ -240,6 +247,7 @@ let connectionEditor = null;
 let composerKnowledgeKind = KnowledgeKind.THOUGHT;
 let knowledgeKindEditor = null;
 let selectedThoughtId = null;
+let pendingThoughtDeletionId = null;
 let spatialView = null;
 let spatialViewPromise = null;
 let themeMode = normalizeThemeMode(document.documentElement.dataset.themeMode);
@@ -998,12 +1006,34 @@ function getThoughtById(thoughtId) {
   return thoughts.find((thought) => thought.id === thoughtId) || null;
 }
 
+function closeSpatialInspectorMenu() {
+  spatialInspectorMenu.hidden = true;
+  spatialInspectorMore.setAttribute('aria-expanded', 'false');
+}
+
+function openSpatialDeleteConfirmation() {
+  const thought = selectedThoughtId ? getThoughtById(selectedThoughtId) : null;
+  if (!thought || connectionEditor || magnetEditor) return;
+  if (blockEditsDuringAccountSync()) return;
+
+  pendingThoughtDeletionId = thought.id;
+  deleteThoughtMessage.textContent = (
+    `Delete “${thought.text.slice(0, 120)}”? `
+    + 'Its connections will also be removed.'
+  );
+  closeSpatialInspectorMenu();
+  deleteThoughtDialog.showModal();
+}
+
 function renderSpatialInspector() {
   const thought = selectedThoughtId ? getThoughtById(selectedThoughtId) : null;
   const visible = Boolean(thought && isSpatialSpace(activeSpaceId));
   spatialInspector.hidden = !visible;
   spatialFocusButton.disabled = !visible;
-  if (!visible) return;
+  if (!visible) {
+    closeSpatialInspectorMenu();
+    return;
+  }
 
   const kind = getThoughtKnowledgeKind(thought);
   renderKnowledgeKindTrigger(spatialInspectorKind, kind);
@@ -1011,9 +1041,12 @@ function renderSpatialInspector() {
   spatialInspectorText.textContent = thought.text;
   const pinned = getSpatialPlacement(thought, activeSpaceId)?.pinned === true;
   const editingConnections = Boolean(connectionEditor);
+  const actionsDisabled = editingConnections || Boolean(magnetEditor);
+  spatialInspectorMore.disabled = actionsDisabled;
   spatialInspectorConnect.disabled = editingConnections;
   spatialInspectorEdit.disabled = editingConnections;
   spatialInspectorPin.disabled = editingConnections;
+  if (actionsDisabled) closeSpatialInspectorMenu();
   spatialInspectorPin.textContent = pinned ? 'Unpin position' : 'Pin position';
   spatialInspectorPin.setAttribute('aria-pressed', String(pinned));
 }
@@ -1057,6 +1090,7 @@ function clearThoughtSelection() {
   selectedThoughtId = null;
   thoughts.forEach((thought) => thought.element.classList.remove('is-selected'));
   spatialView?.setSelectedThought(null);
+  closeSpatialInspectorMenu();
   renderSpatialInspector();
 }
 
@@ -2020,6 +2054,7 @@ function openConnectionEditor(source) {
   };
   showThought(source);
   renderConnectionUi();
+  renderSpatialInspector();
   announce('Choose connected thoughts, then select Done.');
 }
 
@@ -2027,6 +2062,7 @@ function closeConnectionEditor() {
   if (!connectionEditor) return;
   connectionEditor = null;
   renderConnectionUi();
+  renderSpatialInspector();
 }
 
 function toggleConnectionCandidate(thought) {
@@ -2787,15 +2823,22 @@ function animateBoardPositions(positions) {
 
 function stageBoardPositions(positions, records = null) {
   const recordById = new Map((records || []).map((record) => [record.id, record]));
+  if (records && recordById.size !== positions.length) {
+    throw new Error('The server returned an incomplete Board layout.');
+  }
+  if (records) {
+    positions.forEach((position) => {
+      const record = recordById.get(position.id);
+      if (!record || !getCanvasPlacement({ meta: record.meta }, activeSpaceId)) {
+        throw new Error('The server returned an invalid Board position.');
+      }
+    });
+  }
   const staged = positions.map((position) => {
     const thought = getThoughtById(position.id);
     if (!thought) return null;
 
     const record = recordById.get(position.id);
-    if (records && !record) {
-      throw new Error('The server returned an incomplete Board layout.');
-    }
-
     if (record) {
       thought.meta = cloneMeta(record.meta || {});
       thought.revision = record.revision;
@@ -2986,9 +3029,19 @@ async function undoBoardArrange() {
 
 function applyServerThoughts(records) {
   const layouts = new Map(thoughts.map((thought) => [thought.id, thought]));
-  const serverThoughts = records.slice(0, MAX_THOUGHTS).map((record) => (
-    apiThoughtToClientThought(record, layouts.get(record.id))
-  ));
+  const serverThoughts = records.slice(0, MAX_THOUGHTS).map((record) => {
+    const currentLayout = layouts.get(record.id);
+    const serverOwnsBoardPosition = (
+      isCanvasSpace(activeSpaceId)
+      && getCanvasPlacement({ meta: record.meta }, activeSpaceId)
+    );
+    return apiThoughtToClientThought(
+      record,
+      serverOwnsBoardPosition
+        ? { ...currentLayout, x: undefined, y: undefined }
+        : currentLayout,
+    );
+  });
   const visibleThoughts = auth
     ? applyOutboxOperations(serverThoughts, loadOutbox(auth.id))
     : serverThoughts;
@@ -4027,6 +4080,10 @@ function switchSpace(spaceId) {
 }
 
 function openSpacesOverview() {
+  if (boardArrangeInFlight) {
+    announce('Wait until the Board finishes arranging.');
+    return;
+  }
   if (magnetEditor) closeMagnetEditor({ restoreMotion: true });
   if (connectionEditor) closeConnectionEditor();
   stopDrag();
@@ -4306,8 +4363,34 @@ spatialInspectorConnect.addEventListener('click', () => {
   if (thought) openConnectionEditor(thought);
 });
 spatialInspectorPin.addEventListener('click', toggleSpatialPositionPin);
+spatialInspectorMore.addEventListener('click', () => {
+  if (spatialInspectorMore.disabled) return;
+  const willOpen = spatialInspectorMenu.hidden;
+  spatialInspectorMenu.hidden = !willOpen;
+  spatialInspectorMore.setAttribute('aria-expanded', String(willOpen));
+});
+spatialInspectorDelete.addEventListener('click', openSpatialDeleteConfirmation);
+deleteThoughtCancel.addEventListener('click', () => {
+  pendingThoughtDeletionId = null;
+  deleteThoughtDialog.close();
+});
+deleteThoughtConfirm.addEventListener('click', () => {
+  const thoughtId = pendingThoughtDeletionId;
+  pendingThoughtDeletionId = null;
+  deleteThoughtDialog.close();
+
+  const thought = thoughtId ? getThoughtById(thoughtId) : null;
+  if (thought) removeThought(thought);
+});
+deleteThoughtDialog.addEventListener('close', () => {
+  pendingThoughtDeletionId = null;
+});
 
 accountButton.addEventListener('click', () => {
+  if (boardArrangeInFlight) {
+    announce('Wait until the Board finishes arranging.');
+    return;
+  }
   if (magnetEditor) closeMagnetEditor({ restoreMotion: true });
   if (connectionEditor) closeConnectionEditor();
   if (auth) signOut();
