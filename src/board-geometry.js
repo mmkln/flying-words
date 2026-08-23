@@ -5,6 +5,10 @@ export const DEFAULT_BOARD_GEOMETRY = Object.freeze({
   gap: 24,
 });
 
+// Automatic layout stays intentionally airy. Manual Board placement may get
+// closer, while still keeping enough room to distinguish separate cards.
+export const MANUAL_BOARD_GAP = 8;
+
 function isPositiveInteger(value) {
   return Number.isInteger(value) && value > 0;
 }

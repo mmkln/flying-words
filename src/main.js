@@ -36,9 +36,11 @@ import {
 } from './canvas-placements.js';
 import {
   DEFAULT_BOARD_GEOMETRY,
+  MANUAL_BOARD_GAP,
   applyBoardGeometryCss,
   normalizeBoardGeometry,
 } from './board-geometry.js';
+import { resolveManualBoardPosition } from './board-manual-placement.js';
 import {
   clientPointToBoardWorld,
   getBoardSpawnGap,
@@ -3453,6 +3455,10 @@ function activateDrag(candidate) {
   dragCandidate = null;
   dragOffset = candidate.dragOffset;
 
+  if (isCanvasSpace(activeSpaceId)) {
+    measureThought(draggedThought);
+  }
+
   if (isFlowSpace(activeSpaceId)) {
     magnetPhysics.beginDrag(draggedThought.id);
   }
@@ -3478,8 +3484,28 @@ function moveDrag(event) {
 
   if (isCanvasSpace(activeSpaceId)) {
     const pointer = pointerToCanvasWorld(event);
-    draggedThought.x = pointer.x - dragOffset.x;
-    draggedThought.y = pointer.y - dragOffset.y;
+    const position = resolveManualBoardPosition({
+      candidate: {
+        x: pointer.x - dragOffset.x,
+        y: pointer.y - dragOffset.y,
+        width: draggedThought.width,
+        height: draggedThought.height,
+      },
+      obstacles: thoughts
+        .filter((thought) => (
+          thought !== draggedThought
+          && hasCanvasPlacement(thought, activeSpaceId)
+        ))
+        .map((thought) => ({
+          x: thought.x,
+          y: thought.y,
+          width: thought.width,
+          height: thought.height,
+        })),
+      gap: MANUAL_BOARD_GAP,
+    });
+    draggedThought.x = position.x;
+    draggedThought.y = position.y;
     draggedThought.rotation = 0;
     renderThought(draggedThought);
     connectionRenderer.update();
