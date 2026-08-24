@@ -149,6 +149,7 @@ const spatialInspectorClose = document.querySelector('#spatial-inspector-close')
 const spatialInspectorEdit = document.querySelector('#spatial-inspector-edit');
 const spatialInspectorConnect = document.querySelector('#spatial-inspector-connect');
 const spatialInspectorPin = document.querySelector('#spatial-inspector-pin');
+const spatialInspectorAddRelated = document.querySelector('#spatial-inspector-add-related');
 const spatialInspectorMore = document.querySelector('#spatial-inspector-more');
 const spatialInspectorMenu = document.querySelector('#spatial-inspector-menu');
 const spatialInspectorDelete = document.querySelector('#spatial-inspector-delete');
@@ -160,6 +161,9 @@ const connectionLayer = document.querySelector('#connection-layer');
 const form = document.querySelector('#thought-form');
 const input = document.querySelector('#thought-input');
 const composerWrap = document.querySelector('.composer-wrap');
+const composerRelation = document.querySelector('#composer-relation');
+const composerRelationLabel = document.querySelector('#composer-relation-label');
+const composerRelationClear = document.querySelector('#composer-relation-clear');
 const knowledgePickerTrigger = document.querySelector('#knowledge-picker-trigger');
 const knowledgePickerMenu = document.querySelector('#knowledge-picker-menu');
 const emptyState = document.querySelector('#empty-state');
@@ -263,6 +267,8 @@ let syncCompatibilityAnnounced = false;
 let magnetEditor = null;
 let connectionEditor = null;
 let connectionSearchActiveIndex = 0;
+let composerRelationTargetId = null;
+const spatialEntrySeeds = new Map();
 let composerKnowledgeKind = KnowledgeKind.THOUGHT;
 let knowledgeKindEditor = null;
 let selectedThoughtId = null;
@@ -502,6 +508,7 @@ function buildSpatialGraph() {
 
   const nodes = thoughts.map((thought) => {
     const connectionCount = connectionCounts.get(thought.id) || 0;
+    const seed = spatialEntrySeeds.get(thought.id);
     return {
       id: thought.id,
       text: thought.text,
@@ -509,6 +516,7 @@ function buildSpatialGraph() {
       radius: Math.min(13, 5 + Math.sqrt(connectionCount) * 1.6),
       connectionCount,
       pinnedPosition: getSpatialPlacement(thought, activeSpaceId),
+      ...(seed || {}),
     };
   });
   return { nodes, links, layoutMode: spatialLayoutMode };
@@ -651,7 +659,49 @@ const thoughtEditor = createThoughtEditor({
 function renderComposerKnowledgeKind(kind) {
   composerKnowledgeKind = kind;
   renderKnowledgeKindTrigger(knowledgePickerTrigger, kind);
-  input.placeholder = getKnowledgeKindPlaceholder(kind);
+  renderComposerRelation();
+}
+
+function getComposerRelationTarget() {
+  const target = composerRelationTargetId
+    ? getThoughtById(composerRelationTargetId)
+    : null;
+
+  if (!target) composerRelationTargetId = null;
+  return target;
+}
+
+function renderComposerPlaceholder() {
+  input.placeholder = getKnowledgeKindPlaceholder(composerKnowledgeKind);
+}
+
+function renderComposerRelation() {
+  const target = getComposerRelationTarget();
+  composerRelation.hidden = !target;
+
+  if (!target) {
+    composerRelationLabel.textContent = '';
+    renderComposerPlaceholder();
+    return;
+  }
+
+  composerRelationLabel.textContent = target.text;
+  input.placeholder = `Add a related ${getKnowledgeKindLabel(composerKnowledgeKind).toLowerCase()}…`;
+}
+
+function clearComposerRelation() {
+  composerRelationTargetId = null;
+  renderComposerRelation();
+}
+
+function beginRelatedThought() {
+  const anchor = selectedThoughtId ? getThoughtById(selectedThoughtId) : null;
+  if (!isSpatialSpace(activeSpaceId) || !anchor) return;
+  if (connectionEditor || magnetEditor || blockEditsDuringAccountSync()) return;
+
+  composerRelationTargetId = anchor.id;
+  renderComposerRelation();
+  input.focus({ preventScroll: true });
 }
 
 function resizeComposer() {
@@ -1146,6 +1196,7 @@ function renderSpatialInspector() {
   const editingConnections = Boolean(connectionEditor);
   const actionsDisabled = editingConnections || Boolean(magnetEditor);
   spatialInspectorMore.disabled = actionsDisabled;
+  spatialInspectorAddRelated.disabled = actionsDisabled;
   spatialInspectorConnect.disabled = editingConnections;
   spatialInspectorEdit.disabled = editingConnections;
   spatialInspectorPin.disabled = editingConnections;
@@ -2445,6 +2496,9 @@ function makeThought(
 function replaceThoughts(nextThoughts) {
   thoughtEditor.discard({ restoreFocus: false });
   selectedThoughtId = null;
+  composerRelationTargetId = null;
+  spatialEntrySeeds.clear();
+  renderComposerRelation();
   knowledgeKindPicker.close();
   magnetEditor = null;
   connectionEditor = null;
@@ -3417,7 +3471,7 @@ async function restoreAuthenticatedThoughts() {
   return ready;
 }
 
-async function addThought(rawText) {
+async function addThought(rawText, { relationTargetId = null } = {}) {
   const text = rawText.trim();
   if (!text) return false;
 
@@ -3450,10 +3504,33 @@ async function addThought(rawText) {
   const targetSpaceId = activeSpaceId;
   const addingToBoard = isCanvasSpace(targetSpaceId);
   const addingToSpatial = isSpatialSpace(targetSpaceId);
+  const relationTarget = addingToSpatial && relationTargetId
+    ? getThoughtById(relationTargetId)
+    : null;
+  if (
+    relationTarget
+    && getOutgoingConnections(relationTarget).length >= MAX_CONNECTIONS_PER_THOUGHT
+  ) {
+    announce(`A thought can have up to ${MAX_CONNECTIONS_PER_THOUGHT} connections.`);
+    return false;
+  }
+  const thoughtId = crypto.randomUUID();
+  const anchorPosition = relationTarget
+    ? spatialView?.getThoughtPosition(relationTarget.id)
+    : null;
+
+  if (anchorPosition) {
+    spatialEntrySeeds.set(thoughtId, {
+      x: anchorPosition.x + 72,
+      y: anchorPosition.y - 36,
+      z: anchorPosition.z + 48,
+    });
+  }
+
   const thought = makeThought(
     text,
     {
-      id: crypto.randomUUID(),
+      id: thoughtId,
       createdAt: Date.now(),
       meta,
     },
@@ -3468,16 +3545,29 @@ async function addThought(rawText) {
     thought.element.hidden = true;
   }
   thoughts.push(thought);
+  if (relationTarget) {
+    reconcileConnections(relationTarget, [
+      ...getOutgoingConnections(relationTarget).map(({ targetId }) => targetId),
+      thought.id,
+    ]);
+  }
   rebuildMagnetComponents();
   updateUi();
   saveThoughts();
-  if (addingToSpatial && activeSpaceId === targetSpaceId) refreshSpatialGraph();
+  if (addingToSpatial && activeSpaceId === targetSpaceId) {
+    refreshSpatialGraph();
+    spatialEntrySeeds.delete(thought.id);
+    if (relationTarget) selectThought(thought);
+  }
 
   if (isCloudMode()) {
     enqueueThoughtCreate(thought);
-    announce('Thought added.');
+    if (relationTarget) enqueueThoughtMetaPatch(relationTarget, ['connections']);
+    announce(relationTarget ? 'Related thought added.' : 'Thought added.');
   } else {
-    announce('Thought added locally. Sign in to save thoughts to your account.');
+    announce(relationTarget
+      ? 'Related thought added locally. Sign in to save thoughts to your account.'
+      : 'Thought added locally. Sign in to save thoughts to your account.');
   }
 
   return true;
@@ -3578,6 +3668,8 @@ function removeThought(thought) {
     return;
   }
   if (blockEditsDuringAccountSync()) return;
+  if (thought.id === composerRelationTargetId) clearComposerRelation();
+  spatialEntrySeeds.delete(thought.id);
   if (knowledgeKindEditor?.thoughtId === thought.id) knowledgeKindPicker.close();
   if (isPersistedMagnetParent(thought)) detachLocalMagnetChildren(thought.id);
   const changedConnectionSources = detachIncomingConnections(thoughts, thought.id);
@@ -4329,6 +4421,7 @@ function closeSpacesOverview({ restoreFocus = true } = {}) {
 function switchSpace(spaceId) {
   if (!isSpaceId(spaceId)) return;
 
+  clearComposerRelation();
   if (magnetEditor) closeMagnetEditor({ restoreMotion: true });
   if (connectionEditor) closeConnectionEditor();
   stopDrag();
@@ -4639,11 +4732,13 @@ form.addEventListener('submit', async (event) => {
 
   const submittedText = input.value;
   if (!submittedText.trim()) return;
+  const relationTargetId = composerRelationTargetId;
 
   handlingThoughtSubmit = true;
   input.value = '';
   try {
-    const added = await addThought(submittedText);
+    const added = await addThought(submittedText, { relationTargetId });
+    if (added) clearComposerRelation();
     if (!added && !input.value) input.value = submittedText;
   } finally {
     handlingThoughtSubmit = false;
@@ -4678,6 +4773,7 @@ spatialInspectorConnect.addEventListener('click', () => {
   const thought = selectedThoughtId ? getThoughtById(selectedThoughtId) : null;
   if (thought) openConnectionEditor(thought);
 });
+spatialInspectorAddRelated.addEventListener('click', beginRelatedThought);
 spatialInspectorPin.addEventListener('click', toggleSpatialPositionPin);
 spatialInspectorMore.addEventListener('click', () => {
   if (spatialInspectorMore.disabled) return;
@@ -4792,6 +4888,7 @@ connectionSearchInput.addEventListener('keydown', (event) => {
   }
 });
 historyClose.addEventListener('click', () => historyDialog.close());
+composerRelationClear.addEventListener('click', clearComposerRelation);
 historySearch.addEventListener('input', renderHistory);
 historyDialog.addEventListener('click', (event) => {
   if (event.target === historyDialog) historyDialog.close();

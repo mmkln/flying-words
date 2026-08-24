@@ -207,6 +207,12 @@
               <span class="spatial-inspector-kind" id="spatial-inspector-kind" aria-hidden="true"></span>
               <span class="spatial-inspector-kind-label" id="spatial-inspector-kind-label"></span>
               <button
+                id="spatial-inspector-add-related"
+                type="button"
+                aria-label="Add related thought"
+                title="Add related thought"
+              >+</button>
+              <button
                 id="spatial-inspector-more"
                 type="button"
                 aria-label="More actions"
@@ -260,6 +266,16 @@
       </dialog>
 
       <div class="composer-wrap">
+        <div class="composer-relation" id="composer-relation" aria-live="polite" hidden>
+          <span>Related to:</span>
+          <span id="composer-relation-label"></span>
+          <button
+            id="composer-relation-clear"
+            type="button"
+            aria-label="Remove related thought"
+            title="Remove related thought"
+          >×</button>
+        </div>
         <form class="composer" id="thought-form">
           <div class="knowledge-picker" id="knowledge-picker">
             <button

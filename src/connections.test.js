@@ -36,6 +36,37 @@ test('stores renderer-independent target ids in source metadata', () => {
   assert.equal('target' in connection, false);
 });
 
+test('keeps unrelated knowledge metadata when adding a connection', () => {
+  const source = {
+    id: 'source',
+    meta: {
+      knowledge: { kind: 'observation' },
+    },
+  };
+
+  reconcileConnections(source, ['target']);
+
+  assert.deepEqual(source.meta.knowledge, { kind: 'observation' });
+  assert.equal(source.meta.connections.outgoing[0].targetId, 'target');
+});
+
+test('can make an existing thought point to a newly created thought', () => {
+  const existing = thought('existing');
+  const created = thought('created');
+
+  reconcileConnections(existing, [created.id]);
+
+  assert.deepEqual(flattenConnections([existing, created]), [{
+    id: getOutgoingConnections(existing)[0].id,
+    targetId: created.id,
+    kind: ConnectionKind.RELATED,
+    spacing: ConnectionSpacing.NORMAL,
+    label: '',
+    createdAt: getOutgoingConnections(existing)[0].createdAt,
+    sourceId: existing.id,
+  }]);
+});
+
 test('rejects self-links and duplicate target selections', () => {
   const source = thought('source');
   const result = reconcileConnections(source, ['source', 'target', 'target']);

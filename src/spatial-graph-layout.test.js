@@ -38,6 +38,22 @@ test('keeps existing node positions when the graph is refreshed', () => {
   layout.dispose();
 });
 
+test('uses a transient supplied position without pinning a Spatial node', () => {
+  const layout = createSpatialGraphLayout();
+  layout.setGraph({
+    nodes: [{ id: 'related', radius: 8, x: 72, y: -36, z: 48 }],
+    links: [],
+  });
+  layout.stop();
+
+  const node = layout.getNode('related');
+  assert.equal(node.x, 72);
+  assert.equal(node.y, -36);
+  assert.equal(node.z, 48);
+  assert.equal(node.pinned, false);
+  layout.dispose();
+});
+
 test('filters invalid links and resolves valid source and target nodes', () => {
   const layout = createSpatialGraphLayout();
   layout.setGraph({
