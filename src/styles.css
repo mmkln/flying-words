@@ -124,6 +124,11 @@ button { -webkit-tap-highlight-color: transparent; }
   touch-action: none;
 }
 
+.spatial-world:focus-visible {
+  outline: 2px solid rgba(112, 85, 197, .7);
+  outline-offset: -3px;
+}
+
 .spatial-canvas {
   position: absolute;
   z-index: 0;

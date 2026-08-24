@@ -13,8 +13,23 @@ const MAX_VISIBLE_CONNECTIONS = 8000;
 const NODE_HIT_PADDING = 8;
 const DRAG_THRESHOLD = 5;
 const CAMERA_TWEEN_DURATION = 280;
+const MAX_KEYBOARD_PAN_DELTA_SECONDS = 0.05;
+const KEYBOARD_PAN_SPEED_FACTOR = 1.15;
+const MIN_KEYBOARD_PAN_SPEED = 90;
+const MAX_KEYBOARD_PAN_SPEED = 1600;
 const CONNECTION_SOURCE_COLOR = 0x7055c5;
 const CONNECTION_TARGET_COLOR = 0x248af0;
+
+const KEYBOARD_PAN_CODES = new Set([
+  'KeyW',
+  'KeyA',
+  'KeyS',
+  'KeyD',
+  'ArrowUp',
+  'ArrowLeft',
+  'ArrowDown',
+  'ArrowRight',
+]);
 
 const KIND_COLORS = Object.freeze({
   thought: 0x7055c5,
@@ -209,6 +224,9 @@ export function createSpatialView({
   const dragPoint = new THREE.Vector3();
   const dragOffset = new THREE.Vector3();
   const cameraDirection = new THREE.Vector3();
+  const cameraRight = new THREE.Vector3();
+  const cameraUp = new THREE.Vector3();
+  const keyboardOffset = new THREE.Vector3();
 
   let nodes = [];
   let links = [];
@@ -223,12 +241,16 @@ export function createSpatialView({
   let renderFrame = null;
   let drag = null;
   let cameraTween = null;
+  let keyboardPanLastTimestamp = null;
+  let keyboardPanMoved = false;
   let activeLayoutMode = normalizeSpatialLayoutMode(layoutMode);
   let layoutCache = loadLayoutState(`${layoutStorageKey}${activeLayoutMode}`);
   let initialFitPending = !storedCamera;
   let fitAfterLayout = false;
   let nodeInstancesDirty = true;
   let edgeGeometryDirty = true;
+
+  const pressedKeyboardPanCodes = new Set();
 
   function saveCamera() {
     try {
@@ -583,11 +605,127 @@ export function createSpatialView({
     return false;
   }
 
+  function clearKeyboardPan({ persist = true } = {}) {
+    const shouldPersist = persist && keyboardPanMoved;
+    pressedKeyboardPanCodes.clear();
+    keyboardPanLastTimestamp = null;
+    keyboardPanMoved = false;
+    if (shouldPersist) saveCamera();
+  }
+
+  function keyboardPanAxis() {
+    const horizontal = (
+      Number(
+        pressedKeyboardPanCodes.has('KeyD')
+        || pressedKeyboardPanCodes.has('ArrowRight'),
+      )
+      - Number(
+        pressedKeyboardPanCodes.has('KeyA')
+        || pressedKeyboardPanCodes.has('ArrowLeft'),
+      )
+    );
+    const vertical = (
+      Number(
+        pressedKeyboardPanCodes.has('KeyW')
+        || pressedKeyboardPanCodes.has('ArrowUp'),
+      )
+      - Number(
+        pressedKeyboardPanCodes.has('KeyS')
+        || pressedKeyboardPanCodes.has('ArrowDown'),
+      )
+    );
+
+    return { horizontal, vertical };
+  }
+
+  function updateKeyboardPan(timestamp) {
+    if (
+      !active
+      || drag
+      || cameraTween
+      || !pressedKeyboardPanCodes.size
+    ) {
+      keyboardPanLastTimestamp = timestamp;
+      return false;
+    }
+
+    const previousTimestamp = keyboardPanLastTimestamp ?? timestamp;
+    keyboardPanLastTimestamp = timestamp;
+    const deltaSeconds = Math.min(
+      MAX_KEYBOARD_PAN_DELTA_SECONDS,
+      Math.max(0, (timestamp - previousTimestamp) / 1000),
+    );
+    if (!deltaSeconds) return true;
+
+    const { horizontal, vertical } = keyboardPanAxis();
+    if (!horizontal && !vertical) return false;
+
+    // Keep navigation in the visible camera plane, independently of its rotation.
+    camera.getWorldDirection(cameraDirection).normalize();
+    cameraRight.copy(cameraDirection).cross(camera.up).normalize();
+    cameraUp.copy(cameraRight).cross(cameraDirection).normalize();
+    keyboardOffset
+      .copy(cameraRight)
+      .multiplyScalar(horizontal)
+      .addScaledVector(cameraUp, vertical);
+
+    if (keyboardOffset.lengthSq() < 0.0001) return false;
+    keyboardOffset.normalize();
+
+    const speed = THREE.MathUtils.clamp(
+      camera.position.distanceTo(controls.target) * KEYBOARD_PAN_SPEED_FACTOR,
+      MIN_KEYBOARD_PAN_SPEED,
+      MAX_KEYBOARD_PAN_SPEED,
+    );
+    keyboardOffset.multiplyScalar(speed * deltaSeconds);
+
+    // Move position and target together so the camera never rotates or zooms.
+    camera.position.add(keyboardOffset);
+    controls.target.add(keyboardOffset);
+    keyboardPanMoved = true;
+    return true;
+  }
+
+  function focusSpatialViewport() {
+    container.focus({ preventScroll: true });
+  }
+
+  function handleKeyboardPanKeyDown(event) {
+    if (
+      !active
+      || drag
+      || connectionSelection
+      || event.target !== container
+      || !KEYBOARD_PAN_CODES.has(event.code)
+    ) return;
+
+    event.preventDefault();
+    event.stopPropagation();
+
+    if (cameraTween) {
+      cameraTween = null;
+      controls.enabled = active && !drag;
+    }
+
+    pressedKeyboardPanCodes.add(event.code);
+    keyboardPanLastTimestamp = null;
+    requestRender();
+  }
+
+  function handleKeyboardPanKeyUp(event) {
+    if (!pressedKeyboardPanCodes.delete(event.code)) return;
+    if (!pressedKeyboardPanCodes.size && keyboardPanMoved) {
+      keyboardPanMoved = false;
+      saveCamera();
+    }
+  }
+
   function renderNow(timestamp) {
     renderFrame = null;
     if (!active || document.hidden) return;
 
     const tweening = updateCameraTween(timestamp);
+    const keyboardPanning = updateKeyboardPan(timestamp);
     const controlsChanged = controls.update();
     camera.updateMatrixWorld();
     updateNodeInstances();
@@ -595,7 +733,7 @@ export function createSpatialView({
     updateLabels();
     renderer.render(scene, camera);
 
-    if (tweening || controlsChanged) requestRender();
+    if (tweening || keyboardPanning || controlsChanged) requestRender();
   }
 
   function setGraph({
@@ -769,6 +907,7 @@ export function createSpatialView({
   }
 
   function deactivate() {
+    clearKeyboardPan();
     active = false;
     controls.enabled = false;
     layout.stop();
@@ -913,7 +1052,11 @@ export function createSpatialView({
   }
 
   function handleVisibilityChange() {
-    if (!document.hidden) requestRender();
+    if (document.hidden) {
+      clearKeyboardPan();
+      return;
+    }
+    requestRender();
   }
 
   function handleContextLost(event) {
@@ -923,6 +1066,7 @@ export function createSpatialView({
 
   function dispose() {
     deactivate();
+    clearKeyboardPan({ persist: false });
     layout.dispose();
     controls.dispose();
     nodeGeometry.dispose();
@@ -933,6 +1077,7 @@ export function createSpatialView({
     activeEdgeGeometry.dispose();
     activeEdgeMaterial.dispose();
     renderer.dispose();
+    renderer.domElement.removeEventListener('pointerdown', focusSpatialViewport, true);
     renderer.domElement.removeEventListener('pointerdown', handlePointerDown, true);
     renderer.domElement.removeEventListener('pointermove', handlePointerMove, true);
     renderer.domElement.removeEventListener('pointerup', finishDrag, true);
@@ -941,12 +1086,16 @@ export function createSpatialView({
     renderer.domElement.removeEventListener('dblclick', handleDoubleClick, true);
     renderer.domElement.removeEventListener('webglcontextlost', handleContextLost);
     document.removeEventListener('visibilitychange', handleVisibilityChange);
+    container.removeEventListener('keydown', handleKeyboardPanKeyDown);
+    window.removeEventListener('keyup', handleKeyboardPanKeyUp);
+    window.removeEventListener('blur', clearKeyboardPan);
     renderer.domElement.remove();
     labelLayer.remove();
   }
 
   controls.addEventListener('change', requestRender);
   controls.addEventListener('end', saveCamera);
+  renderer.domElement.addEventListener('pointerdown', focusSpatialViewport, true);
   renderer.domElement.addEventListener('pointerdown', handlePointerDown, true);
   renderer.domElement.addEventListener('pointermove', handlePointerMove, true);
   renderer.domElement.addEventListener('pointerup', finishDrag, true);
@@ -955,6 +1104,9 @@ export function createSpatialView({
   renderer.domElement.addEventListener('dblclick', handleDoubleClick, true);
   renderer.domElement.addEventListener('webglcontextlost', handleContextLost);
   document.addEventListener('visibilitychange', handleVisibilityChange);
+  container.addEventListener('keydown', handleKeyboardPanKeyDown);
+  window.addEventListener('keyup', handleKeyboardPanKeyUp);
+  window.addEventListener('blur', clearKeyboardPan);
 
   return {
     activate,
