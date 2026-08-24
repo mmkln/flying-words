@@ -38,8 +38,8 @@
           : '#f9f8fe';
       })();
     </script>
-    <script type="module" crossorigin src="/flying-words/assets/index-BfyK2lYP.js"></script>
-    <link rel="stylesheet" crossorigin href="/flying-words/assets/index-Bx8JVS2u.css">
+    <script type="module" crossorigin src="/flying-words/assets/index-ecPUSOQi.js"></script>
+    <link rel="stylesheet" crossorigin href="/flying-words/assets/index-BEfFdLsp.css">
   </head>
   <body>
     <main class="app-shell">
@@ -88,9 +88,48 @@
 
       <div class="selection-toolbar" id="selection-toolbar" role="toolbar" aria-label="Edit card relationships" hidden>
         <button class="selection-toolbar-button" id="selection-cancel" type="button">Cancel</button>
+        <button
+          class="selection-toolbar-button selection-search"
+          id="connection-search-trigger"
+          type="button"
+          aria-controls="connection-search-panel"
+          aria-expanded="false"
+          hidden
+        >Search</button>
         <span class="selection-toolbar-count" id="selection-count">0 selected</span>
         <button class="selection-toolbar-button selection-toolbar-done" id="selection-done" type="button">Done</button>
       </div>
+
+      <section
+        class="connection-search-panel"
+        id="connection-search-panel"
+        role="search"
+        aria-label="Search thoughts to connect"
+        hidden
+      >
+        <header class="connection-search-header">
+          <span>Connect to</span>
+          <button
+            id="connection-search-close"
+            type="button"
+            aria-label="Close connection search"
+          >×</button>
+        </header>
+        <label class="connection-search-field">
+          <span class="sr-only">Search thoughts</span>
+          <input
+            id="connection-search-input"
+            type="search"
+            autocomplete="off"
+            placeholder="Search thoughts"
+          />
+        </label>
+        <div
+          class="connection-search-results"
+          id="connection-search-results"
+          role="list"
+        ></div>
+      </section>
 
       <section class="thought-space" id="canvas" aria-label="Thought space">
         <div class="canvas-world" id="canvas-world">
