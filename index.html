@@ -38,8 +38,8 @@
           : '#f9f8fe';
       })();
     </script>
-    <script type="module" crossorigin src="/flying-words/assets/index-DMIg1o9T.js"></script>
-    <link rel="stylesheet" crossorigin href="/flying-words/assets/index-DUv_4Vdp.css">
+    <script type="module" crossorigin src="/flying-words/assets/index-DW7C_E4z.js"></script>
+    <link rel="stylesheet" crossorigin href="/flying-words/assets/index-B2H_sokn.css">
   </head>
   <body>
     <main class="app-shell">
@@ -133,6 +133,29 @@
             <div class="spatial-toolbar-actions">
               <button id="spatial-fit" type="button">Fit all</button>
               <button id="spatial-focus" type="button" disabled>Focus</button>
+              <div class="spatial-layout-picker" id="spatial-layout-picker">
+                <button
+                  id="spatial-layout"
+                  type="button"
+                  aria-label="Choose Spatial layout"
+                  aria-haspopup="menu"
+                  aria-expanded="false"
+                >Layout</button>
+                <div class="spatial-layout-menu" id="spatial-layout-menu" role="menu" hidden>
+                  <button
+                    type="button"
+                    role="menuitemradio"
+                    aria-checked="true"
+                    data-spatial-layout="constellations"
+                  >Constellations</button>
+                  <button
+                    type="button"
+                    role="menuitemradio"
+                    aria-checked="false"
+                    data-spatial-layout="knowledge-layers"
+                  >Knowledge layers</button>
+                </div>
+              </div>
               <button id="spatial-reset" type="button">Reset</button>
             </div>
             <p>Drag a node · Drag the background to rotate · Scroll to zoom</p>
