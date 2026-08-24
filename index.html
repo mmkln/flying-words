@@ -132,6 +132,29 @@
             <div class="spatial-toolbar-actions">
               <button id="spatial-fit" type="button">Fit all</button>
               <button id="spatial-focus" type="button" disabled>Focus</button>
+              <div class="spatial-layout-picker" id="spatial-layout-picker">
+                <button
+                  id="spatial-layout"
+                  type="button"
+                  aria-label="Choose Spatial layout"
+                  aria-haspopup="menu"
+                  aria-expanded="false"
+                >Layout</button>
+                <div class="spatial-layout-menu" id="spatial-layout-menu" role="menu" hidden>
+                  <button
+                    type="button"
+                    role="menuitemradio"
+                    aria-checked="true"
+                    data-spatial-layout="constellations"
+                  >Constellations</button>
+                  <button
+                    type="button"
+                    role="menuitemradio"
+                    aria-checked="false"
+                    data-spatial-layout="knowledge-layers"
+                  >Knowledge layers</button>
+                </div>
+              </div>
               <button id="spatial-reset" type="button">Reset</button>
             </div>
             <p>Drag a node · Drag the background to rotate · Scroll to zoom</p>

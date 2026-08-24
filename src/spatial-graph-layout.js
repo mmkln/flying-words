@@ -1,5 +1,4 @@
 import {
-  forceCenter,
   forceCollide,
   forceLink,
   forceManyBody,
@@ -9,11 +8,19 @@ import {
   forceZ,
 } from 'd3-force-3d';
 
+import {
+  buildSpatialClusterPlan,
+  spatialClusterPlanKey,
+} from './spatial-clusters.js';
+import { normalizeSpatialLayoutMode } from './spatial-layout-mode.js';
+
 const LINK_DISTANCE = Object.freeze({
   tight: 72,
   normal: 118,
   loose: 190,
 });
+
+const CROSS_CLUSTER_DISTANCE = 460;
 
 function finitePosition(value) {
   return Boolean(
@@ -53,21 +60,26 @@ export function createSpatialGraphLayout({
 } = {}) {
   let nodes = [];
   let links = [];
+  let clusterPlan = null;
+  let clusterPlanKey = null;
   let disposed = false;
 
   const linkForce = forceLink([])
     .id((node) => node.id)
-    .distance((link) => LINK_DISTANCE[link.spacing] || LINK_DISTANCE.normal)
-    .strength(0.56);
+    .distance((link) => (
+      link.internal
+        ? LINK_DISTANCE[link.spacing] || LINK_DISTANCE.normal
+        : CROSS_CLUSTER_DISTANCE
+    ))
+    .strength((link) => (link.internal ? 0.56 : 0.1));
 
   const simulation = forceSimulation([], 3)
     .force('links', linkForce)
     .force('charge', forceManyBody().strength(-58).distanceMax(620))
     .force('collision', forceCollide().radius((node) => node.radius + 8).strength(0.86))
-    .force('center', forceCenter(0, 0, 0).strength(0.12))
-    .force('x', forceX(0).strength(0.018))
-    .force('y', forceY(0).strength(0.018))
-    .force('z', forceZ(0).strength(0.018))
+    .force('cluster-x', forceX((node) => node.clusterAnchor.x).strength(0.026))
+    .force('cluster-y', forceY((node) => node.clusterAnchor.y).strength(0.026))
+    .force('cluster-z', forceZ((node) => node.clusterAnchor.z).strength(0.026))
     .alphaDecay(0.035)
     .velocityDecay(0.42)
     .on('tick', () => onTick(nodes, links))
@@ -77,9 +89,17 @@ export function createSpatialGraphLayout({
     if (disposed) return;
     const previousById = new Map(nodes.map((node) => [node.id, node]));
     const sourceNodes = Array.isArray(graph.nodes) ? graph.nodes : [];
+    const sourceLinks = Array.isArray(graph.links) ? graph.links : [];
+    const layoutMode = normalizeSpatialLayoutMode(graph.layoutMode);
+    const nextClusterPlanKey = spatialClusterPlanKey(sourceNodes, sourceLinks, layoutMode);
+    if (nextClusterPlanKey !== clusterPlanKey) {
+      clusterPlan = buildSpatialClusterPlan(sourceNodes, sourceLinks, layoutMode);
+      clusterPlanKey = nextClusterPlanKey;
+    }
 
     nodes = sourceNodes.map((source, index) => {
       const previous = previousById.get(source.id);
+      const clusterLayout = clusterPlan.nodeLayoutById.get(source.id);
       const pinnedPosition = finitePosition(source.pinnedPosition)
         ? source.pinnedPosition
         : null;
@@ -91,6 +111,8 @@ export function createSpatialGraphLayout({
 
       return {
         ...source,
+        clusterId: clusterLayout?.clusterId || 'cluster:unlinked',
+        clusterAnchor: clusterLayout?.clusterAnchor || { x: 0, y: 0, z: 0 },
         x: initial.x,
         y: initial.y,
         z: initial.z,
@@ -105,7 +127,8 @@ export function createSpatialGraphLayout({
     });
 
     const knownIds = new Set(nodes.map((node) => node.id));
-    links = (Array.isArray(graph.links) ? graph.links : [])
+    const nodeById = new Map(nodes.map((node) => [node.id, node]));
+    links = sourceLinks
       .filter((link) => (
         knownIds.has(link.sourceId)
         && knownIds.has(link.targetId)
@@ -113,6 +136,10 @@ export function createSpatialGraphLayout({
       ))
       .map((link) => ({
         ...link,
+        internal: (
+          nodeById.get(link.sourceId).clusterId
+          === nodeById.get(link.targetId).clusterId
+        ),
         source: link.sourceId,
         target: link.targetId,
       }));

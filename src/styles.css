@@ -239,6 +239,40 @@ button { -webkit-tap-highlight-color: transparent; }
 .spatial-toolbar button:disabled { opacity: .38; cursor: default; }
 .spatial-toolbar button:focus-visible { outline: 2px solid rgba(112, 85, 197, .3); }
 
+.spatial-layout-picker { position: relative; }
+
+.spatial-layout-menu {
+  position: absolute;
+  z-index: 5;
+  top: calc(100% + 8px);
+  left: 50%;
+  display: grid;
+  width: max-content;
+  min-width: 158px;
+  padding: 4px;
+  border: 1px solid rgba(86, 67, 143, .16);
+  border-radius: 12px;
+  background: rgba(255, 255, 255, .92);
+  box-shadow: 0 12px 30px rgba(61, 43, 111, .14);
+  backdrop-filter: blur(16px);
+  transform: translateX(-50%);
+}
+
+.spatial-layout-menu[hidden] { display: none; }
+
+.spatial-layout-menu button {
+  width: 100%;
+  padding: 7px 9px;
+  color: #625c7d;
+  text-align: left;
+}
+
+.spatial-layout-menu button[aria-checked="true"] {
+  color: #5f43bd;
+  font-weight: 650;
+  background: rgba(112, 85, 197, .1);
+}
+
 .spatial-toolbar p {
   margin: 0;
   color: rgba(78, 70, 103, .66);
@@ -1573,6 +1607,7 @@ kbd { padding: 1px 4px; border: 1px solid rgba(114,104,143,.25); border-bottom-w
 
 .canvas-controls,
 .spatial-toolbar-actions,
+.spatial-layout-menu,
 .spatial-inspector {
   border-color: var(--border-subtle);
   color: var(--text-primary);
@@ -1585,6 +1620,11 @@ kbd { padding: 1px 4px; border: 1px solid rgba(114,104,143,.25); border-bottom-w
 .spatial-toolbar button,
 .spatial-inspector footer button {
   color: var(--text-secondary);
+}
+
+.spatial-layout-menu button[aria-checked="true"] {
+  color: var(--accent);
+  background: var(--surface-tint);
 }
 
 .spatial-inspector footer button {

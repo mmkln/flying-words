@@ -2,6 +2,10 @@ import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 
 import { createSpatialGraphLayout } from './spatial-graph-layout.js';
+import {
+  SpatialLayoutMode,
+  normalizeSpatialLayoutMode,
+} from './spatial-layout-mode.js';
 
 const MAX_SPATIAL_THOUGHTS = 1000;
 const MAX_VISIBLE_LABELS = 60;
@@ -87,6 +91,7 @@ export function createSpatialView({
   theme = 'light',
   storageKey,
   layoutStorageKey,
+  layoutMode = SpatialLayoutMode.CONSTELLATIONS,
   onThoughtSelect = () => {},
   onConnectionTargetToggle = () => {},
   onThoughtActivate = () => {},
@@ -218,8 +223,10 @@ export function createSpatialView({
   let renderFrame = null;
   let drag = null;
   let cameraTween = null;
-  let layoutCache = loadLayoutState(layoutStorageKey);
+  let activeLayoutMode = normalizeSpatialLayoutMode(layoutMode);
+  let layoutCache = loadLayoutState(`${layoutStorageKey}${activeLayoutMode}`);
   let initialFitPending = !storedCamera;
+  let fitAfterLayout = false;
   let nodeInstancesDirty = true;
   let edgeGeometryDirty = true;
 
@@ -252,7 +259,7 @@ export function createSpatialView({
     );
 
     try {
-      localStorage.setItem(layoutStorageKey, JSON.stringify({
+      localStorage.setItem(`${layoutStorageKey}${activeLayoutMode}`, JSON.stringify({
         version: 1,
         positions: layoutCache,
       }));
@@ -304,8 +311,9 @@ export function createSpatialView({
     },
     onStable(nextNodes) {
       saveLayout(nextNodes);
-      if (initialFitPending && nextNodes.length) {
+      if ((initialFitPending || fitAfterLayout) && nextNodes.length) {
         initialFitPending = false;
+        fitAfterLayout = false;
         fitAll();
       }
       requestRender();
@@ -590,7 +598,18 @@ export function createSpatialView({
     if (tweening || controlsChanged) requestRender();
   }
 
-  function setGraph({ nodes: sourceNodes = [], links: sourceLinks = [] }) {
+  function setGraph({
+    nodes: sourceNodes = [],
+    links: sourceLinks = [],
+    layoutMode: nextLayoutMode = activeLayoutMode,
+    fitAfterLayout: shouldFitAfterLayout = false,
+  }) {
+    const normalizedLayoutMode = normalizeSpatialLayoutMode(nextLayoutMode);
+    if (normalizedLayoutMode !== activeLayoutMode) {
+      activeLayoutMode = normalizedLayoutMode;
+      layoutCache = loadLayoutState(`${layoutStorageKey}${activeLayoutMode}`);
+    }
+    fitAfterLayout ||= shouldFitAfterLayout;
     const preparedNodes = sourceNodes
       .slice(0, MAX_SPATIAL_THOUGHTS)
       .map((node) => {
@@ -614,7 +633,11 @@ export function createSpatialView({
     nodeMesh.count = preparedNodes.length;
     hitMesh.count = preparedNodes.length;
 
-    layout.setGraph({ nodes: preparedNodes, links: preparedLinks });
+    layout.setGraph({
+      nodes: preparedNodes,
+      links: preparedLinks,
+      layoutMode: activeLayoutMode,
+    });
     nodes = layout.getNodes();
     links = layout.getLinks();
     nodesById = new Map(nodes.map((node) => [node.id, node]));

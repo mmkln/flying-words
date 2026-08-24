@@ -5,6 +5,7 @@ import {
   createSpatialGraphLayout,
   seedSpatialPosition,
 } from './spatial-graph-layout.js';
+import { SpatialLayoutMode } from './spatial-layout-mode.js';
 
 test('creates stable deterministic seed positions', () => {
   const first = seedSpatialPosition('thought-a', 3);
@@ -52,6 +53,56 @@ test('filters invalid links and resolves valid source and target nodes', () => {
   assert.equal(layout.getLinks().length, 1);
   assert.equal(layout.getLinks()[0].source.id, 'a');
   assert.equal(layout.getLinks()[0].target.id, 'b');
+  layout.dispose();
+});
+
+test('adds cluster anchors to Spatial nodes without changing semantic links', () => {
+  const layout = createSpatialGraphLayout();
+  layout.setGraph({
+    nodes: [
+      { id: 'a', radius: 8, kind: 'thought' },
+      { id: 'b', radius: 8, kind: 'thought' },
+      { id: 'c', radius: 8, kind: 'thought' },
+      { id: 'd', radius: 8, kind: 'thought' },
+      { id: 'e', radius: 8, kind: 'thought' },
+      { id: 'f', radius: 8, kind: 'thought' },
+    ],
+    links: [
+      { sourceId: 'a', targetId: 'b' },
+      { sourceId: 'b', targetId: 'c' },
+      { sourceId: 'c', targetId: 'a' },
+      { sourceId: 'd', targetId: 'e' },
+      { sourceId: 'e', targetId: 'f' },
+      { sourceId: 'f', targetId: 'd' },
+      { sourceId: 'c', targetId: 'd' },
+    ],
+  });
+  layout.stop();
+
+  assert.equal(layout.getLinks().length, 7);
+  assert.equal(layout.getNode('a').clusterId, 'cluster:a');
+  assert.equal(layout.getNode('d').clusterId, 'cluster:d');
+  assert.notDeepEqual(
+    layout.getNode('a').clusterAnchor,
+    layout.getNode('d').clusterAnchor,
+  );
+  layout.dispose();
+});
+
+test('uses kind depth as a visual-only anchor in the Knowledge layers mode', () => {
+  const layout = createSpatialGraphLayout();
+  layout.setGraph({
+    layoutMode: SpatialLayoutMode.KNOWLEDGE_LAYERS,
+    nodes: [
+      { id: 'question', radius: 8, kind: 'question' },
+      { id: 'hypothesis', radius: 8, kind: 'hypothesis' },
+    ],
+    links: [{ sourceId: 'question', targetId: 'hypothesis' }],
+  });
+  layout.stop();
+
+  assert.equal(layout.getNode('question').clusterAnchor.z, -360);
+  assert.equal(layout.getNode('hypothesis').clusterAnchor.z, 120);
   layout.dispose();
 });
 

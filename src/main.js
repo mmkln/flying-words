@@ -81,13 +81,18 @@ import {
   normalizeThemeMode,
   resolveTheme,
 } from './theme.js';
+import {
+  SpatialLayoutMode,
+  normalizeSpatialLayoutMode,
+} from './spatial-layout-mode.js';
 
 const STORAGE_KEY = 'flying-thoughts:v1';
 const AUTH_STORAGE_KEY = 'flying-thoughts:auth:v1';
 const ACTIVE_SPACE_STORAGE_KEY = 'flying-thoughts:active-space:v1';
 const CANVAS_CAMERA_STORAGE_PREFIX = 'flying-thoughts:canvas-camera:v1:';
 const SPATIAL_CAMERA_STORAGE_PREFIX = 'flying-thoughts:spatial-camera:v3:';
-const SPATIAL_LAYOUT_STORAGE_PREFIX = 'flying-thoughts:spatial-layout:v2:';
+const SPATIAL_LAYOUT_STORAGE_PREFIX = 'flying-thoughts:spatial-layout:v3:';
+const SPATIAL_LAYOUT_MODE_STORAGE_KEY = 'flying-thoughts:spatial-layout-mode:v1';
 const PENDING_SYNC_STORAGE_PREFIX = 'flying-thoughts:pending-sync:v1:';
 const ACCOUNT_STORAGE_PREFIX = 'flying-thoughts:account:v1:';
 const LEGACY_OUTBOX_STORAGE_PREFIX = 'flying-thoughts:outbox:v1:';
@@ -131,6 +136,9 @@ const boardArrangeUndo = document.querySelector('#board-arrange-undo');
 const spatialWorld = document.querySelector('#spatial-world');
 const spatialFitButton = document.querySelector('#spatial-fit');
 const spatialFocusButton = document.querySelector('#spatial-focus');
+const spatialLayoutButton = document.querySelector('#spatial-layout');
+const spatialLayoutMenu = document.querySelector('#spatial-layout-menu');
+const spatialLayoutOptions = [...spatialLayoutMenu.querySelectorAll('[data-spatial-layout]')];
 const spatialResetButton = document.querySelector('#spatial-reset');
 const spatialInspector = document.querySelector('#spatial-inspector');
 const spatialInspectorKind = document.querySelector('#spatial-inspector-kind');
@@ -256,6 +264,7 @@ let spatialView = null;
 let spatialViewPromise = null;
 let themeMode = normalizeThemeMode(document.documentElement.dataset.themeMode);
 let resolvedTheme = resolveTheme(themeMode, systemThemeQuery.matches);
+let spatialLayoutMode = loadSpatialLayoutMode();
 let viewMode = 'canvas';
 let activeSpaceId = localStorage.getItem(ACTIVE_SPACE_STORAGE_KEY);
 if (!isSpaceId(activeSpaceId)) activeSpaceId = DEFAULT_SPACE_ID;
@@ -418,6 +427,61 @@ function storeThemeMode() {
   }
 }
 
+function loadSpatialLayoutMode() {
+  try {
+    return normalizeSpatialLayoutMode(localStorage.getItem(SPATIAL_LAYOUT_MODE_STORAGE_KEY));
+  } catch {
+    return SpatialLayoutMode.CONSTELLATIONS;
+  }
+}
+
+function storeSpatialLayoutMode() {
+  try {
+    localStorage.setItem(SPATIAL_LAYOUT_MODE_STORAGE_KEY, spatialLayoutMode);
+  } catch {
+    // Spatial layout remains available for this session when storage is disabled.
+  }
+}
+
+function spatialLayoutLabel(mode = spatialLayoutMode) {
+  return mode === SpatialLayoutMode.KNOWLEDGE_LAYERS
+    ? 'Knowledge layers'
+    : 'Constellations';
+}
+
+function closeSpatialLayoutMenu() {
+  spatialLayoutMenu.hidden = true;
+  spatialLayoutButton.setAttribute('aria-expanded', 'false');
+}
+
+function renderSpatialLayoutPicker() {
+  spatialLayoutButton.setAttribute(
+    'aria-label',
+    `Choose Spatial layout. Current: ${spatialLayoutLabel()}.`,
+  );
+  spatialLayoutOptions.forEach((option) => {
+    option.setAttribute(
+      'aria-checked',
+      String(option.dataset.spatialLayout === spatialLayoutMode),
+    );
+  });
+}
+
+function setSpatialLayoutMode(mode) {
+  const nextMode = normalizeSpatialLayoutMode(mode);
+  if (nextMode === spatialLayoutMode) {
+    closeSpatialLayoutMenu();
+    return;
+  }
+
+  spatialLayoutMode = nextMode;
+  storeSpatialLayoutMode();
+  renderSpatialLayoutPicker();
+  closeSpatialLayoutMenu();
+  refreshSpatialGraph({ fitAfterLayout: true });
+  announce(`Spatial layout changed to ${spatialLayoutLabel()}.`);
+}
+
 function buildSpatialGraph() {
   const availableIds = new Set(thoughts.map((thought) => thought.id));
   const links = flattenConnections(thoughts).filter(({ sourceId, targetId }) => (
@@ -440,7 +504,7 @@ function buildSpatialGraph() {
       pinnedPosition: getSpatialPlacement(thought, activeSpaceId),
     };
   });
-  return { nodes, links };
+  return { nodes, links, layoutMode: spatialLayoutMode };
 }
 
 async function ensureSpatialView() {
@@ -452,7 +516,8 @@ async function ensureSpatialView() {
           container: spatialWorld,
           theme: resolvedTheme,
           storageKey: `${SPATIAL_CAMERA_STORAGE_PREFIX}spatial-1`,
-          layoutStorageKey: `${SPATIAL_LAYOUT_STORAGE_PREFIX}spatial-1`,
+          layoutStorageKey: `${SPATIAL_LAYOUT_STORAGE_PREFIX}spatial-1:`,
+          layoutMode: spatialLayoutMode,
           onThoughtSelect(thoughtId) {
             const thought = getThoughtById(thoughtId);
             if (thought) selectThought(thought);
@@ -490,9 +555,12 @@ async function ensureSpatialView() {
   return spatialViewPromise;
 }
 
-function refreshSpatialGraph() {
+function refreshSpatialGraph({ fitAfterLayout = false } = {}) {
   if (!spatialView || !isSpatialSpace(activeSpaceId)) return;
-  spatialView.setGraph(buildSpatialGraph());
+  spatialView.setGraph({
+    ...buildSpatialGraph(),
+    fitAfterLayout,
+  });
   spatialView.setSelectedThought(selectedThoughtId);
   renderSpatialInspector();
 }
@@ -4460,6 +4528,14 @@ spatialFocusButton.addEventListener('click', () => {
     announce('Select a node to focus it.');
   }
 });
+spatialLayoutButton.addEventListener('click', () => {
+  const willOpen = spatialLayoutMenu.hidden;
+  spatialLayoutMenu.hidden = !willOpen;
+  spatialLayoutButton.setAttribute('aria-expanded', String(willOpen));
+});
+spatialLayoutOptions.forEach((option) => {
+  option.addEventListener('click', () => setSpatialLayoutMode(option.dataset.spatialLayout));
+});
 spatialResetButton.addEventListener('click', () => spatialView?.resetView());
 spatialInspectorClose.addEventListener('click', clearThoughtSelection);
 spatialInspectorEdit.addEventListener('click', () => {
@@ -4670,6 +4746,13 @@ window.addEventListener('keydown', (event) => {
     return;
   }
 
+  if (spatialLayoutMenu.hidden === false && event.key === 'Escape') {
+    event.preventDefault();
+    closeSpatialLayoutMenu();
+    spatialLayoutButton.focus({ preventScroll: true });
+    return;
+  }
+
   const typing = event.target instanceof HTMLElement && event.target.matches(
     'input, textarea, [contenteditable="true"]',
   );
@@ -4706,6 +4789,7 @@ window.addEventListener('keydown', (event) => {
   }
 });
 document.addEventListener('pointerdown', (event) => {
+  if (!event.target.closest('#spatial-layout-picker')) closeSpatialLayoutMenu();
   if (!event.target.closest(
     '.thought-card, .spatial-toolbar, .spatial-inspector, .thought-focus-dialog',
   )) {
@@ -4738,6 +4822,7 @@ systemThemeQuery.addEventListener('change', () => {
   if (themeMode === ThemeMode.SYSTEM) applyTheme();
 });
 
+renderSpatialLayoutPicker();
 applyTheme();
 replaceThoughts(thoughts);
 renderCanvasCamera();

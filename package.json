@@ -17,6 +17,8 @@
   },
   "dependencies": {
     "d3-force-3d": "^3.0.6",
+    "graphology": "^0.26.0",
+    "graphology-communities-louvain": "^2.0.2",
     "three": "^0.185.1"
   }
 }
