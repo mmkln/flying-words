@@ -26,6 +26,7 @@ import {
   reconcileConnections,
 } from './connections.js';
 import { createConnectionRenderer } from './connection-renderer.js';
+import { findConnectionSearchResults } from './connection-search.js';
 import { createCanvasMinimap } from './canvas-minimap.js';
 import { calculateBoardGraphLayout } from './board-graph-layout.js';
 import {
@@ -197,6 +198,11 @@ const selectionToolbar = document.querySelector('#selection-toolbar');
 const selectionCount = document.querySelector('#selection-count');
 const selectionCancel = document.querySelector('#selection-cancel');
 const selectionDone = document.querySelector('#selection-done');
+const connectionSearchTrigger = document.querySelector('#connection-search-trigger');
+const connectionSearchPanel = document.querySelector('#connection-search-panel');
+const connectionSearchClose = document.querySelector('#connection-search-close');
+const connectionSearchInput = document.querySelector('#connection-search-input');
+const connectionSearchResults = document.querySelector('#connection-search-results');
 const thoughtFocusDialog = document.querySelector('#thought-focus-dialog');
 const thoughtFocusForm = document.querySelector('#thought-focus-form');
 const thoughtFocusEditor = document.querySelector('#thought-focus-editor');
@@ -256,6 +262,7 @@ let syncCapabilitiesPromise = null;
 let syncCompatibilityAnnounced = false;
 let magnetEditor = null;
 let connectionEditor = null;
+let connectionSearchActiveIndex = 0;
 let composerKnowledgeKind = KnowledgeKind.THOUGHT;
 let knowledgeKindEditor = null;
 let selectedThoughtId = null;
@@ -1909,11 +1916,29 @@ function renderMagnetThoughtState(thought) {
 function renderRelationshipUi() {
   if (!getSpaceCapabilities(activeSpaceId).connections) connectionEditor = null;
 
+  const canSearchConnectionTargets = Boolean(
+    isSpatialSpace(activeSpaceId) && connectionEditor,
+  );
   const selectedTotal = magnetEditor
     ? magnetEditor.selectedChildIds.size
     : connectionEditor?.selectedTargetIds.size || 0;
   selectionCount.textContent = `${selectedTotal} selected`;
   selectionToolbar.hidden = !magnetEditor && !connectionEditor;
+  connectionSearchTrigger.hidden = !canSearchConnectionTargets;
+  connectionSearchTrigger.setAttribute(
+    'aria-expanded',
+    String(canSearchConnectionTargets && isConnectionSearchOpen()),
+  );
+  historyButton.setAttribute(
+    'aria-label',
+    canSearchConnectionTargets ? 'Search connection targets' : 'Open thought history',
+  );
+  historyButton.title = canSearchConnectionTargets
+    ? 'Search connection targets'
+    : 'Thought history';
+  if (!canSearchConnectionTargets) {
+    closeConnectionSearch({ restoreFocus: false });
+  }
   selectionToolbar.setAttribute(
     'aria-label',
     magnetEditor ? 'Edit magnetic group' : 'Edit thought connections',
@@ -2154,8 +2179,115 @@ function openConnectionEditor(source) {
   announce('Choose connected thoughts, then select Done.');
 }
 
+function isConnectionSearchOpen() {
+  return connectionSearchPanel.hidden === false;
+}
+
+function getConnectionSearchMatches() {
+  if (!connectionEditor) return [];
+
+  return findConnectionSearchResults(thoughts, {
+    sourceId: connectionEditor.sourceId,
+    query: connectionSearchInput.value,
+  });
+}
+
+function closeConnectionSearch({ restoreFocus = true } = {}) {
+  if (!isConnectionSearchOpen()) return;
+
+  connectionSearchPanel.hidden = true;
+  connectionSearchTrigger.setAttribute('aria-expanded', 'false');
+  if (restoreFocus && connectionSearchTrigger.isConnected) {
+    connectionSearchTrigger.focus({ preventScroll: true });
+  }
+}
+
+function renderConnectionSearchResults() {
+  const matches = getConnectionSearchMatches();
+  connectionSearchResults.replaceChildren();
+
+  if (!matches.length) {
+    const empty = document.createElement('p');
+    empty.className = 'connection-search-empty';
+    empty.textContent = 'No matching thoughts.';
+    connectionSearchResults.append(empty);
+    return;
+  }
+
+  connectionSearchActiveIndex = Math.min(
+    Math.max(0, connectionSearchActiveIndex),
+    matches.length - 1,
+  );
+
+  matches.forEach((thought, index) => {
+    const row = document.createElement('div');
+    const selectButton = document.createElement('button');
+    const kindIcon = document.createElement('span');
+    const text = document.createElement('span');
+    const state = document.createElement('span');
+    const locateButton = document.createElement('button');
+    const selected = connectionEditor?.selectedTargetIds.has(thought.id) === true;
+
+    row.className = 'connection-search-result';
+    row.classList.toggle('is-active', index === connectionSearchActiveIndex);
+    row.classList.toggle('is-selected', selected);
+
+    selectButton.type = 'button';
+    selectButton.className = 'connection-search-select';
+    selectButton.setAttribute('aria-pressed', String(selected));
+    selectButton.setAttribute(
+      'aria-label',
+      `${selected ? 'Remove' : 'Add'} connection to ${thought.text}`,
+    );
+    selectButton.addEventListener('click', () => {
+      connectionSearchActiveIndex = index;
+      toggleConnectionCandidate(thought);
+      renderConnectionSearchResults();
+    });
+
+    kindIcon.className = 'connection-search-kind-icon';
+    renderKnowledgeKindTrigger(kindIcon, getThoughtKnowledgeKind(thought));
+    text.className = 'connection-search-text';
+    text.textContent = thought.text;
+    state.className = 'connection-search-state';
+    state.textContent = selected ? 'Selected' : '';
+    selectButton.append(kindIcon, text, state);
+
+    locateButton.type = 'button';
+    locateButton.className = 'connection-search-locate';
+    locateButton.textContent = 'Locate';
+    locateButton.setAttribute('aria-label', `Locate ${thought.text} in Spatial`);
+    locateButton.addEventListener('click', () => {
+      spatialView?.focusThought(thought.id);
+    });
+
+    row.append(selectButton, locateButton);
+    connectionSearchResults.append(row);
+  });
+}
+
+function toggleActiveConnectionSearchMatch() {
+  const thought = getConnectionSearchMatches()[connectionSearchActiveIndex];
+  if (!thought) return;
+
+  toggleConnectionCandidate(thought);
+  renderConnectionSearchResults();
+}
+
+function openConnectionSearch() {
+  if (!isSpatialSpace(activeSpaceId) || !connectionEditor) return;
+
+  connectionSearchActiveIndex = 0;
+  connectionSearchInput.value = '';
+  connectionSearchPanel.hidden = false;
+  connectionSearchTrigger.setAttribute('aria-expanded', 'true');
+  renderConnectionSearchResults();
+  connectionSearchInput.focus({ preventScroll: true });
+}
+
 function closeConnectionEditor() {
   if (!connectionEditor) return;
+  closeConnectionSearch({ restoreFocus: false });
   connectionEditor = null;
   renderConnectionUi();
   renderSpatialInspector();
@@ -4581,6 +4713,12 @@ accountButton.addEventListener('click', () => {
   else openAuthDialog();
 });
 historyButton.addEventListener('click', () => {
+  if (connectionEditor && isSpatialSpace(activeSpaceId)) {
+    if (isConnectionSearchOpen()) closeConnectionSearch();
+    else openConnectionSearch();
+    return;
+  }
+
   if (magnetEditor) closeMagnetEditor({ restoreMotion: true });
   if (connectionEditor) closeConnectionEditor();
   openHistory();
@@ -4605,6 +4743,53 @@ selectionCancel.addEventListener('click', () => {
 selectionDone.addEventListener('click', () => {
   if (magnetEditor) commitMagnetEditor();
   else if (connectionEditor) commitConnectionEditor();
+});
+connectionSearchTrigger.addEventListener('click', () => {
+  if (isConnectionSearchOpen()) closeConnectionSearch();
+  else openConnectionSearch();
+});
+connectionSearchClose.addEventListener('click', () => closeConnectionSearch());
+connectionSearchInput.addEventListener('input', () => {
+  connectionSearchActiveIndex = 0;
+  renderConnectionSearchResults();
+});
+connectionSearchInput.addEventListener('keydown', (event) => {
+  const matches = getConnectionSearchMatches();
+
+  if (event.key === 'ArrowDown' && matches.length) {
+    event.preventDefault();
+    event.stopPropagation();
+    connectionSearchActiveIndex = Math.min(
+      connectionSearchActiveIndex + 1,
+      matches.length - 1,
+    );
+    renderConnectionSearchResults();
+    return;
+  }
+
+  if (event.key === 'ArrowUp' && matches.length) {
+    event.preventDefault();
+    event.stopPropagation();
+    connectionSearchActiveIndex = Math.max(
+      connectionSearchActiveIndex - 1,
+      0,
+    );
+    renderConnectionSearchResults();
+    return;
+  }
+
+  if (event.key === 'Enter') {
+    event.preventDefault();
+    event.stopPropagation();
+    toggleActiveConnectionSearchMatch();
+    return;
+  }
+
+  if (event.key === 'Escape') {
+    event.preventDefault();
+    event.stopPropagation();
+    closeConnectionSearch();
+  }
 });
 historyClose.addEventListener('click', () => historyDialog.close());
 historySearch.addEventListener('input', renderHistory);
@@ -4733,6 +4918,32 @@ window.addEventListener('keydown', (event) => {
     return;
   }
 
+  const typing = event.target instanceof HTMLElement && event.target.matches(
+    'input, textarea, [contenteditable="true"]',
+  );
+
+  if (isConnectionSearchOpen() && event.key === 'Escape') {
+    event.preventDefault();
+    closeConnectionSearch();
+    return;
+  }
+
+  if (isConnectionSearchOpen() && event.key === 'Enter') {
+    return;
+  }
+
+  if (
+    connectionEditor
+    && isSpatialSpace(activeSpaceId)
+    && !typing
+    && (event.ctrlKey || event.metaKey)
+    && event.key.toLocaleLowerCase() === 'k'
+  ) {
+    event.preventDefault();
+    openConnectionSearch();
+    return;
+  }
+
   if (connectionEditor && event.key === 'Escape') {
     event.preventDefault();
     closeConnectionEditor();
@@ -4753,9 +4964,6 @@ window.addEventListener('keydown', (event) => {
     return;
   }
 
-  const typing = event.target instanceof HTMLElement && event.target.matches(
-    'input, textarea, [contenteditable="true"]',
-  );
   if (isSpatialSpace(activeSpaceId) && !typing && !thoughtFocusDialog.open) {
     if (event.key === 'Escape' && selectedThoughtId) {
       event.preventDefault();
@@ -4791,7 +4999,7 @@ window.addEventListener('keydown', (event) => {
 document.addEventListener('pointerdown', (event) => {
   if (!event.target.closest('#spatial-layout-picker')) closeSpatialLayoutMenu();
   if (!event.target.closest(
-    '.thought-card, .spatial-toolbar, .spatial-inspector, .thought-focus-dialog',
+    '.thought-card, .spatial-toolbar, .spatial-inspector, .thought-focus-dialog, .selection-toolbar, .connection-search-panel',
   )) {
     clearThoughtSelection();
   }
