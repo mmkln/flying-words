@@ -173,7 +173,20 @@
           <div class="spatial-toolbar" role="toolbar" aria-label="Spatial graph controls">
             <div class="spatial-toolbar-actions">
               <button id="spatial-fit" type="button">Fit all</button>
-              <button id="spatial-focus" type="button" disabled>Focus</button>
+              <button
+                id="spatial-focus"
+                class="spatial-toolbar-focus"
+                type="button"
+                aria-label="Focus selected thought"
+                aria-keyshortcuts="F"
+                title="Focus selected thought (F)"
+                hidden
+              >
+                <svg viewBox="0 0 24 24" aria-hidden="true">
+                  <path d="M4 9V6a2 2 0 0 1 2-2h3M15 4h3a2 2 0 0 1 2 2v3M20 15v3a2 2 0 0 1-2 2h-3M9 20H6a2 2 0 0 1-2-2v-3M9 12a3 3 0 1 0 6 0a3 3 0 0 0-6 0Z"/>
+                </svg>
+                <span>Focus</span>
+              </button>
               <div class="spatial-layout-picker" id="spatial-layout-picker">
                 <button
                   id="spatial-layout"
@@ -222,6 +235,15 @@
               <button id="spatial-inspector-close" type="button" aria-label="Close thought details">×</button>
             </header>
             <p id="spatial-inspector-text"></p>
+            <section
+              class="spatial-inspector-suggestions"
+              id="spatial-inspector-suggestions"
+              aria-label="Suggested links"
+              hidden
+            >
+              <span class="spatial-inspector-suggestions-title">Suggested links</span>
+              <div id="spatial-inspector-suggestion-list"></div>
+            </section>
             <footer>
               <button id="spatial-inspector-edit" type="button">Edit</button>
               <button id="spatial-inspector-connect" type="button">Connect</button>

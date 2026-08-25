@@ -27,6 +27,7 @@ import {
 } from './connections.js';
 import { createConnectionRenderer } from './connection-renderer.js';
 import { findConnectionSearchResults } from './connection-search.js';
+import { getSpatialLinkSuggestions } from './spatial-link-suggestions.js';
 import { createCanvasMinimap } from './canvas-minimap.js';
 import { calculateBoardGraphLayout } from './board-graph-layout.js';
 import {
@@ -145,6 +146,8 @@ const spatialInspector = document.querySelector('#spatial-inspector');
 const spatialInspectorKind = document.querySelector('#spatial-inspector-kind');
 const spatialInspectorKindLabel = document.querySelector('#spatial-inspector-kind-label');
 const spatialInspectorText = document.querySelector('#spatial-inspector-text');
+const spatialInspectorSuggestions = document.querySelector('#spatial-inspector-suggestions');
+const spatialInspectorSuggestionList = document.querySelector('#spatial-inspector-suggestion-list');
 const spatialInspectorClose = document.querySelector('#spatial-inspector-close');
 const spatialInspectorEdit = document.querySelector('#spatial-inspector-edit');
 const spatialInspectorConnect = document.querySelector('#spatial-inspector-connect');
@@ -478,6 +481,27 @@ function renderSpatialLayoutPicker() {
       String(option.dataset.spatialLayout === spatialLayoutMode),
     );
   });
+}
+
+function canFocusSelectedSpatialThought() {
+  return Boolean(
+    isSpatialSpace(activeSpaceId)
+    && selectedThoughtId
+    && spatialView,
+  );
+}
+
+function focusSelectedSpatialThought() {
+  if (!canFocusSelectedSpatialThought()) return false;
+
+  return spatialView.focusThought(selectedThoughtId);
+}
+
+function renderSpatialViewControls() {
+  const canFocus = canFocusSelectedSpatialThought();
+
+  spatialFocusButton.hidden = !canFocus;
+  spatialFocusButton.disabled = !canFocus;
 }
 
 function setSpatialLayoutMode(mode) {
@@ -1178,12 +1202,71 @@ function openSpatialDeleteConfirmation() {
   deleteThoughtDialog.showModal();
 }
 
+function renderSpatialLinkSuggestions(thought) {
+  spatialInspectorSuggestionList.replaceChildren();
+
+  const canShowSuggestions = Boolean(
+    thought
+    && isSpatialSpace(activeSpaceId)
+    && !connectionEditor
+    && !magnetEditor,
+  );
+
+  if (!canShowSuggestions) {
+    spatialInspectorSuggestions.hidden = true;
+    return;
+  }
+
+  const suggestions = getSpatialLinkSuggestions(thoughts, thought.id);
+  if (!suggestions.length) {
+    spatialInspectorSuggestions.hidden = true;
+    return;
+  }
+
+  suggestions.forEach(({ parent, linked }) => {
+    const row = document.createElement('div');
+    const relation = document.createElement('span');
+    const label = document.createElement('span');
+    const button = document.createElement('button');
+
+    row.className = 'spatial-inspector-suggestion';
+    relation.className = 'spatial-inspector-suggestion-relation';
+    relation.textContent = 'Magnetic parent';
+    label.className = 'spatial-inspector-suggestion-text';
+    label.textContent = parent.text;
+
+    button.type = 'button';
+    button.textContent = linked ? 'Linked' : 'Link';
+    button.disabled = linked;
+
+    if (linked) {
+      button.setAttribute('aria-label', `Already linked with ${parent.text}`);
+    } else {
+      button.setAttribute('aria-label', `Link to magnetic parent ${parent.text}`);
+      button.addEventListener('click', () => {
+        // This starts the existing draft flow. No metadata changes until Done.
+        openConnectionEditor(thought);
+        if (connectionEditor?.sourceId !== thought.id) return;
+
+        toggleConnectionCandidate(parent);
+        announce('Suggested connection selected. Choose Done to save it.');
+      });
+    }
+
+    row.append(relation, label, button);
+    spatialInspectorSuggestionList.append(row);
+  });
+
+  spatialInspectorSuggestions.hidden = false;
+}
+
 function renderSpatialInspector() {
   const thought = selectedThoughtId ? getThoughtById(selectedThoughtId) : null;
   const visible = Boolean(thought && isSpatialSpace(activeSpaceId));
   spatialInspector.hidden = !visible;
-  spatialFocusButton.disabled = !visible;
+  renderSpatialViewControls();
   if (!visible) {
+    spatialInspectorSuggestions.hidden = true;
     closeSpatialInspectorMenu();
     return;
   }
@@ -1192,6 +1275,7 @@ function renderSpatialInspector() {
   renderKnowledgeKindTrigger(spatialInspectorKind, kind);
   spatialInspectorKindLabel.textContent = getKnowledgeKindLabel(kind);
   spatialInspectorText.textContent = thought.text;
+  renderSpatialLinkSuggestions(thought);
   const pinned = getSpatialPlacement(thought, activeSpaceId)?.pinned === true;
   const editingConnections = Boolean(connectionEditor);
   const actionsDisabled = editingConnections || Boolean(magnetEditor);
@@ -4751,7 +4835,7 @@ spatialFitButton.addEventListener('click', () => {
   if (!spatialView?.fitAll()) announce('The Spatial graph is empty.');
 });
 spatialFocusButton.addEventListener('click', () => {
-  if (!selectedThoughtId || !spatialView?.focusThought(selectedThoughtId)) {
+  if (!focusSelectedSpatialThought()) {
     announce('Select a node to focus it.');
   }
 });
@@ -5067,9 +5151,9 @@ window.addEventListener('keydown', (event) => {
       clearThoughtSelection();
       return;
     }
-    if (event.key.toLowerCase() === 'f' && selectedThoughtId) {
+    if (event.key.toLowerCase() === 'f' && canFocusSelectedSpatialThought()) {
       event.preventDefault();
-      spatialView?.focusThought(selectedThoughtId);
+      focusSelectedSpatialThought();
       return;
     }
     if (event.key === '0') {
