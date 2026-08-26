@@ -103,6 +103,38 @@ test('keeps the overall layout centred on the existing Board content', () => {
   assert.ok(Math.abs(before.y - after.y) <= 1);
 });
 
+test('keeps an anchored Board card at its explicit position', () => {
+  const cards = [
+    { ...card('anchor', 500, 200), fixed: true },
+    card('first', 500, 200),
+    card('second', 500, 200),
+  ];
+  const result = calculateBoardGraphLayout({
+    cards,
+    connections: [
+      { sourceId: 'anchor', targetId: 'first', spacing: 'normal' },
+      { sourceId: 'first', targetId: 'second', spacing: 'normal' },
+    ],
+    geometry,
+  });
+
+  assert.deepEqual(
+    result.find(({ id }) => id === 'anchor'),
+    { id: 'anchor', x: 500, y: 200 },
+  );
+  const anchor = result.find(({ id }) => id === 'anchor');
+  result.filter(({ id }) => id !== 'anchor').forEach((position) => {
+    assert.equal(
+      rectanglesOverlap(
+        { ...anchor, width: geometry.cardWidth, height: geometry.cardHeight },
+        { ...position, width: geometry.cardWidth, height: geometry.cardHeight },
+        AUTO_LAYOUT_GAP,
+      ),
+      false,
+    );
+  });
+});
+
 test('keeps a large dense graph collision-free', () => {
   const cards = Array.from({ length: 95 }, (_, index) => (
     card(`card-${String(index).padStart(3, '0')}`, 0, 0)

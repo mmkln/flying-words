@@ -3144,6 +3144,7 @@ function getBoardGraphLayoutInput() {
         y: placement.y,
         width: boardGeometry.cardWidth,
         height: boardGeometry.cardHeight,
+        fixed: hasBoardAnchor(thought, activeSpaceId),
       };
     }),
     connections: flattenConnections(thoughts).filter(({ sourceId, targetId }) => (

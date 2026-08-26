@@ -68,22 +68,37 @@ export function separateRectangles(nodes, gap = 24, maxPasses = 120) {
         const overlapY = (first.height + second.height) / 2 + gap - Math.abs(dy);
 
         if (overlapX <= 0 || overlapY <= 0) continue;
+        const firstFixed = first.fixed === true;
+        const secondFixed = second.fixed === true;
+
+        // Anchors express an explicit Board position chosen by the user. A
+        // final collision pass may move the other card around one, but it must
+        // never silently displace the anchor itself.
+        if (firstFixed && secondFixed) continue;
         moved = true;
 
         if (overlapX < overlapY) {
           const direction = dx === 0
             ? (String(first.id) < String(second.id) ? 1 : -1)
             : Math.sign(dx);
-          const shift = overlapX / 2 + 0.5;
-          first.x -= direction * shift;
-          second.x += direction * shift;
+          const shift = overlapX + 0.5;
+          if (firstFixed) second.x += direction * shift;
+          else if (secondFixed) first.x -= direction * shift;
+          else {
+            first.x -= direction * shift / 2;
+            second.x += direction * shift / 2;
+          }
         } else {
           const direction = dy === 0
             ? (String(first.id) < String(second.id) ? 1 : -1)
             : Math.sign(dy);
-          const shift = overlapY / 2 + 0.5;
-          first.y -= direction * shift;
-          second.y += direction * shift;
+          const shift = overlapY + 0.5;
+          if (firstFixed) second.y += direction * shift;
+          else if (secondFixed) first.y -= direction * shift;
+          else {
+            first.y -= direction * shift / 2;
+            second.y += direction * shift / 2;
+          }
         }
       }
     }

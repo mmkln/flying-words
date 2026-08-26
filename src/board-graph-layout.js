@@ -143,6 +143,109 @@ function linkForForce(link) {
   };
 }
 
+function buildStructuralTargets(component, nodes, semanticLinks, geometry) {
+  const memberIds = new Set(component.memberIds);
+  const componentLinks = semanticLinks.filter(({ sourceId, targetId }) => (
+    memberIds.has(sourceId) && memberIds.has(targetId)
+  ));
+  const fallbackTargets = new Map(nodes.map((node) => [node.id, {
+    x: node.initialX,
+    y: node.initialY,
+  }]));
+
+  // A magnet-only cloud has no semantic structure to impose. Its current
+  // composition is the best stable seed, while its magnet forces keep it
+  // coherent.
+  if (!componentLinks.length) return fallbackTargets;
+
+  const degree = new Map(nodes.map((node) => [node.id, 0]));
+  const outgoing = new Map(nodes.map((node) => [node.id, []]));
+  const undirected = new Map(nodes.map((node) => [node.id, []]));
+  componentLinks.forEach(({ sourceId, targetId }) => {
+    degree.set(sourceId, (degree.get(sourceId) || 0) + 1);
+    degree.set(targetId, (degree.get(targetId) || 0) + 1);
+    outgoing.get(sourceId).push(targetId);
+    undirected.get(sourceId).push(targetId);
+    undirected.get(targetId).push(sourceId);
+  });
+  outgoing.forEach((ids) => ids.sort());
+  undirected.forEach((ids) => ids.sort());
+
+  const fixedIds = nodes
+    .filter((node) => node.fixed)
+    .map((node) => node.id)
+    .sort();
+  const rootIds = fixedIds.length ? fixedIds : [
+    [...nodes].sort((first, second) => (
+      (degree.get(second.id) || 0) - (degree.get(first.id) || 0)
+      || first.id.localeCompare(second.id)
+    ))[0].id,
+  ];
+  const levels = new Map(rootIds.map((id) => [id, 0]));
+
+  // Semantic direction decides the preferred outward order. An undirected
+  // pass then reaches inbound links and cycles without forcing a left-to-right
+  // hierarchy.
+  const visit = (initialIds, neighborsFor) => {
+    const queue = [...initialIds];
+    while (queue.length) {
+      const sourceId = queue.shift();
+      const level = levels.get(sourceId);
+      neighborsFor(sourceId).forEach((targetId) => {
+        if (levels.has(targetId)) return;
+        levels.set(targetId, level + 1);
+        queue.push(targetId);
+      });
+    }
+  };
+  visit(rootIds, (id) => outgoing.get(id) || []);
+  visit([...levels.keys()], (id) => undirected.get(id) || []);
+
+  const rootCentre = rootIds.reduce((centre, id) => {
+    const node = nodes.find((item) => item.id === id);
+    return {
+      x: centre.x + (node?.initialX || 0),
+      y: centre.y + (node?.initialY || 0),
+    };
+  }, { x: 0, y: 0 });
+  rootCentre.x /= rootIds.length;
+  rootCentre.y /= rootIds.length;
+
+  const idsByLevel = new Map();
+  levels.forEach((level, id) => {
+    const ids = idsByLevel.get(level) || [];
+    ids.push(id);
+    idsByLevel.set(level, ids);
+  });
+  const ringStep = Math.max(
+    geometry.cardWidth + geometry.gap + 160,
+    geometry.cardHeight + geometry.gap + 220,
+  );
+  const targets = new Map();
+
+  idsByLevel.forEach((ids, level) => {
+    ids.sort((first, second) => (
+      hashString(`${component.id}:${first}`) - hashString(`${component.id}:${second}`)
+      || first.localeCompare(second)
+    ));
+    if (level === 0) {
+      ids.forEach((id) => targets.set(id, { ...rootCentre }));
+      return;
+    }
+
+    const phase = (hashString(`${component.id}:${level}`) / 0xffffffff) * Math.PI * 2;
+    ids.forEach((id, index) => {
+      const angle = phase + index / ids.length * Math.PI * 2;
+      targets.set(id, {
+        x: rootCentre.x + Math.cos(angle) * level * ringStep,
+        y: rootCentre.y + Math.sin(angle) * level * ringStep,
+      });
+    });
+  });
+
+  return new Map(nodes.map((node) => [node.id, targets.get(node.id) || fallbackTargets.get(node.id)]));
+}
+
 function componentBounds(nodes) {
   const minX = Math.min(...nodes.map((node) => node.x - node.width / 2));
   const maxX = Math.max(...nodes.map((node) => node.x + node.width / 2));
@@ -180,6 +283,13 @@ function simulateComponent(component, cardsById, semanticLinks, magneticLinks, g
       y: centredY + Math.sin(angle) * radius,
       vx: 0,
       vy: 0,
+      initialX: centredX,
+      initialY: centredY,
+      initialWorldX: card.x + card.width / 2,
+      initialWorldY: card.y + card.height / 2,
+      fixed: card.fixed === true,
+      fx: card.fixed ? centredX : undefined,
+      fy: card.fixed ? centredY : undefined,
     };
   });
   const componentSemanticLinks = semanticLinks
@@ -195,6 +305,12 @@ function simulateComponent(component, cardsById, semanticLinks, magneticLinks, g
       && !semanticPairs.has(canonicalPair(sourceId, targetId))
     ))
     .map(linkForForce);
+  const structuralTargets = buildStructuralTargets(
+    component,
+    nodes,
+    semanticLinks,
+    geometry,
+  );
   const connectionForce = forceLink(componentSemanticLinks)
     .id((node) => node.id)
     .distance((link) => (
@@ -220,8 +336,14 @@ function simulateComponent(component, cardsById, semanticLinks, magneticLinks, g
     .force('charge', forceManyBody()
       .strength(isolatedCloud ? -760 : -430)
       .distanceMax(900))
-    .force('x', forceX(0).strength(isolatedCloud ? 0.035 : 0.018))
-    .force('y', forceY(0).strength(isolatedCloud ? 0.035 : 0.018))
+    .force('structureX', forceX((node) => structuralTargets.get(node.id).x)
+      .strength((node) => (node.fixed ? 0 : isolatedCloud ? 0.01 : 0.055)))
+    .force('structureY', forceY((node) => structuralTargets.get(node.id).y)
+      .strength((node) => (node.fixed ? 0 : isolatedCloud ? 0.01 : 0.055)))
+    .force('stabilityX', forceX((node) => node.initialX)
+      .strength((node) => (node.fixed ? 0 : 0.075)))
+    .force('stabilityY', forceY((node) => node.initialY)
+      .strength((node) => (node.fixed ? 0 : 0.075)))
     .force('collision', createRectangleCollisionForce({
       gap: geometry.gap + 2,
       strength: 0.94,
@@ -268,21 +390,62 @@ function packComponents(components, geometry) {
   ));
   const placedBounds = [];
   const spiralStep = Math.max(geometry.cardWidth, geometry.cardHeight) * 0.64;
+  const anchored = ordered.filter((component) => component.nodes.some((node) => node.fixed));
+  const movable = ordered.filter((component) => !component.nodes.some((node) => node.fixed));
+  const packingCentre = anchored.length
+    ? anchored.reduce((centre, component) => {
+      const anchor = component.nodes
+        .filter((node) => node.fixed)
+        .sort((first, second) => first.id.localeCompare(second.id))[0];
+      return {
+        x: centre.x + anchor.initialWorldX,
+        y: centre.y + anchor.initialWorldY,
+      };
+    }, { x: 0, y: 0 })
+    : { x: 0, y: 0 };
 
-  ordered.forEach((component, componentIndex) => {
+  if (anchored.length) {
+    packingCentre.x /= anchored.length;
+    packingCentre.y /= anchored.length;
+  }
+
+  const boundsAt = (component, placement) => ({
+    left: placement.x + component.bounds.minX,
+    right: placement.x + component.bounds.maxX,
+    top: placement.y + component.bounds.minY,
+    bottom: placement.y + component.bounds.maxY,
+  });
+  const applyPlacement = (component, placement) => {
+    component.nodes.forEach((node) => {
+      node.x += placement.x;
+      node.y += placement.y;
+    });
+  };
+
+  // An anchor is an explicit user decision. Its component is translated from
+  // the anchor's local simulation coordinate back to its original Board world
+  // position before any unanchored components are packed around it.
+  anchored.forEach((component) => {
+    const anchor = component.nodes
+      .filter((node) => node.fixed)
+      .sort((first, second) => first.id.localeCompare(second.id))[0];
+    const placement = {
+      x: anchor.initialWorldX - anchor.x,
+      y: anchor.initialWorldY - anchor.y,
+    };
+    placedBounds.push(boundsAt(component, placement));
+    applyPlacement(component, placement);
+  });
+
+  movable.forEach((component, componentIndex) => {
     let placement = null;
 
     for (let step = 0; step < 6000; step += 1) {
       const radius = step === 0 ? 0 : spiralStep * Math.sqrt(step);
       const angle = step * GOLDEN_ANGLE + componentIndex * 0.37;
-      const centreX = Math.cos(angle) * radius;
-      const centreY = Math.sin(angle) * radius;
-      const candidate = {
-        left: centreX - component.bounds.width / 2,
-        right: centreX + component.bounds.width / 2,
-        top: centreY - component.bounds.height / 2,
-        bottom: centreY + component.bounds.height / 2,
-      };
+      const centreX = packingCentre.x + Math.cos(angle) * radius;
+      const centreY = packingCentre.y + Math.sin(angle) * radius;
+      const candidate = boundsAt(component, { x: centreX, y: centreY });
 
       if (placedBounds.every((placed) => !boundsOverlap(candidate, placed))) {
         placement = { x: centreX, y: centreY };
@@ -293,15 +456,12 @@ function packComponents(components, geometry) {
 
     if (!placement) {
       placement = {
-        x: componentIndex * (component.bounds.width + COMPONENT_GAP),
-        y: 0,
+        x: packingCentre.x + componentIndex * (component.bounds.width + COMPONENT_GAP),
+        y: packingCentre.y,
       };
     }
 
-    component.nodes.forEach((node) => {
-      node.x += placement.x;
-      node.y += placement.y;
-    });
+    applyPlacement(component, placement);
   });
 
   return ordered.flatMap(({ nodes }) => nodes);
@@ -312,6 +472,100 @@ function currentBoardCentre(cards) {
     x: cards.reduce((sum, card) => sum + card.x + card.width / 2, 0) / cards.length,
     y: cards.reduce((sum, card) => sum + card.y + card.height / 2, 0) / cards.length,
   };
+}
+
+function cardCentre(position) {
+  return {
+    x: position.x + position.width / 2,
+    y: position.y + position.height / 2,
+  };
+}
+
+function distanceBetween(first, second) {
+  const firstCentre = cardCentre(first);
+  const secondCentre = cardCentre(second);
+  return Math.hypot(firstCentre.x - secondCentre.x, firstCentre.y - secondCentre.y);
+}
+
+function segmentsCross(firstStart, firstEnd, secondStart, secondEnd) {
+  const turn = (start, end, point) => (
+    (end.x - start.x) * (point.y - start.y)
+    - (end.y - start.y) * (point.x - start.x)
+  );
+  const firstStartTurn = turn(firstStart, firstEnd, secondStart);
+  const firstEndTurn = turn(firstStart, firstEnd, secondEnd);
+  const secondStartTurn = turn(secondStart, secondEnd, firstStart);
+  const secondEndTurn = turn(secondStart, secondEnd, firstEnd);
+
+  return (
+    firstStartTurn * firstEndTurn < 0
+    && secondStartTurn * secondEndTurn < 0
+  );
+}
+
+function connectionCrossingCount(candidate, position, placedById, links) {
+  const semanticLinks = links.filter(({ kind }) => kind === 'connection');
+  const ownLinks = semanticLinks.filter(({ sourceId, targetId }) => (
+    sourceId === position.id || targetId === position.id
+  ));
+  let crossings = 0;
+
+  ownLinks.forEach((ownLink) => {
+    const neighborId = ownLink.sourceId === position.id
+      ? ownLink.targetId
+      : ownLink.sourceId;
+    const neighbor = placedById.get(neighborId);
+    if (!neighbor) return;
+
+    semanticLinks.forEach((otherLink) => {
+      if (
+        otherLink.sourceId === ownLink.sourceId
+        || otherLink.sourceId === ownLink.targetId
+        || otherLink.targetId === ownLink.sourceId
+        || otherLink.targetId === ownLink.targetId
+      ) return;
+
+      const source = placedById.get(otherLink.sourceId);
+      const target = placedById.get(otherLink.targetId);
+      if (!source || !target) return;
+
+      if (segmentsCross(
+        cardCentre(candidate),
+        cardCentre(neighbor),
+        cardCentre(source),
+        cardCentre(target),
+      )) crossings += 1;
+    });
+  });
+
+  return crossings;
+}
+
+function candidateScore(candidate, position, placedById, desiredById, links) {
+  const graphDistance = Math.hypot(candidate.x - position.x, candidate.y - position.y);
+  const stabilityDistance = Math.hypot(
+    candidate.x - position.preferredX,
+    candidate.y - position.preferredY,
+  );
+  let linkDistanceError = 0;
+
+  links.forEach(({ sourceId, targetId }) => {
+    if (sourceId !== position.id && targetId !== position.id) return;
+    const neighborId = sourceId === position.id ? targetId : sourceId;
+    const desiredNeighbor = desiredById.get(neighborId);
+    const placedNeighbor = placedById.get(neighborId) || desiredNeighbor;
+    if (!desiredNeighbor || !placedNeighbor) return;
+
+    const desiredDistance = distanceBetween(position, desiredNeighbor);
+    linkDistanceError += Math.abs(distanceBetween(candidate, placedNeighbor) - desiredDistance);
+  });
+
+  return (
+    graphDistance
+    + stabilityDistance * 0.08
+    + linkDistanceError * 0.72
+    + connectionCrossingCount(candidate, position, placedById, links) * 9_000
+  );
 }
 
 function placeWithoutOverlaps(positions, links, gap) {
@@ -325,12 +579,23 @@ function placeWithoutOverlaps(positions, links, gap) {
     y: positions.reduce((sum, position) => sum + position.y, 0) / positions.length,
   };
   const ordered = [...positions].sort((first, second) => (
-    (degree.get(second.id) || 0) - (degree.get(first.id) || 0)
+    Number(second.fixed) - Number(first.fixed)
+    || (degree.get(second.id) || 0) - (degree.get(first.id) || 0)
     || first.id.localeCompare(second.id)
   ));
   const placed = [];
+  const placedById = new Map();
+  const desiredById = new Map(positions.map((position) => [position.id, position]));
 
   ordered.forEach((position, positionIndex) => {
+    if (position.fixed) {
+      // Two anchors may deliberately sit closer than the automatic gap. Keep
+      // both untouched; only movable cards have to make room around them.
+      placed.push({ ...position });
+      placedById.set(position.id, placed.at(-1));
+      return;
+    }
+
     const isFree = (candidate) => placed.every(
       (other) => !rectanglesOverlap(candidate, other, gap),
     );
@@ -354,6 +619,8 @@ function placeWithoutOverlaps(positions, links, gap) {
         }
 
         const rotation = offsetRotation % offsets.length;
+        let bestCandidate = null;
+        let bestScore = Infinity;
         for (let index = 0; index < offsets.length; index += 1) {
           const offset = offsets[(index + rotation) % offsets.length];
           const candidate = {
@@ -361,11 +628,22 @@ function placeWithoutOverlaps(positions, links, gap) {
             x: position.x + offset.column * stepX,
             y: position.y + offset.row * stepY,
           };
-          if (isFree(candidate)) {
-            resolved = candidate;
-            break;
+          if (!isFree(candidate)) continue;
+
+          const score = candidateScore(
+            candidate,
+            position,
+            placedById,
+            desiredById,
+            links,
+          );
+          if (score < bestScore) {
+            bestCandidate = candidate;
+            bestScore = score;
           }
         }
+
+        if (bestCandidate) resolved = bestCandidate;
       }
 
       if (!resolved) {
@@ -377,14 +655,16 @@ function placeWithoutOverlaps(positions, links, gap) {
     }
 
     placed.push(resolved);
+    placedById.set(position.id, resolved);
   });
 
   const resolvedCentre = {
     x: placed.reduce((sum, position) => sum + position.x, 0) / placed.length,
     y: placed.reduce((sum, position) => sum + position.y, 0) / placed.length,
   };
-  const translateX = Math.round(desiredCentre.x - resolvedCentre.x);
-  const translateY = Math.round(desiredCentre.y - resolvedCentre.y);
+  const hasFixedPosition = positions.some((position) => position.fixed);
+  const translateX = hasFixedPosition ? 0 : Math.round(desiredCentre.x - resolvedCentre.x);
+  const translateY = hasFixedPosition ? 0 : Math.round(desiredCentre.y - resolvedCentre.y);
   return placed.map((position) => ({
     ...position,
     x: position.x + translateX,
@@ -421,6 +701,7 @@ export function calculateBoardGraphLayout({
       y: card.y,
       width: Number.isFinite(card.width) ? card.width : resolvedGeometry.cardWidth,
       height: Number.isFinite(card.height) ? card.height : resolvedGeometry.cardHeight,
+      fixed: card.fixed === true,
     }))
     .sort((first, second) => first.id.localeCompare(second.id));
   if (!normalizedCards.length) return [];
@@ -444,14 +725,18 @@ export function calculateBoardGraphLayout({
     x: nodes.reduce((sum, node) => sum + node.x, 0) / nodes.length,
     y: nodes.reduce((sum, node) => sum + node.y, 0) / nodes.length,
   };
-  const translateX = originalCentre.x - newCentre.x;
-  const translateY = originalCentre.y - newCentre.y;
+  const hasFixedCard = nodes.some((node) => node.fixed);
+  const translateX = hasFixedCard ? 0 : originalCentre.x - newCentre.x;
+  const translateY = hasFixedCard ? 0 : originalCentre.y - newCentre.y;
   const positions = nodes.map((node) => ({
     id: node.id,
     x: Math.round(node.x + translateX - node.width / 2),
     y: Math.round(node.y + translateY - node.height / 2),
     width: node.width,
     height: node.height,
+    fixed: node.fixed,
+    preferredX: node.initialWorldX - node.width / 2,
+    preferredY: node.initialWorldY - node.height / 2,
   }));
 
   const collisionFreePositions = placeWithoutOverlaps(
