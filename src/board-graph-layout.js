@@ -14,7 +14,7 @@ import {
 
 // The server validates the minimum Board clearance, while Arrange deliberately
 // uses a roomier one. Manual placement keeps its own, smaller clearance.
-export const AUTO_LAYOUT_GAP = 56;
+export const AUTO_LAYOUT_GAP = 128;
 
 const CONNECTION_DISTANCE_OFFSET = Object.freeze({
   tight: 90,

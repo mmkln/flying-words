@@ -43,6 +43,7 @@ import {
   normalizeBoardGeometry,
 } from './board-geometry.js';
 import { resolveManualBoardPosition } from './board-manual-placement.js';
+import { planBoardInsertion } from './board-insertion.js';
 import {
   clientPointToBoardWorld,
   getBoardSpawnGap,
@@ -1166,9 +1167,42 @@ function placeThoughtInVisibleCanvas(thought) {
   thought.element.classList.add('is-canvas-card');
   measureThought(thought);
   const position = findCanvasSpawnPosition(thought);
+  const insertion = planBoardInsertion({
+    candidate: {
+      ...position,
+      id: thought.id,
+      width: boardGeometry.cardWidth,
+      height: boardGeometry.cardHeight,
+    },
+    obstacles: thoughts
+      .filter((item) => hasCanvasPlacement(item, activeSpaceId))
+      .map((item) => ({
+        id: item.id,
+        x: item.x,
+        y: item.y,
+        width: boardGeometry.cardWidth,
+        height: boardGeometry.cardHeight,
+      })),
+    gap: MANUAL_BOARD_GAP,
+  });
+  const displacedThoughts = insertion.moved
+    .map(({ id, x, y }) => {
+      const displaced = getThoughtById(id);
+      if (!displaced) return null;
 
-  thought.x = Math.round(position.x);
-  thought.y = Math.round(position.y);
+      displaced.x = Math.round(x);
+      displaced.y = Math.round(y);
+      displaced.vx = 0;
+      displaced.vy = 0;
+      displaced.rotation = 0;
+      updateCanvasPlacement(displaced);
+      renderThought(displaced);
+      return displaced;
+    })
+    .filter(Boolean);
+
+  thought.x = Math.round(insertion.position.x);
+  thought.y = Math.round(insertion.position.y);
   thought.vx = 0;
   thought.vy = 0;
   thought.rotation = 0;
@@ -1177,6 +1211,7 @@ function placeThoughtInVisibleCanvas(thought) {
   showThought(thought);
   renderThought(thought);
   thought.element.style.visibility = '';
+  return displacedThoughts;
 }
 
 function getThoughtById(thoughtId) {
@@ -3622,9 +3657,9 @@ async function addThought(rawText, { relationTargetId = null } = {}) {
       deferReveal: addingToBoard || addingToSpatial,
     },
   );
-  if (addingToBoard) {
-    placeThoughtInVisibleCanvas(thought);
-  }
+  const displacedBoardThoughts = addingToBoard
+    ? placeThoughtInVisibleCanvas(thought)
+    : [];
   if (addingToSpatial) {
     thought.element.hidden = true;
   }
@@ -3646,6 +3681,9 @@ async function addThought(rawText, { relationTargetId = null } = {}) {
 
   if (isCloudMode()) {
     enqueueThoughtCreate(thought);
+    displacedBoardThoughts.forEach((displacedThought) => (
+      enqueueThoughtMetaPatch(displacedThought, ['canvas'])
+    ));
     if (relationTarget) enqueueThoughtMetaPatch(relationTarget, ['connections']);
     announce(relationTarget ? 'Related thought added.' : 'Thought added.');
   } else {
@@ -4164,9 +4202,14 @@ function addOrFocusThoughtOnCanvas(thought) {
     return;
   }
 
-  placeThoughtInVisibleCanvas(thought);
+  const displacedBoardThoughts = placeThoughtInVisibleCanvas(thought);
   saveThoughts();
-  if (isCloudMode()) enqueueThoughtMetaPatch(thought, ['canvas']);
+  if (isCloudMode()) {
+    enqueueThoughtMetaPatch(thought, ['canvas']);
+    displacedBoardThoughts.forEach((displacedThought) => (
+      enqueueThoughtMetaPatch(displacedThought, ['canvas'])
+    ));
+  }
 
   rebuildConnectionLayer();
   updateUi();
