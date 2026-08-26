@@ -244,22 +244,6 @@ button { -webkit-tap-highlight-color: transparent; }
 .spatial-toolbar button:disabled { opacity: .38; cursor: default; }
 .spatial-toolbar button:focus-visible { outline: 2px solid rgba(112, 85, 197, .3); }
 
-.spatial-toolbar-focus {
-  display: inline-flex;
-  gap: 5px;
-  align-items: center;
-}
-
-.spatial-toolbar-focus svg {
-  width: 14px;
-  height: 14px;
-  fill: none;
-  stroke: currentColor;
-  stroke-linecap: round;
-  stroke-linejoin: round;
-  stroke-width: 1.8;
-}
-
 .spatial-layout-picker { position: relative; }
 
 .spatial-layout-menu {
@@ -381,6 +365,71 @@ button { -webkit-tap-highlight-color: transparent; }
   font-size: 14px;
   line-height: 1.52;
   white-space: pre-wrap;
+}
+
+.spatial-inspector-focus {
+  display: grid;
+  grid-template-columns: 18px minmax(0, 1fr) auto;
+  width: 100%;
+  min-height: 42px;
+  margin: 0 0 14px;
+  padding: 8px 11px;
+  gap: 8px;
+  align-items: center;
+  border: 1px solid var(--border-subtle);
+  border-radius: 11px;
+  color: var(--accent);
+  cursor: pointer;
+  background: var(--surface-tint);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 650;
+  text-align: left;
+}
+
+.spatial-inspector-focus:hover:not(:disabled) {
+  background: rgba(112, 85, 197, .15);
+}
+
+.spatial-inspector-focus:disabled {
+  cursor: default;
+  opacity: .42;
+}
+
+.spatial-inspector-focus:focus-visible {
+  outline: 2px solid rgba(112, 85, 197, .3);
+  outline-offset: 2px;
+}
+
+.spatial-inspector-focus svg {
+  width: 17px;
+  height: 17px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.spatial-inspector-focus kbd {
+  padding: 2px 5px;
+  border: 0;
+  border-radius: 5px;
+  color: var(--text-tertiary);
+  background: var(--surface-muted);
+  font: inherit;
+  font-size: 10px;
+  font-weight: 600;
+}
+
+@media (hover: none) and (pointer: coarse) {
+  .spatial-inspector-focus {
+    min-height: 44px;
+  }
+
+  .spatial-inspector-focus kbd {
+    display: none;
+  }
 }
 
 .spatial-inspector-suggestions {

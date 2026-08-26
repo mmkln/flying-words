@@ -499,13 +499,6 @@ function focusSelectedSpatialThought() {
   return spatialView.focusThought(selectedThoughtId);
 }
 
-function renderSpatialViewControls() {
-  const canFocus = canFocusSelectedSpatialThought();
-
-  spatialFocusButton.hidden = !canFocus;
-  spatialFocusButton.disabled = !canFocus;
-}
-
 function setSpatialLayoutMode(mode) {
   const nextMode = normalizeSpatialLayoutMode(mode);
   if (nextMode === spatialLayoutMode) {
@@ -1300,7 +1293,7 @@ function renderSpatialInspector() {
   const thought = selectedThoughtId ? getThoughtById(selectedThoughtId) : null;
   const visible = Boolean(thought && isSpatialSpace(activeSpaceId));
   spatialInspector.hidden = !visible;
-  renderSpatialViewControls();
+  spatialFocusButton.disabled = !canFocusSelectedSpatialThought();
   if (!visible) {
     spatialInspectorSuggestions.hidden = true;
     closeSpatialInspectorMenu();
