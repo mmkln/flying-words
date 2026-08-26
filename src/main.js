@@ -55,11 +55,11 @@ import {
   withoutSpatialPlacement,
 } from './spatial-placements.js';
 import {
-  getBoardAnchor,
-  hasBoardAnchor,
-  withBoardAnchor,
-  withoutBoardAnchor,
-} from './board-anchors.js';
+  getAnchor,
+  hasAnchor,
+  withAnchor,
+  withoutAnchor,
+} from './anchors.js';
 import {
   DEFAULT_SPACE_ID,
   SPACES,
@@ -156,6 +156,7 @@ const spatialInspectorPin = document.querySelector('#spatial-inspector-pin');
 const spatialInspectorAddRelated = document.querySelector('#spatial-inspector-add-related');
 const spatialInspectorMore = document.querySelector('#spatial-inspector-more');
 const spatialInspectorMenu = document.querySelector('#spatial-inspector-menu');
+const spatialInspectorAnchor = document.querySelector('#spatial-inspector-anchor');
 const spatialInspectorDelete = document.querySelector('#spatial-inspector-delete');
 const deleteThoughtDialog = document.querySelector('#delete-thought-dialog');
 const deleteThoughtMessage = document.querySelector('#delete-thought-message');
@@ -1312,9 +1313,11 @@ function renderSpatialInspector() {
   spatialInspectorText.textContent = thought.text;
   renderSpatialLinkSuggestions(thought);
   const pinned = getSpatialPlacement(thought, activeSpaceId)?.pinned === true;
+  const anchored = hasAnchor(thought);
   const editingConnections = Boolean(connectionEditor);
   const actionsDisabled = editingConnections || Boolean(magnetEditor);
   spatialInspectorMore.disabled = actionsDisabled;
+  spatialInspectorAnchor.disabled = actionsDisabled;
   spatialInspectorAddRelated.disabled = actionsDisabled;
   spatialInspectorConnect.disabled = editingConnections;
   spatialInspectorEdit.disabled = editingConnections;
@@ -1322,6 +1325,7 @@ function renderSpatialInspector() {
   if (actionsDisabled) closeSpatialInspectorMenu();
   spatialInspectorPin.textContent = pinned ? 'Unpin position' : 'Pin position';
   spatialInspectorPin.setAttribute('aria-pressed', String(pinned));
+  spatialInspectorAnchor.textContent = anchored ? 'Remove from Anchors' : 'Add to Anchors';
 }
 
 function toggleSpatialPositionPin() {
@@ -2586,7 +2590,7 @@ function makeThought(
   if (isSpatialSpace(activeSpaceId)) element.hidden = true;
 
   pinButton.addEventListener('click', () => togglePinned(thought));
-  anchorButton.addEventListener('click', () => toggleBoardAnchor(thought));
+  anchorButton.addEventListener('click', () => toggleThoughtAnchor(thought));
   kindButton.addEventListener('click', () => openThoughtKnowledgeKindPicker(thought));
   kindButton.addEventListener('keydown', (event) => {
     handleKnowledgeKindTriggerKeyDown(
@@ -3144,7 +3148,7 @@ function getBoardGraphLayoutInput() {
         y: placement.y,
         width: boardGeometry.cardWidth,
         height: boardGeometry.cardHeight,
-        fixed: hasBoardAnchor(thought, activeSpaceId),
+        fixed: hasAnchor(thought),
       };
     }),
     connections: flattenConnections(thoughts).filter(({ sourceId, targetId }) => (
@@ -3745,23 +3749,28 @@ function togglePinned(thought) {
   });
 }
 
-function toggleBoardAnchor(thought) {
-  if (!isCanvasSpace(activeSpaceId)) return;
+function supportsAnchors() {
+  return isCanvasSpace(activeSpaceId) || isSpatialSpace(activeSpaceId);
+}
+
+function toggleThoughtAnchor(thought) {
+  if (!supportsAnchors()) return;
   if (magnetEditor || connectionEditor) {
     announce('Finish the current card relationship first.');
     return;
   }
   if (blockEditsDuringAccountSync()) return;
 
-  const anchored = hasBoardAnchor(thought, activeSpaceId);
+  const anchored = hasAnchor(thought);
   thought.meta = anchored
-    ? withoutBoardAnchor(thought.meta, activeSpaceId)
-    : withBoardAnchor(thought.meta, activeSpaceId);
+    ? withoutAnchor(thought.meta)
+    : withAnchor(thought.meta);
 
   renderThought(thought);
   saveThoughts();
   if (isCloudMode()) enqueueThoughtMetaPatch(thought, ['navigation']);
   if (anchorsDialog.open) renderAnchors();
+  if (isSpatialSpace(activeSpaceId)) renderSpatialInspector();
   announce(anchored ? 'Anchor removed.' : 'Anchor added.');
 }
 
@@ -4131,13 +4140,13 @@ function renderThought(thought) {
   pinButton.title = thought.pinned ? 'Unpin thought' : 'Pin thought';
   pinButton.setAttribute('aria-label', pinButton.title);
   const anchorButton = thought.element.querySelector('.anchor-button');
-  const anchored = canvasThought && hasBoardAnchor(thought, activeSpaceId);
+  const anchored = hasAnchor(thought);
   anchorButton.hidden = !canvasThought;
   anchorButton.classList.toggle('is-active', anchored);
   anchorButton.setAttribute('aria-pressed', String(anchored));
   anchorButton.title = anchored ? 'Remove from anchors' : 'Add to anchors';
   anchorButton.setAttribute('aria-label', anchorButton.title);
-  thought.element.classList.toggle('is-anchored', anchored);
+  thought.element.classList.toggle('is-anchored', canvasThought && anchored);
   renderMagnetThoughtState(thought);
   renderConnectionThoughtState(thought);
   if (canvasThought) scheduleCanvasMinimapRender();
@@ -4196,8 +4205,6 @@ function focusCanvasThought(thought, message = 'Thought shown on Board.') {
 function addOrFocusThoughtOnCanvas(thought) {
   const existingPlacement = getCanvasPlacement(thought, activeSpaceId);
 
-  historyDialog.close();
-
   if (existingPlacement) {
     focusCanvasThought(thought, 'Thought shown on Board.');
     return;
@@ -4219,7 +4226,6 @@ function addOrFocusThoughtOnCanvas(thought) {
 }
 
 async function addOrFocusThoughtInSpatial(thought) {
-  historyDialog.close();
   const view = await ensureSpatialView();
   if (!isSpatialSpace(activeSpaceId)) return;
 
@@ -4229,7 +4235,7 @@ async function addOrFocusThoughtInSpatial(thought) {
   announce('Thought focused in Spatial.');
 }
 
-async function focusThoughtFromHistory(thought) {
+async function focusThoughtInActiveSpace(thought) {
   if (isSpatialSpace(activeSpaceId)) {
     await addOrFocusThoughtInSpatial(thought);
     return;
@@ -4240,7 +4246,6 @@ async function focusThoughtFromHistory(thought) {
     return;
   }
 
-  historyDialog.close();
   if (thought.pinned && getThoughtSpaceId(thought) !== activeSpaceId) {
     switchSpace(getThoughtSpaceId(thought));
   }
@@ -4267,6 +4272,16 @@ async function focusThoughtFromHistory(thought) {
   thought.element.classList.add('is-history-focused');
   window.setTimeout(() => thought.element.classList.remove('is-history-focused'), 900);
   announce('Thought shown on the board.');
+}
+
+async function focusThoughtFromHistory(thought) {
+  historyDialog.close();
+  await focusThoughtInActiveSpace(thought);
+}
+
+async function focusThoughtFromAnchors(thought) {
+  anchorsDialog.close();
+  await focusThoughtInActiveSpace(thought);
 }
 
 function renderHistory() {
@@ -4357,13 +4372,10 @@ function renderHistory() {
 
 function getAnchoredThoughts() {
   return thoughts
-    .filter((thought) => (
-      hasCanvasPlacement(thought, activeSpaceId)
-      && hasBoardAnchor(thought, activeSpaceId)
-    ))
+    .filter(hasAnchor)
     .sort((first, second) => {
-      const firstTime = getBoardAnchor(first, activeSpaceId)?.createdAt || 0;
-      const secondTime = getBoardAnchor(second, activeSpaceId)?.createdAt || 0;
+      const firstTime = getAnchor(first)?.createdAt || 0;
+      const secondTime = getAnchor(second)?.createdAt || 0;
       return secondTime - firstTime;
     });
 }
@@ -4399,8 +4411,7 @@ function renderAnchors() {
     contentButton.type = 'button';
     contentButton.className = 'history-item-content';
     contentButton.addEventListener('click', () => {
-      anchorsDialog.close();
-      focusCanvasThought(thought, 'Anchor shown on Board.');
+      void focusThoughtFromAnchors(thought);
     });
 
     text.className = 'history-item-text';
@@ -4411,7 +4422,7 @@ function renderAnchors() {
     removeButton.className = 'anchor-remove';
     removeButton.textContent = '×';
     removeButton.setAttribute('aria-label', 'Remove anchor');
-    removeButton.addEventListener('click', () => toggleBoardAnchor(thought));
+    removeButton.addEventListener('click', () => toggleThoughtAnchor(thought));
 
     row.append(kindIcon, contentButton, removeButton);
     item.append(row);
@@ -4423,7 +4434,7 @@ function renderAnchors() {
 }
 
 function openAnchors() {
-  if (!isCanvasSpace(activeSpaceId)) return;
+  if (!supportsAnchors()) return;
   if (magnetEditor) closeMagnetEditor({ restoreMotion: true });
   if (connectionEditor) closeConnectionEditor();
   stopDrag();
@@ -4639,8 +4650,9 @@ function openSpacesOverview() {
 function updateUi() {
   const boardActive = isCanvasSpace(activeSpaceId);
   const spatialActive = isSpatialSpace(activeSpaceId);
-  anchorsButton.hidden = !boardActive;
-  if (!boardActive && anchorsDialog.open) anchorsDialog.close();
+  const anchorsAvailable = boardActive || spatialActive;
+  anchorsButton.hidden = !anchorsAvailable;
+  if (!anchorsAvailable && anchorsDialog.open) anchorsDialog.close();
   emptyState.hidden = thoughts.some(isThoughtAvailableInActiveSpace);
   if (boardActive) {
     emptyStateTitle.textContent = 'Your Board is empty';
@@ -4908,6 +4920,13 @@ spatialInspectorMore.addEventListener('click', () => {
   const willOpen = spatialInspectorMenu.hidden;
   spatialInspectorMenu.hidden = !willOpen;
   spatialInspectorMore.setAttribute('aria-expanded', String(willOpen));
+});
+spatialInspectorAnchor.addEventListener('click', () => {
+  const thought = selectedThoughtId ? getThoughtById(selectedThoughtId) : null;
+  if (!thought) return;
+
+  toggleThoughtAnchor(thought);
+  closeSpatialInspectorMenu();
 });
 spatialInspectorDelete.addEventListener('click', openSpatialDeleteConfirmation);
 deleteThoughtCancel.addEventListener('click', () => {
