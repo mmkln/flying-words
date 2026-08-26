@@ -320,7 +320,7 @@ button { -webkit-tap-highlight-color: transparent; }
 
 .spatial-inspector header {
   display: grid;
-  grid-template-columns: 24px 1fr 28px 28px 28px;
+  grid-template-columns: 24px 1fr 28px 28px 28px 28px;
   align-items: center;
   gap: 7px;
 }
@@ -342,6 +342,7 @@ button { -webkit-tap-highlight-color: transparent; }
 }
 
 #spatial-inspector-add-related,
+#spatial-inspector-anchor,
 #spatial-inspector-more,
 #spatial-inspector-close {
   display: grid;
@@ -357,12 +358,20 @@ button { -webkit-tap-highlight-color: transparent; }
 }
 
 #spatial-inspector-add-related { font-size: 20px; font-weight: 350; }
+#spatial-inspector-anchor { border-radius: 50%; }
+#spatial-inspector-anchor svg { width: 17px; height: 17px; }
 #spatial-inspector-more { font-size: 16px; letter-spacing: 1px; }
 #spatial-inspector-close { border-radius: 50%; font-size: 20px; }
 #spatial-inspector-add-related:hover:not(:disabled),
+#spatial-inspector-anchor:hover:not(:disabled),
 #spatial-inspector-more:hover:not(:disabled),
 #spatial-inspector-close:hover { background: rgba(78, 64, 120, .08); }
+#spatial-inspector-anchor.is-active {
+  color: #7055c5;
+  background: rgba(112, 85, 197, .14);
+}
 #spatial-inspector-add-related:disabled,
+#spatial-inspector-anchor:disabled,
 #spatial-inspector-more:disabled { cursor: default; opacity: .42; }
 
 #spatial-inspector-text {

@@ -1325,7 +1325,10 @@ function renderSpatialInspector() {
   if (actionsDisabled) closeSpatialInspectorMenu();
   spatialInspectorPin.textContent = pinned ? 'Unpin position' : 'Pin position';
   spatialInspectorPin.setAttribute('aria-pressed', String(pinned));
-  spatialInspectorAnchor.textContent = anchored ? 'Remove from Anchors' : 'Add to Anchors';
+  spatialInspectorAnchor.classList.toggle('is-active', anchored);
+  spatialInspectorAnchor.title = anchored ? 'Remove from Anchors' : 'Add to Anchors';
+  spatialInspectorAnchor.setAttribute('aria-label', spatialInspectorAnchor.title);
+  spatialInspectorAnchor.setAttribute('aria-pressed', String(anchored));
 }
 
 function toggleSpatialPositionPin() {
@@ -4926,7 +4929,6 @@ spatialInspectorAnchor.addEventListener('click', () => {
   if (!thought) return;
 
   toggleThoughtAnchor(thought);
-  closeSpatialInspectorMenu();
 });
 spatialInspectorDelete.addEventListener('click', openSpatialDeleteConfirmation);
 deleteThoughtCancel.addEventListener('click', () => {

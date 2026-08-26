@@ -226,6 +226,21 @@
                 title="Add related thought"
               >+</button>
               <button
+                id="spatial-inspector-anchor"
+                class="spatial-inspector-anchor"
+                type="button"
+                aria-label="Add to Anchors"
+                title="Add to Anchors"
+                aria-pressed="false"
+              >
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                  <circle cx="12" cy="5" r="3"></circle>
+                  <path d="M12 8v12"></path>
+                  <path d="M5 14a7 7 0 0 0 14 0"></path>
+                  <path d="m5 14-2 2M19 14l2 2"></path>
+                </svg>
+              </button>
+              <button
                 id="spatial-inspector-more"
                 type="button"
                 aria-label="More actions"
@@ -255,11 +270,6 @@
               role="menu"
               hidden
             >
-              <button
-                id="spatial-inspector-anchor"
-                type="button"
-                role="menuitem"
-              >Add to Anchors</button>
               <button
                 id="spatial-inspector-delete"
                 type="button"
