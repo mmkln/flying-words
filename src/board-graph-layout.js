@@ -12,12 +12,17 @@ import {
   separateRectangles,
 } from './board-rectangle-collision.js';
 
+// The server validates the minimum Board clearance, while Arrange deliberately
+// uses a roomier one. Manual placement keeps its own, smaller clearance.
+export const AUTO_LAYOUT_GAP = 56;
+
 const CONNECTION_DISTANCE_OFFSET = Object.freeze({
-  tight: 58,
-  normal: 118,
-  loose: 218,
+  tight: 90,
+  normal: 175,
+  loose: 300,
 });
-const COMPONENT_GAP = 190;
+const MAGNET_DISTANCE_OFFSET = 76;
+const COMPONENT_GAP = 320;
 const GOLDEN_ANGLE = Math.PI * (3 - Math.sqrt(5));
 
 function hashString(value) {
@@ -199,7 +204,7 @@ function simulateComponent(component, cardsById, semanticLinks, magneticLinks, g
     .iterations(2);
   const magnetForce = forceLink(componentMagneticLinks)
     .id((node) => node.id)
-    .distance(geometry.cardWidth + geometry.gap * 2.4)
+    .distance(geometry.cardWidth + MAGNET_DISTANCE_OFFSET)
     .strength(0.34)
     .iterations(1);
   const isolatedCloud = component.isolatedCloud && component.memberIds.length > 1;
@@ -400,6 +405,10 @@ export function calculateBoardGraphLayout({
     cardHeight: geometry?.cardHeight || 96,
     gap: geometry?.gap || 24,
   };
+  const layoutGeometry = {
+    ...resolvedGeometry,
+    gap: AUTO_LAYOUT_GAP,
+  };
   const normalizedCards = cards
     .filter((card) => (
       typeof card?.id === 'string'
@@ -427,9 +436,9 @@ export function calculateBoardGraphLayout({
     cardsById,
     graph.semanticLinks,
     graph.magneticLinks,
-    resolvedGeometry,
+    layoutGeometry,
   ));
-  const nodes = packComponents(simulated, resolvedGeometry);
+  const nodes = packComponents(simulated, layoutGeometry);
   const originalCentre = currentBoardCentre(normalizedCards);
   const newCentre = {
     x: nodes.reduce((sum, node) => sum + node.x, 0) / nodes.length,
@@ -448,7 +457,7 @@ export function calculateBoardGraphLayout({
   const collisionFreePositions = placeWithoutOverlaps(
     positions,
     [...graph.semanticLinks, ...graph.magneticLinks],
-    resolvedGeometry.gap,
+    layoutGeometry.gap,
   );
 
   return collisionFreePositions

@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import {
+  AUTO_LAYOUT_GAP,
   buildBoardGraphComponents,
   calculateBoardGraphLayout,
 } from './board-graph-layout.js';
@@ -58,6 +59,7 @@ test('produces deterministic collision-free Board positions', () => {
 
   assert.deepEqual(first, second);
   assert.deepEqual(first.map(({ id }) => id), ['a', 'b', 'c', 'd', 'e']);
+  assert.ok(AUTO_LAYOUT_GAP > geometry.gap);
   first.forEach(({ x, y }) => {
     assert.ok(Number.isFinite(x));
     assert.ok(Number.isFinite(y));
@@ -69,7 +71,7 @@ test('produces deterministic collision-free Board positions', () => {
         rectanglesOverlap(
           { ...first[firstIndex], width: geometry.cardWidth, height: geometry.cardHeight },
           { ...first[secondIndex], width: geometry.cardWidth, height: geometry.cardHeight },
-          geometry.gap,
+          AUTO_LAYOUT_GAP,
         ),
         false,
       );
@@ -118,7 +120,7 @@ test('keeps a large dense graph collision-free', () => {
         rectanglesOverlap(
           { ...result[firstIndex], width: geometry.cardWidth, height: geometry.cardHeight },
           { ...result[secondIndex], width: geometry.cardWidth, height: geometry.cardHeight },
-          geometry.gap,
+          AUTO_LAYOUT_GAP,
         ),
         false,
       );
