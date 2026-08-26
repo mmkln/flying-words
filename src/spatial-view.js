@@ -6,6 +6,10 @@ import {
   SpatialLayoutMode,
   normalizeSpatialLayoutMode,
 } from './spatial-layout-mode.js';
+import {
+  SpatialGraphTransitionKind,
+  normalizeSpatialGraphTransition,
+} from './spatial-graph-transition.js';
 
 const MAX_SPATIAL_THOUGHTS = 1000;
 const MAX_VISIBLE_LABELS = 60;
@@ -241,6 +245,7 @@ export function createSpatialView({
   let renderFrame = null;
   let drag = null;
   let cameraTween = null;
+  let viewportTransition = null;
   let keyboardPanLastTimestamp = null;
   let keyboardPanMoved = false;
   let activeLayoutMode = normalizeSpatialLayoutMode(layoutMode);
@@ -321,22 +326,45 @@ export function createSpatialView({
     requestRender();
   }
 
+  function preserveViewportAnchor() {
+    if (
+      viewportTransition?.kind
+        !== SpatialGraphTransitionKind.INSERT_LINKED_NODE
+    ) return;
+
+    const anchor = nodesById.get(viewportTransition.anchorId);
+    if (!anchor) return;
+    const currentPosition = new THREE.Vector3(anchor.x, anchor.y, anchor.z);
+    const delta = currentPosition.clone().sub(viewportTransition.previousPosition);
+    if (delta.lengthSq() > 0.000001) {
+      camera.position.add(delta);
+      controls.target.add(delta);
+    }
+    viewportTransition.previousPosition.copy(currentPosition);
+  }
+
   const layout = createSpatialGraphLayout({
     onTick(nextNodes, nextLinks) {
       nodes = nextNodes;
       links = nextLinks;
       nodesById = new Map(nodes.map((node) => [node.id, node]));
+      preserveViewportAnchor();
       updateNeighbourIds();
       nodeInstancesDirty = true;
       edgeGeometryDirty = true;
       requestRender();
     },
-    onStable(nextNodes) {
+    onStable(nextNodes, { transition } = {}) {
       saveLayout(nextNodes);
       if ((initialFitPending || fitAfterLayout) && nextNodes.length) {
         initialFitPending = false;
         fitAfterLayout = false;
         fitAll();
+      }
+      if (viewportTransition) {
+        const preservedViewport = transition?.nodeId === viewportTransition.nodeId;
+        viewportTransition = null;
+        if (preservedViewport) saveCamera();
       }
       requestRender();
     },
@@ -736,12 +764,25 @@ export function createSpatialView({
     if (tweening || keyboardPanning || controlsChanged) requestRender();
   }
 
-  function setGraph({
-    nodes: sourceNodes = [],
-    links: sourceLinks = [],
-    layoutMode: nextLayoutMode = activeLayoutMode,
-    fitAfterLayout: shouldFitAfterLayout = false,
-  }) {
+  function setGraph(
+    {
+      nodes: sourceNodes = [],
+      links: sourceLinks = [],
+      layoutMode: nextLayoutMode = activeLayoutMode,
+      fitAfterLayout: shouldFitAfterLayout = false,
+    },
+    { transition: requestedTransition = null } = {},
+  ) {
+    const transition = normalizeSpatialGraphTransition(requestedTransition);
+    const anchor = transition.kind === SpatialGraphTransitionKind.INSERT_LINKED_NODE
+      ? nodesById.get(transition.anchorId)
+      : null;
+    viewportTransition = anchor
+      ? {
+          ...transition,
+          previousPosition: new THREE.Vector3(anchor.x, anchor.y, anchor.z),
+        }
+      : null;
     const normalizedLayoutMode = normalizeSpatialLayoutMode(nextLayoutMode);
     if (normalizedLayoutMode !== activeLayoutMode) {
       activeLayoutMode = normalizedLayoutMode;
@@ -771,11 +812,14 @@ export function createSpatialView({
     nodeMesh.count = preparedNodes.length;
     hitMesh.count = preparedNodes.length;
 
-    layout.setGraph({
-      nodes: preparedNodes,
-      links: preparedLinks,
-      layoutMode: activeLayoutMode,
-    });
+    layout.setGraph(
+      {
+        nodes: preparedNodes,
+        links: preparedLinks,
+        layoutMode: activeLayoutMode,
+      },
+      { transition },
+    );
     nodes = layout.getNodes();
     links = layout.getLinks();
     nodesById = new Map(nodes.map((node) => [node.id, node]));

@@ -10,9 +10,14 @@ import {
 
 import {
   buildSpatialClusterPlan,
+  extendSpatialClusterPlan,
   spatialClusterPlanKey,
 } from './spatial-clusters.js';
 import { normalizeSpatialLayoutMode } from './spatial-layout-mode.js';
+import {
+  SpatialGraphTransitionKind,
+  normalizeSpatialGraphTransition,
+} from './spatial-graph-transition.js';
 
 const LINK_DISTANCE = Object.freeze({
   tight: 72,
@@ -21,6 +26,9 @@ const LINK_DISTANCE = Object.freeze({
 });
 
 const CROSS_CLUSTER_DISTANCE = 460;
+const LINKED_NODE_ENTRY_OFFSET = Object.freeze({ x: 72, y: -36, z: 48 });
+const LINKED_NODE_ALPHA = 0.22;
+const DEFAULT_LAYOUT_ALPHA = 0.9;
 
 function finitePosition(value) {
   return Boolean(
@@ -62,6 +70,8 @@ export function createSpatialGraphLayout({
   let links = [];
   let clusterPlan = null;
   let clusterPlanKey = null;
+  let activeTransition = null;
+  const transientConstraintIds = new Set();
   let disposed = false;
 
   const linkForce = forceLink([])
@@ -83,16 +93,94 @@ export function createSpatialGraphLayout({
     .alphaDecay(0.035)
     .velocityDecay(0.42)
     .on('tick', () => onTick(nodes, links))
-    .on('end', () => onStable(nodes));
+    .on('end', () => {
+      const transition = completeTransition();
+      onStable(nodes, { transition });
+    });
 
-  function setGraph(graph = {}) {
+  function releaseTransientConstraints() {
+    transientConstraintIds.forEach((nodeId) => {
+      const node = nodes.find((candidate) => candidate.id === nodeId);
+      if (!node || node.pinned) return;
+      node.fx = null;
+      node.fy = null;
+      node.fz = null;
+      node.vx = 0;
+      node.vy = 0;
+      node.vz = 0;
+    });
+    transientConstraintIds.clear();
+  }
+
+  function completeTransition() {
+    const completedTransition = activeTransition;
+    releaseTransientConstraints();
+    activeTransition = null;
+    return completedTransition;
+  }
+
+  function setGraph(graph = {}, options = {}) {
     if (disposed) return;
+    completeTransition();
+
     const previousById = new Map(nodes.map((node) => [node.id, node]));
     const sourceNodes = Array.isArray(graph.nodes) ? graph.nodes : [];
     const sourceLinks = Array.isArray(graph.links) ? graph.links : [];
+    const sourceNodeIds = new Set(sourceNodes.map((node) => node.id));
     const layoutMode = normalizeSpatialLayoutMode(graph.layoutMode);
+    const requestedTransition = normalizeSpatialGraphTransition(options.transition);
+    const insertedNode = sourceNodes.find((node) => node.id === requestedTransition.nodeId);
+    const anchorNode = previousById.get(requestedTransition.anchorId);
+    const keepsExistingNodes = [...previousById.keys()]
+      .every((nodeId) => sourceNodeIds.has(nodeId));
+    const containsNewLink = sourceLinks.some(({ sourceId, targetId }) => (
+      (
+        sourceId === requestedTransition.anchorId
+        && targetId === requestedTransition.nodeId
+      )
+      || (
+        targetId === requestedTransition.anchorId
+        && sourceId === requestedTransition.nodeId
+      )
+    ));
+    const validLinkedInsertion = (
+      requestedTransition.kind === SpatialGraphTransitionKind.INSERT_LINKED_NODE
+      && insertedNode
+      && anchorNode
+      && !previousById.has(insertedNode.id)
+      && sourceNodes.length === previousById.size + 1
+      && keepsExistingNodes
+      && containsNewLink
+    );
+    activeTransition = validLinkedInsertion
+      ? requestedTransition
+      : {
+          kind: requestedTransition.kind === SpatialGraphTransitionKind.REBUILD
+            ? SpatialGraphTransitionKind.REBUILD
+            : SpatialGraphTransitionKind.RECONCILE,
+        };
+
     const nextClusterPlanKey = spatialClusterPlanKey(sourceNodes, sourceLinks, layoutMode);
-    if (nextClusterPlanKey !== clusterPlanKey) {
+    if (
+      activeTransition.kind === SpatialGraphTransitionKind.INSERT_LINKED_NODE
+      && clusterPlan
+    ) {
+      const extendedPlan = extendSpatialClusterPlan(clusterPlan, {
+        node: insertedNode,
+        anchorNodeId: activeTransition.anchorId,
+        mode: layoutMode,
+      });
+      if (extendedPlan) {
+        clusterPlan = extendedPlan;
+        clusterPlanKey = nextClusterPlanKey;
+      } else {
+        activeTransition = { kind: SpatialGraphTransitionKind.RECONCILE };
+      }
+    }
+    if (
+      activeTransition.kind === SpatialGraphTransitionKind.REBUILD
+      || nextClusterPlanKey !== clusterPlanKey
+    ) {
       clusterPlan = buildSpatialClusterPlan(sourceNodes, sourceLinks, layoutMode);
       clusterPlanKey = nextClusterPlanKey;
     }
@@ -103,7 +191,26 @@ export function createSpatialGraphLayout({
       const pinnedPosition = finitePosition(source.pinnedPosition)
         ? source.pinnedPosition
         : null;
+      const insertionPosition = (
+        activeTransition.kind === SpatialGraphTransitionKind.INSERT_LINKED_NODE
+        && source.id === activeTransition.nodeId
+        && anchorNode
+      )
+        ? {
+            x: anchorNode.x + LINKED_NODE_ENTRY_OFFSET.x,
+            y: anchorNode.y + LINKED_NODE_ENTRY_OFFSET.y,
+            z: anchorNode.z + LINKED_NODE_ENTRY_OFFSET.z,
+          }
+        : null;
+      const preservedPosition = (
+        activeTransition.kind === SpatialGraphTransitionKind.INSERT_LINKED_NODE
+        && finitePosition(previous)
+      )
+        ? previous
+        : null;
       const initial = pinnedPosition
+        || insertionPosition
+        || preservedPosition
         || (finitePosition(source) ? source : null)
         || (finitePosition(previous) ? previous : null)
         || seedSpatialPosition(source.id, index);
@@ -125,6 +232,20 @@ export function createSpatialGraphLayout({
         fz: pinned ? initial.z : null,
       };
     });
+
+    if (activeTransition.kind === SpatialGraphTransitionKind.INSERT_LINKED_NODE) {
+      nodes.forEach((node) => {
+        if (
+          node.id === activeTransition.nodeId
+          || node.pinned
+          || !previousById.has(node.id)
+        ) return;
+        node.fx = node.x;
+        node.fy = node.y;
+        node.fz = node.z;
+        transientConstraintIds.add(node.id);
+      });
+    }
 
     const knownIds = new Set(nodes.map((node) => node.id));
     const nodeById = new Map(nodes.map((node) => [node.id, node]));
@@ -149,11 +270,15 @@ export function createSpatialGraphLayout({
     if (!nodes.length) {
       simulation.stop();
       onTick(nodes, links);
-      onStable(nodes);
+      const transition = completeTransition();
+      onStable(nodes, { transition });
       return;
     }
 
-    simulation.alpha(0.9).alphaTarget(0).restart();
+    const alpha = activeTransition.kind === SpatialGraphTransitionKind.INSERT_LINKED_NODE
+      ? LINKED_NODE_ALPHA
+      : DEFAULT_LAYOUT_ALPHA;
+    simulation.alpha(alpha).alphaTarget(0).restart();
   }
 
   function getNode(nodeId) {
@@ -227,11 +352,13 @@ export function createSpatialGraphLayout({
 
   function stop() {
     simulation.stop();
+    completeTransition();
   }
 
   function dispose() {
     disposed = true;
     simulation.stop();
+    completeTransition();
     simulation.on('tick', null).on('end', null);
     nodes = [];
     links = [];

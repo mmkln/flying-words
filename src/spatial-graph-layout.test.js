@@ -5,6 +5,7 @@ import {
   createSpatialGraphLayout,
   seedSpatialPosition,
 } from './spatial-graph-layout.js';
+import { SpatialGraphTransitionKind } from './spatial-graph-transition.js';
 import { SpatialLayoutMode } from './spatial-layout-mode.js';
 
 test('creates stable deterministic seed positions', () => {
@@ -51,6 +52,120 @@ test('uses a transient supplied position without pinning a Spatial node', () => 
   assert.equal(node.y, -36);
   assert.equal(node.z, 48);
   assert.equal(node.pinned, false);
+  layout.dispose();
+});
+
+test('inserts a linked node beside its anchor without moving existing nodes', () => {
+  const layout = createSpatialGraphLayout();
+  layout.setGraph({
+    nodes: [{ id: 'parent', radius: 8 }, { id: 'other', radius: 8 }],
+    links: [],
+  });
+  layout.stop();
+  const parentBefore = { ...layout.getNode('parent') };
+  const otherBefore = { ...layout.getNode('other') };
+
+  layout.setGraph(
+    {
+      nodes: [
+        { id: 'parent', radius: 8, x: 900, y: 800, z: 700 },
+        { id: 'other', radius: 8, x: -900, y: -800, z: -700 },
+        { id: 'child', radius: 8 },
+      ],
+      links: [{ sourceId: 'parent', targetId: 'child', spacing: 'normal' }],
+    },
+    {
+      transition: {
+        kind: SpatialGraphTransitionKind.INSERT_LINKED_NODE,
+        nodeId: 'child',
+        anchorId: 'parent',
+      },
+    },
+  );
+
+  const parentAfter = layout.getNode('parent');
+  const otherAfter = layout.getNode('other');
+  const child = layout.getNode('child');
+  assert.deepEqual(
+    { x: parentAfter.x, y: parentAfter.y, z: parentAfter.z },
+    { x: parentBefore.x, y: parentBefore.y, z: parentBefore.z },
+  );
+  assert.deepEqual(
+    { x: otherAfter.x, y: otherAfter.y, z: otherAfter.z },
+    { x: otherBefore.x, y: otherBefore.y, z: otherBefore.z },
+  );
+  assert.deepEqual(
+    { x: child.x, y: child.y, z: child.z },
+    { x: parentBefore.x + 72, y: parentBefore.y - 36, z: parentBefore.z + 48 },
+  );
+  assert.equal(child.clusterId, parentAfter.clusterId);
+  layout.dispose();
+});
+
+test('releases insertion constraints without releasing persistent pins', () => {
+  const layout = createSpatialGraphLayout();
+  layout.setGraph({
+    nodes: [
+      { id: 'parent', radius: 8 },
+      {
+        id: 'pinned',
+        radius: 8,
+        pinnedPosition: { x: 20, y: 30, z: 40, pinned: true },
+      },
+    ],
+    links: [],
+  });
+  layout.stop();
+  layout.setGraph(
+    {
+      nodes: [
+        { id: 'parent', radius: 8 },
+        {
+          id: 'pinned',
+          radius: 8,
+          pinnedPosition: { x: 20, y: 30, z: 40, pinned: true },
+        },
+        { id: 'child', radius: 8 },
+      ],
+      links: [{ sourceId: 'parent', targetId: 'child' }],
+    },
+    {
+      transition: {
+        kind: SpatialGraphTransitionKind.INSERT_LINKED_NODE,
+        nodeId: 'child',
+        anchorId: 'parent',
+      },
+    },
+  );
+
+  assert.equal(layout.getNode('parent').fx, layout.getNode('parent').x);
+  layout.stop();
+  assert.equal(layout.getNode('parent').fx, null);
+  assert.equal(layout.getNode('pinned').fx, 20);
+  assert.equal(layout.getNode('pinned').fy, 30);
+  assert.equal(layout.getNode('pinned').fz, 40);
+  layout.dispose();
+});
+
+test('falls back to a regular reconcile for an invalid linked insertion', () => {
+  const layout = createSpatialGraphLayout();
+  layout.setGraph({ nodes: [{ id: 'parent', radius: 8 }], links: [] });
+  layout.stop();
+  layout.setGraph(
+    {
+      nodes: [{ id: 'parent', radius: 8 }, { id: 'child', radius: 8 }],
+      links: [],
+    },
+    {
+      transition: {
+        kind: SpatialGraphTransitionKind.INSERT_LINKED_NODE,
+        nodeId: 'child',
+        anchorId: 'parent',
+      },
+    },
+  );
+
+  assert.equal(layout.getNode('parent').fx, null);
   layout.dispose();
 });
 

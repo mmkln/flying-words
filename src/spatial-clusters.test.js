@@ -3,6 +3,7 @@ import test from 'node:test';
 
 import {
   buildSpatialClusterPlan,
+  extendSpatialClusterPlan,
   spatialClusterPlanKey,
 } from './spatial-clusters.js';
 import { SpatialLayoutMode } from './spatial-layout-mode.js';
@@ -85,6 +86,74 @@ test('uses knowledge kind depth only in the Knowledge layers mode', () => {
     constellationPlan.nodeLayoutById.get('question').clusterAnchor.z,
     constellationPlan.nodeLayoutById.get('hypothesis').clusterAnchor.z,
   );
+});
+
+test('extends the parent cluster without moving existing anchors', () => {
+  const plan = buildSpatialClusterPlan(
+    [
+      { id: 'parent', kind: 'thought' },
+      { id: 'sibling', kind: 'thought' },
+      { id: 'other', kind: 'thought' },
+    ],
+    [{ sourceId: 'parent', targetId: 'sibling' }],
+  );
+  const parentAnchor = { ...plan.nodeLayoutById.get('parent').clusterAnchor };
+  const otherAnchor = { ...plan.nodeLayoutById.get('other').clusterAnchor };
+  const extended = extendSpatialClusterPlan(plan, {
+    node: { id: 'child', kind: 'observation' },
+    anchorNodeId: 'parent',
+  });
+
+  assert.equal(
+    extended.nodeLayoutById.get('child').clusterId,
+    extended.nodeLayoutById.get('parent').clusterId,
+  );
+  assert.deepEqual(extended.nodeLayoutById.get('parent').clusterAnchor, parentAnchor);
+  assert.deepEqual(extended.nodeLayoutById.get('other').clusterAnchor, otherAnchor);
+  assert.deepEqual(
+    extended.clusterByNodeId.get('parent').nodeIds,
+    ['child', 'parent', 'sibling'],
+  );
+});
+
+test('extends a cluster at the knowledge depth of the inserted node', () => {
+  const plan = buildSpatialClusterPlan(
+    [{ id: 'parent', kind: 'thought' }],
+    [],
+    SpatialLayoutMode.KNOWLEDGE_LAYERS,
+  );
+  const extended = extendSpatialClusterPlan(plan, {
+    node: { id: 'child', kind: 'hypothesis' },
+    anchorNodeId: 'parent',
+    mode: SpatialLayoutMode.KNOWLEDGE_LAYERS,
+  });
+
+  assert.equal(extended.nodeLayoutById.get('child').clusterAnchor.z, 120);
+  assert.equal(
+    extended.nodeLayoutById.get('child').clusterAnchor.x,
+    extended.nodeLayoutById.get('parent').clusterAnchor.x,
+  );
+});
+
+test('splits an isolated anchor out of the unlinked cloud', () => {
+  const plan = buildSpatialClusterPlan(
+    [
+      { id: 'parent', kind: 'thought' },
+      { id: 'unrelated', kind: 'thought' },
+    ],
+    [],
+  );
+  const parentAnchor = { ...plan.nodeLayoutById.get('parent').clusterAnchor };
+  const extended = extendSpatialClusterPlan(plan, {
+    node: { id: 'child', kind: 'thought' },
+    anchorNodeId: 'parent',
+  });
+
+  assert.equal(extended.clusterByNodeId.get('parent').id, 'cluster:child');
+  assert.equal(extended.clusterByNodeId.get('child').id, 'cluster:child');
+  assert.equal(extended.clusterByNodeId.get('unrelated').id, 'cluster:unlinked');
+  assert.deepEqual(extended.nodeLayoutById.get('parent').clusterAnchor, parentAnchor);
+  assert.deepEqual(extended.clusterByNodeId.get('unrelated').nodeIds, ['unrelated']);
 });
 
 test('only invalidates the cluster plan when topology, kind, or mode changes', () => {

@@ -349,4 +349,89 @@ export function buildSpatialClusterPlan(
   };
 }
 
+export function extendSpatialClusterPlan(
+  previousPlan,
+  {
+    node,
+    anchorNodeId,
+    mode = SpatialLayoutMode.CONSTELLATIONS,
+  } = {},
+) {
+  const anchorCluster = previousPlan?.clusterByNodeId?.get(anchorNodeId);
+  const anchorLayout = previousPlan?.nodeLayoutById?.get(anchorNodeId);
+  if (!anchorCluster || !anchorLayout || !finiteNode(node)) return null;
+
+  const normalizedMode = normalizeSpatialLayoutMode(mode);
+  if (anchorCluster.id === 'cluster:unlinked') {
+    const remainingNodeIds = anchorCluster.nodeIds
+      .filter((nodeId) => nodeId !== anchorNodeId);
+    const linkedNodeIds = [anchorNodeId, node.id].sort();
+    const linkedCluster = {
+      ...anchorCluster,
+      id: `cluster:${linkedNodeIds[0]}`,
+      nodeIds: linkedNodeIds,
+      radius: clusterRadius(linkedNodeIds.length),
+      anchor: { ...anchorCluster.anchor },
+    };
+    const remainingCluster = remainingNodeIds.length
+      ? {
+          ...anchorCluster,
+          nodeIds: remainingNodeIds,
+          radius: clusterRadius(remainingNodeIds.length),
+        }
+      : null;
+    const clusters = previousPlan.clusters
+      .filter((cluster) => cluster.id !== anchorCluster.id)
+      .concat(remainingCluster ? [remainingCluster, linkedCluster] : [linkedCluster])
+      .sort((first, second) => first.id.localeCompare(second.id));
+    const clusterByNodeId = new Map(previousPlan.clusterByNodeId);
+    remainingNodeIds.forEach((nodeId) => clusterByNodeId.set(nodeId, remainingCluster));
+    linkedNodeIds.forEach((nodeId) => clusterByNodeId.set(nodeId, linkedCluster));
+    const nodeLayoutById = new Map(previousPlan.nodeLayoutById);
+    nodeLayoutById.set(anchorNodeId, {
+      ...anchorLayout,
+      clusterId: linkedCluster.id,
+    });
+    nodeLayoutById.set(node.id, {
+      clusterId: linkedCluster.id,
+      clusterAnchor: nodeLayoutAnchor(node, linkedCluster, normalizedMode),
+    });
+
+    return {
+      ...previousPlan,
+      clusters,
+      clusterByNodeId,
+      nodeLayoutById,
+    };
+  }
+
+  const nodeIds = [...new Set([...anchorCluster.nodeIds, node.id])].sort();
+  const nextCluster = {
+    ...anchorCluster,
+    nodeIds,
+    radius: clusterRadius(nodeIds.length),
+  };
+  const clusters = previousPlan.clusters.map((cluster) => (
+    cluster.id === nextCluster.id ? nextCluster : cluster
+  ));
+  const clusterByNodeId = new Map(previousPlan.clusterByNodeId);
+  nodeIds.forEach((nodeId) => clusterByNodeId.set(nodeId, nextCluster));
+  const nodeLayoutById = new Map(previousPlan.nodeLayoutById);
+  nodeLayoutById.set(node.id, {
+    clusterId: nextCluster.id,
+    clusterAnchor: nodeLayoutAnchor(
+      node,
+      nextCluster,
+      normalizedMode,
+    ),
+  });
+
+  return {
+    ...previousPlan,
+    clusters,
+    clusterByNodeId,
+    nodeLayoutById,
+  };
+}
+
 export { KNOWLEDGE_LAYER_Z };

@@ -88,6 +88,7 @@ import {
   SpatialLayoutMode,
   normalizeSpatialLayoutMode,
 } from './spatial-layout-mode.js';
+import { SpatialGraphTransitionKind } from './spatial-graph-transition.js';
 
 const STORAGE_KEY = 'flying-thoughts:v1';
 const AUTH_STORAGE_KEY = 'flying-thoughts:auth:v1';
@@ -273,7 +274,6 @@ let magnetEditor = null;
 let connectionEditor = null;
 let connectionSearchActiveIndex = 0;
 let composerRelationTargetId = null;
-const spatialEntrySeeds = new Map();
 let composerKnowledgeKind = KnowledgeKind.THOUGHT;
 let knowledgeKindEditor = null;
 let selectedThoughtId = null;
@@ -527,7 +527,6 @@ function buildSpatialGraph() {
 
   const nodes = thoughts.map((thought) => {
     const connectionCount = connectionCounts.get(thought.id) || 0;
-    const seed = spatialEntrySeeds.get(thought.id);
     return {
       id: thought.id,
       text: thought.text,
@@ -535,7 +534,6 @@ function buildSpatialGraph() {
       radius: Math.min(13, 5 + Math.sqrt(connectionCount) * 1.6),
       connectionCount,
       pinnedPosition: getSpatialPlacement(thought, activeSpaceId),
-      ...(seed || {}),
     };
   });
   return { nodes, links, layoutMode: spatialLayoutMode };
@@ -589,12 +587,15 @@ async function ensureSpatialView() {
   return spatialViewPromise;
 }
 
-function refreshSpatialGraph({ fitAfterLayout = false } = {}) {
+function refreshSpatialGraph({ fitAfterLayout = false, transition = null } = {}) {
   if (!spatialView || !isSpatialSpace(activeSpaceId)) return;
-  spatialView.setGraph({
-    ...buildSpatialGraph(),
-    fitAfterLayout,
-  });
+  spatialView.setGraph(
+    {
+      ...buildSpatialGraph(),
+      fitAfterLayout,
+    },
+    { transition },
+  );
   spatialView.setSelectedThought(selectedThoughtId);
   renderSpatialInspector();
 }
@@ -2616,7 +2617,6 @@ function replaceThoughts(nextThoughts) {
   thoughtEditor.discard({ restoreFocus: false });
   selectedThoughtId = null;
   composerRelationTargetId = null;
-  spatialEntrySeeds.clear();
   renderComposerRelation();
   knowledgeKindPicker.close();
   magnetEditor = null;
@@ -3635,18 +3635,6 @@ async function addThought(rawText, { relationTargetId = null } = {}) {
     return false;
   }
   const thoughtId = crypto.randomUUID();
-  const anchorPosition = relationTarget
-    ? spatialView?.getThoughtPosition(relationTarget.id)
-    : null;
-
-  if (anchorPosition) {
-    spatialEntrySeeds.set(thoughtId, {
-      x: anchorPosition.x + 72,
-      y: anchorPosition.y - 36,
-      z: anchorPosition.z + 48,
-    });
-  }
-
   const thought = makeThought(
     text,
     {
@@ -3675,8 +3663,15 @@ async function addThought(rawText, { relationTargetId = null } = {}) {
   updateUi();
   saveThoughts();
   if (addingToSpatial && activeSpaceId === targetSpaceId) {
-    refreshSpatialGraph();
-    spatialEntrySeeds.delete(thought.id);
+    refreshSpatialGraph({
+      transition: relationTarget
+        ? {
+            kind: SpatialGraphTransitionKind.INSERT_LINKED_NODE,
+            nodeId: thought.id,
+            anchorId: relationTarget.id,
+          }
+        : null,
+    });
     if (relationTarget) selectThought(thought);
   }
 
@@ -3797,7 +3792,6 @@ function removeThought(thought) {
   }
   if (blockEditsDuringAccountSync()) return;
   if (thought.id === composerRelationTargetId) clearComposerRelation();
-  spatialEntrySeeds.delete(thought.id);
   if (knowledgeKindEditor?.thoughtId === thought.id) knowledgeKindPicker.close();
   if (isPersistedMagnetParent(thought)) detachLocalMagnetChildren(thought.id);
   const changedConnectionSources = detachIncomingConnections(thoughts, thought.id);
