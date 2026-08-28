@@ -3672,7 +3672,7 @@ async function addThought(rawText, { relationTargetId = null } = {}) {
           }
         : null,
     });
-    if (relationTarget) selectThought(thought);
+    selectThought(thought);
   }
 
   if (isCloudMode()) {
