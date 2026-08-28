@@ -89,6 +89,11 @@ import {
   normalizeSpatialLayoutMode,
 } from './spatial-layout-mode.js';
 import { SpatialGraphTransitionKind } from './spatial-graph-transition.js';
+import {
+  buildSessionHeaders,
+  parseAccountHint,
+  parseBrowserSession,
+} from './browser-session.js';
 
 const STORAGE_KEY = 'flying-thoughts:v1';
 const AUTH_STORAGE_KEY = 'flying-thoughts:auth:v1';
@@ -120,7 +125,7 @@ const MIN_CANVAS_SCALE = 0.3;
 const MAX_CANVAS_SCALE = 1;
 const CANVAS_SPAWN_MARGIN = 20;
 const CANVAS_SPAWN_MAX_RINGS = 8;
-const LOCAL_API_URL = 'http://127.0.0.1:8000/api/v1';
+const LOCAL_API_URL = 'http://127.0.0.1:8001/api/v1';
 const PRODUCTION_API_URL = 'https://mxllwords.pythonanywhere.com/api/v1';
 const CONFIGURED_API_URL = import.meta.env.VITE_API_URL?.trim().replace(/\/$/, '');
 const API_URL = CONFIGURED_API_URL || (
@@ -195,15 +200,16 @@ const spacesOverview = document.querySelector('#spaces-overview');
 const spacesClose = document.querySelector('#spaces-close');
 const spacesGrid = document.querySelector('#spaces-grid');
 const themeButton = document.querySelector('#theme-button');
-const accountButton = document.querySelector('#account-button');
-const authDialog = document.querySelector('#auth-dialog');
-const authForm = document.querySelector('#auth-form');
-const authEmail = document.querySelector('#auth-email');
-const authPassword = document.querySelector('#auth-password');
-const authMessage = document.querySelector('#auth-message');
-const authClose = document.querySelector('#auth-close');
-const registerButton = document.querySelector('#register-button');
-const loginButton = document.querySelector('#login-button');
+const accountMenu = document.querySelector('#account-menu');
+const accountTrigger = document.querySelector('#account-trigger');
+const accountTriggerLabel = document.querySelector('#account-trigger-label');
+const accountAvatar = document.querySelector('#account-avatar');
+const accountChevron = document.querySelector('#account-chevron');
+const accountPopover = document.querySelector('#account-popover');
+const accountMenuAvatar = document.querySelector('#account-menu-avatar');
+const accountEmail = document.querySelector('#account-email');
+const switchAccountMenuItem = document.querySelector('#switch-account');
+const signOutMenuItem = document.querySelector('#sign-out');
 const selectionToolbar = document.querySelector('#selection-toolbar');
 const selectionCount = document.querySelector('#selection-count');
 const selectionCancel = document.querySelector('#selection-cancel');
@@ -220,25 +226,15 @@ const thoughtFocusCount = document.querySelector('#thought-focus-count');
 const thoughtFocusKind = document.querySelector('#thought-focus-kind');
 const thoughtFocusDiscard = document.querySelector('#thought-focus-discard');
 
-let auth = loadAuth();
-const legacyOutboxQuarantined = auth ? quarantineLegacyOutbox(auth.id) : false;
-const initialPendingThoughts = auth ? loadPendingThoughts(auth.id) : [];
-const initialGuestThoughts = initialPendingThoughts.length
-  ? initialPendingThoughts
-  : loadStoredThoughts(STORAGE_KEY);
-const initialAccountThoughts = auth ? loadAccountThoughts(auth.id) : [];
-let thoughts = auth
-  ? applyOutboxOperations(
-    mergeThoughts(initialAccountThoughts, initialGuestThoughts),
-    loadOutbox(auth.id),
-  )
-  : initialGuestThoughts;
-let syncPending = Boolean(auth && initialGuestThoughts.length);
-if (auth && !initialPendingThoughts.length && initialGuestThoughts.length) {
-  storePendingThoughts(auth.id, initialGuestThoughts);
-}
+loadAuth();
+let auth = null;
+let sessionCsrfToken = null;
+let sessionValidated = false;
+let legacyOutboxQuarantined = false;
+let thoughts = loadStoredThoughts(STORAGE_KEY);
+let syncPending = false;
 let syncInFlight = false;
-let serverStateReady = !auth;
+let serverStateReady = true;
 let syncOperationId = 0;
 const visibilityStates = new Map();
 const componentByThoughtId = new Map();
@@ -823,35 +819,32 @@ function handleKnowledgeKindTriggerKeyDown(event, openPicker) {
 }
 
 function loadAuthFrom(storage) {
-  try {
-    const savedAuth = JSON.parse(storage.getItem(AUTH_STORAGE_KEY));
-    if (!savedAuth?.access || !savedAuth?.refresh || !savedAuth?.email || !savedAuth?.id) return null;
-    return savedAuth;
-  } catch {
-    return null;
-  }
+  return parseAccountHint(storage.getItem(AUTH_STORAGE_KEY));
 }
 
 function loadAuth() {
-  const savedAuth = loadAuthFrom(localStorage);
-  if (savedAuth) return savedAuth;
-
-  const legacyAuth = loadAuthFrom(sessionStorage);
-  if (!legacyAuth) return null;
-
-  localStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify(legacyAuth));
+  const account = loadAuthFrom(localStorage) || loadAuthFrom(sessionStorage);
   sessionStorage.removeItem(AUTH_STORAGE_KEY);
-  return legacyAuth;
+  if (!account) {
+    localStorage.removeItem(AUTH_STORAGE_KEY);
+    return null;
+  }
+
+  localStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify(account));
+  return account;
 }
 
 function storeAuth() {
   if (!auth) return;
-  localStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify(auth));
+  localStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify({
+    id: auth.id,
+    email: auth.email,
+  }));
   sessionStorage.removeItem(AUTH_STORAGE_KEY);
 }
 
 function isCloudMode() {
-  return Boolean(auth) && !syncPending && serverStateReady;
+  return Boolean(auth) && sessionValidated && !syncPending && serverStateReady;
 }
 
 function blockEditsDuringAccountSync() {
@@ -2784,33 +2777,25 @@ class ApiError extends Error {
 }
 
 async function requestApi(path, {
-  method = 'GET', body, retry = true, authSnapshot = auth,
+  method = 'GET', body, authSnapshot = auth,
 } = {}) {
-  const headers = { Accept: 'application/json' };
-  if (authSnapshot?.access) headers.Authorization = `Bearer ${authSnapshot.access}`;
-  if (body !== undefined) headers['Content-Type'] = 'application/json';
+  const headers = buildSessionHeaders({
+    method,
+    hasBody: body !== undefined,
+    csrfToken: sessionCsrfToken,
+  });
 
   const response = await fetch(`${API_URL}${path}`, {
     method,
+    credentials: 'include',
     headers,
     body: body === undefined ? undefined : JSON.stringify(body),
   });
 
-  if (
-    response.status === 401
-    && retry
-    && authSnapshot?.id === auth?.id
-    && await refreshAccessToken(authSnapshot)
-  ) {
-    return requestApi(path, {
-      method,
-      body,
-      retry: false,
-      authSnapshot: auth,
-    });
-  }
-
   const payload = await response.json().catch(() => null);
+  if (response.status === 401 && authSnapshot?.id && authSnapshot.id === auth?.id) {
+    clearAuthenticatedState('Your session ended. Please sign in again.');
+  }
   if (!response.ok) throw new ApiError(response.status, payload);
   return payload;
 }
@@ -2870,28 +2855,6 @@ async function ensureSyncCapabilities() {
     announce('Cloud changes are paused until the server update is complete.');
   }
   return compatible;
-}
-
-async function refreshAccessToken(authSnapshot = auth) {
-  if (!authSnapshot?.refresh || authSnapshot.id !== auth?.id) return false;
-
-  const response = await fetch(`${API_URL}/auth/refresh/`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
-    body: JSON.stringify({ refresh: authSnapshot.refresh }),
-  });
-  const payload = await response.json().catch(() => null);
-
-  if (authSnapshot.id !== auth?.id) return false;
-
-  if (!response.ok || !payload?.access) {
-    signOut('Your session ended. Please sign in again.');
-    return false;
-  }
-
-  auth.access = payload.access;
-  storeAuth();
-  return true;
 }
 
 function scheduleOutboxRetry(accountId) {
@@ -4744,55 +4707,84 @@ function animate(timestamp) {
   window.requestAnimationFrame(animate);
 }
 
-function updateAccountButton() {
-  accountButton.textContent = auth ? 'Sign out' : 'Sign in';
-  accountButton.title = auth ? `Signed in as ${auth.email}. Sign out` : 'Sign in or create an account';
+function closeAccountMenu({ restoreFocus = false } = {}) {
+  if (accountPopover.hidden) return;
+  accountPopover.hidden = true;
+  accountTrigger.setAttribute('aria-expanded', 'false');
+  if (restoreFocus) accountTrigger.focus();
 }
 
-function openAuthDialog() {
+function toggleAccountMenu() {
+  const willOpen = accountPopover.hidden;
+  accountPopover.hidden = !willOpen;
+  accountTrigger.setAttribute('aria-expanded', String(willOpen));
+  if (willOpen) switchAccountMenuItem.focus();
+}
+
+function updateAccountControl() {
+  if (!sessionValidated) {
+    accountTriggerLabel.textContent = 'Checking…';
+    accountTrigger.title = 'Checking your sign-in session';
+    accountTrigger.disabled = true;
+    accountAvatar.hidden = true;
+    accountChevron.hidden = true;
+    closeAccountMenu();
+    return;
+  }
+
+  accountTrigger.disabled = false;
+  accountTrigger.classList.toggle('is-authenticated', Boolean(auth));
+  accountAvatar.hidden = !auth;
+  accountChevron.hidden = !auth;
+
+  if (!auth) {
+    accountTriggerLabel.hidden = false;
+    accountTriggerLabel.textContent = 'Sign in';
+    accountTrigger.title = 'Sign in';
+    closeAccountMenu();
+    return;
+  }
+
+  const initial = auth.email.trim().charAt(0).toUpperCase() || 'M';
+  accountTriggerLabel.hidden = true;
+  accountAvatar.textContent = initial;
+  accountMenuAvatar.textContent = initial;
+  accountEmail.textContent = auth.email;
+  accountTrigger.title = `Account: ${auth.email}`;
+}
+
+function startLogin({ switchAccount = false } = {}) {
+  closeAccountMenu();
   knowledgeKindPicker.close();
-  authMessage.textContent = '';
-  authDialog.showModal();
-  authEmail.focus();
+  saveThoughts();
+  const query = switchAccount ? '?switch=1' : '';
+  window.location.assign(`${API_URL}/auth/sso/login/${query}`);
 }
 
-function setAuthBusy(isBusy) {
-  loginButton.disabled = isBusy;
-  registerButton.disabled = isBusy;
-  authEmail.disabled = isBusy;
-  authPassword.disabled = isBusy;
-}
-
-async function authenticate(mode) {
-  const email = authEmail.value.trim();
-  const password = authPassword.value;
-  if (!email || !password) return;
-
-  const guestThoughts = thoughts;
-  setAuthBusy(true);
-  authMessage.textContent = '';
+async function restoreBrowserSession() {
   try {
-    const response = await fetch(`${API_URL}/auth/${mode}/`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
-      body: JSON.stringify({ email, password }),
+    const response = await fetch(`${API_URL}/auth/sso/session/`, {
+      credentials: 'include',
+      headers: { Accept: 'application/json' },
     });
     const payload = await response.json().catch(() => null);
+    if (response.status === 401) {
+      sessionValidated = true;
+      clearAuthenticatedState(null);
+      return false;
+    }
     if (!response.ok) throw new Error(apiErrorMessage(payload));
 
-    if (!payload.user?.id) {
-      throw new Error('The server did not return an account identity. Please try again.');
-    }
+    const session = parseBrowserSession(payload);
+    if (!session) throw new Error('The server returned an invalid sign-in session.');
 
-    auth = {
-      id: payload.user.id,
-      access: payload.access,
-      refresh: payload.refresh,
-      email: payload.user?.email || email,
-    };
+    auth = session.account;
+    sessionCsrfToken = session.csrfToken;
+    sessionValidated = true;
     serverStateReady = false;
     storeAuth();
-    const quarantinedLegacyOutbox = quarantineLegacyOutbox(auth.id);
+    legacyOutboxQuarantined = quarantineLegacyOutbox(auth.id);
+    const guestThoughts = loadStoredThoughts(STORAGE_KEY);
     const cachedAccountThoughts = applyOutboxOperations(
       loadAccountThoughts(auth.id),
       loadOutbox(auth.id),
@@ -4805,38 +4797,55 @@ async function authenticate(mode) {
       localStorage.removeItem(STORAGE_KEY);
     }
     replaceThoughts(mergeThoughts(cachedAccountThoughts, thoughtsToSync));
-    updateAccountButton();
-    if (quarantinedLegacyOutbox) {
+    updateAccountControl();
+    if (legacyOutboxQuarantined) {
       announce('Older unsynced changes were paused to protect server data.');
     }
-    authPassword.value = '';
     const ready = await restoreAuthenticatedThoughts();
-    authDialog.close();
-    if (ready) {
-      announce(mode === 'register' ? 'Account created. Your thoughts are synced.' : 'Signed in.');
-    }
+    if (ready) announce('Signed in.');
+    return ready;
   } catch (error) {
-    authMessage.textContent = error.message;
-  } finally {
-    setAuthBusy(false);
+    sessionValidated = true;
+    clearAuthenticatedState(`Could not check your sign-in session: ${error.message}`);
+    return false;
   }
 }
 
-function signOut(message = 'Signed out. Local thoughts stay on this browser.') {
+function clearAuthenticatedState(message) {
   knowledgeKindPicker.close();
   saveThoughts();
   window.clearTimeout(outboxRetryTimer);
   outboxRetryDelay = 2000;
   auth = null;
+  sessionCsrfToken = null;
+  sessionValidated = true;
   serverStateReady = true;
   syncPending = false;
   syncOperationId += 1;
   syncInFlight = false;
   localStorage.removeItem(AUTH_STORAGE_KEY);
   sessionStorage.removeItem(AUTH_STORAGE_KEY);
-  updateAccountButton();
+  updateAccountControl();
   replaceThoughts(loadStoredThoughts(STORAGE_KEY));
-  announce(message);
+  if (message) announce(message);
+}
+
+async function signOut(message = 'Signed out. Local thoughts stay on this browser.') {
+  const csrfToken = sessionCsrfToken;
+  try {
+    await fetch(`${API_URL}/auth/sso/logout/`, {
+      method: 'POST',
+      credentials: 'include',
+      headers: buildSessionHeaders({ method: 'POST', csrfToken }),
+    });
+  } finally {
+    clearAuthenticatedState(message);
+  }
+}
+
+function switchAccount() {
+  closeAccountMenu();
+  startLogin({ switchAccount: true });
 }
 
 knowledgePickerTrigger.addEventListener('click', openComposerKnowledgeKindPicker);
@@ -4934,15 +4943,31 @@ deleteThoughtDialog.addEventListener('close', () => {
   pendingThoughtDeletionId = null;
 });
 
-accountButton.addEventListener('click', () => {
+accountTrigger.addEventListener('click', () => {
   if (boardArrangeInFlight) {
     announce('Wait until the Board finishes arranging.');
     return;
   }
   if (magnetEditor) closeMagnetEditor({ restoreMotion: true });
   if (connectionEditor) closeConnectionEditor();
-  if (auth) signOut();
-  else openAuthDialog();
+  if (auth) toggleAccountMenu();
+  else startLogin();
+});
+switchAccountMenuItem.addEventListener('click', () => {
+  switchAccount();
+});
+signOutMenuItem.addEventListener('click', () => {
+  closeAccountMenu();
+  void signOut();
+});
+document.addEventListener('pointerdown', (event) => {
+  if (accountPopover.hidden || accountMenu.contains(event.target)) return;
+  closeAccountMenu();
+});
+accountMenu.addEventListener('keydown', (event) => {
+  if (event.key !== 'Escape') return;
+  event.preventDefault();
+  closeAccountMenu({ restoreFocus: true });
 });
 historyButton.addEventListener('click', () => {
   if (connectionEditor && isSpatialSpace(activeSpaceId)) {
@@ -5033,12 +5058,6 @@ anchorsClose.addEventListener('click', () => anchorsDialog.close());
 anchorsDialog.addEventListener('click', (event) => {
   if (event.target === anchorsDialog) anchorsDialog.close();
 });
-authClose.addEventListener('click', () => authDialog.close());
-authForm.addEventListener('submit', (event) => {
-  event.preventDefault();
-  void authenticate('login');
-});
-registerButton.addEventListener('click', () => void authenticate('register'));
 canvas.addEventListener('pointerdown', beginCanvasPan);
 canvas.addEventListener('pointermove', (event) => {
   if (!moveCanvasPan(event)) moveDrag(event);
@@ -5269,11 +5288,8 @@ replaceThoughts(thoughts);
 renderCanvasCamera();
 void loadBoardGeometry();
 if (isSpatialSpace(activeSpaceId)) void activateSpatialView();
-updateAccountButton();
-if (legacyOutboxQuarantined) {
-  announce('Older unsynced changes were paused to protect server data.');
-}
-if (auth) void restoreAuthenticatedThoughts();
+updateAccountControl();
+void restoreBrowserSession();
 window.addEventListener('online', () => {
   renderBoardArrangeControl();
   if (!auth) return;

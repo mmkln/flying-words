@@ -6,16 +6,17 @@ Local app for short thoughts that move freely in space.
 
 ```powershell
 npm install
-npm run dev
+npm run dev -- --host 127.0.0.1
 ```
 
-Open the address shown by Vite (usually `http://localhost:5173`).
+Open `http://127.0.0.1:5173`. Keeping the frontend and API on the same
+hostname lets the browser send the local session cookie reliably.
 
 If the local API uses a different port, override it for the current shell:
 
 ```powershell
 $env:VITE_API_URL = 'http://127.0.0.1:8001/api/v1'
-npm run dev
+npm run dev -- --host 127.0.0.1
 ```
 
 ## GitHub Pages
@@ -33,6 +34,21 @@ The repository is configured to deploy from `main` to GitHub Pages through GitHu
   namespaces and pauses stale writes instead of overwriting server data;
 - support for the system **Reduce motion** preference.
 
+## Central sign-in
+
+Flying Thoughts uses the private OpenID Connect service through its Django
+backend. The browser never stores access or refresh tokens. **Sign in** redirects
+to the shared identity page, and API requests then use an HttpOnly Django session
+plus CSRF protection.
+
+For local development, run `flying-words-backend` on port `8001` and set
+`VITE_API_URL=http://127.0.0.1:8001/api/v1`. Register this backend callback in
+the identity service:
+
+```text
+http://127.0.0.1:8001/api/v1/auth/sso/callback/
+```
+
 In Spatial, drag the background to orbit, scroll or pinch to zoom, and drag a
 node to reshape the graph. Click a node to inspect it, use **Focus** to move the
 camera to it, or pin its position when it should stop participating in the
@@ -41,7 +57,8 @@ is opened.
 
 ## Do you need a backend?
 
-For a personal local version, no: data stays in the browser. Add a backend when you need accounts, cross-device sync, shared boards, search, or backups. A practical next step is Supabase (Auth + Postgres + Realtime) or a custom PostgreSQL API.
+For a personal local version, no: data stays in the browser. The included Django
+backend adds the shared account, cross-device sync, and revision-checked storage.
 
 ## Electron
 
