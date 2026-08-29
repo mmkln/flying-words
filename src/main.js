@@ -96,6 +96,7 @@ import {
   parseSsoFragment,
   parseTokenSession,
 } from './browser-session.js';
+import { MAX_THOUGHTS } from './app-limits.js';
 
 const STORAGE_KEY = 'flying-thoughts:v1';
 const AUTH_STORAGE_KEY = 'flying-thoughts:auth:v1';
@@ -111,7 +112,6 @@ const LEGACY_OUTBOX_STORAGE_PREFIX = 'flying-thoughts:outbox:v1:';
 const OUTBOX_STORAGE_PREFIX = 'flying-thoughts:outbox:v2:';
 const QUARANTINED_OUTBOX_STORAGE_PREFIX = 'flying-thoughts:outbox-quarantine:v1:';
 const THEME_STORAGE_KEY = 'flying-thoughts:theme:v1';
-const MAX_THOUGHTS = 10_000;
 const MAX_THOUGHT_TEXT_LENGTH = 2000;
 const THOUGHT_TEXT_WARNING_THRESHOLD = 1700;
 const RESERVED_BOTTOM_SPACE = 0;

@@ -10,8 +10,8 @@ import {
   SpatialGraphTransitionKind,
   normalizeSpatialGraphTransition,
 } from './spatial-graph-transition.js';
+import { MAX_THOUGHTS } from './app-limits.js';
 
-const MAX_SPATIAL_THOUGHTS = 1000;
 const MAX_VISIBLE_LABELS = 60;
 const MAX_VISIBLE_CONNECTIONS = 8000;
 const NODE_HIT_PADDING = 8;
@@ -87,7 +87,7 @@ function loadLayoutState(storageKey) {
   return Object.fromEntries(
     Object.entries(stored.positions)
       .filter(([, position]) => finitePosition(position))
-      .slice(0, MAX_SPATIAL_THOUGHTS),
+      .slice(0, MAX_THOUGHTS),
   );
 }
 
@@ -164,7 +164,7 @@ export function createSpatialView({
   const nodeMesh = new THREE.InstancedMesh(
     nodeGeometry,
     nodeMaterial,
-    MAX_SPATIAL_THOUGHTS,
+    MAX_THOUGHTS,
   );
   nodeMesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
   nodeMesh.frustumCulled = false;
@@ -180,7 +180,7 @@ export function createSpatialView({
   const hitMesh = new THREE.InstancedMesh(
     nodeGeometry,
     hitMaterial,
-    MAX_SPATIAL_THOUGHTS,
+    MAX_THOUGHTS,
   );
   hitMesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
   hitMesh.frustumCulled = false;
@@ -278,7 +278,7 @@ export function createSpatialView({
 
   function saveLayout(nextNodes = nodes) {
     layoutCache = Object.fromEntries(
-      nextNodes.slice(0, MAX_SPATIAL_THOUGHTS).map((node) => [node.id, {
+      nextNodes.slice(0, MAX_THOUGHTS).map((node) => [node.id, {
         x: Math.round(node.x * 100) / 100,
         y: Math.round(node.y * 100) / 100,
         z: Math.round(node.z * 100) / 100,
@@ -790,7 +790,7 @@ export function createSpatialView({
     }
     fitAfterLayout ||= shouldFitAfterLayout;
     const preparedNodes = sourceNodes
-      .slice(0, MAX_SPATIAL_THOUGHTS)
+      .slice(0, MAX_THOUGHTS)
       .map((node) => {
         const cached = layoutCache[node.id];
         return {
