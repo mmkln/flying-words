@@ -37,9 +37,10 @@ The repository is configured to deploy from `main` to GitHub Pages through GitHu
 ## Central sign-in
 
 Flying Thoughts uses the private OpenID Connect service through its Django
-backend. The browser never stores access or refresh tokens. **Sign in** redirects
-to the shared identity page, and API requests then use an HttpOnly Django session
-plus CSRF protection.
+backend. **Sign in** redirects to the shared identity page, which returns a
+short-lived one-time code to the browser. The backend exchanges that code for
+application-specific JWTs; API requests use a short-lived access token while a
+rotating refresh token keeps the browser signed in across reloads.
 
 For local development, run `flying-words-backend` on port `8001` and set
 `VITE_API_URL=http://127.0.0.1:8001/api/v1`. Register this backend callback in

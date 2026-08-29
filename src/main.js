@@ -90,13 +90,16 @@ import {
 } from './spatial-layout-mode.js';
 import { SpatialGraphTransitionKind } from './spatial-graph-transition.js';
 import {
-  buildSessionHeaders,
-  parseAccountHint,
-  parseBrowserSession,
+  buildBearerHeaders,
+  parseIdentityResponse,
+  parseRefreshResponse,
+  parseSsoFragment,
+  parseTokenSession,
 } from './browser-session.js';
 
 const STORAGE_KEY = 'flying-thoughts:v1';
 const AUTH_STORAGE_KEY = 'flying-thoughts:auth:v1';
+const REFRESH_TOKEN_STORAGE_KEY = 'flying-thoughts:refresh-token:v1';
 const ACTIVE_SPACE_STORAGE_KEY = 'flying-thoughts:active-space:v1';
 const CANVAS_CAMERA_STORAGE_PREFIX = 'flying-thoughts:canvas-camera:v1:';
 const SPATIAL_CAMERA_STORAGE_PREFIX = 'flying-thoughts:spatial-camera:v3:';
@@ -226,9 +229,10 @@ const thoughtFocusCount = document.querySelector('#thought-focus-count');
 const thoughtFocusKind = document.querySelector('#thought-focus-kind');
 const thoughtFocusDiscard = document.querySelector('#thought-focus-discard');
 
-loadAuth();
 let auth = null;
-let sessionCsrfToken = null;
+let accessToken = null;
+let refreshToken = localStorage.getItem(REFRESH_TOKEN_STORAGE_KEY);
+let refreshInFlight = null;
 let sessionValidated = false;
 let legacyOutboxQuarantined = false;
 let thoughts = loadStoredThoughts(STORAGE_KEY);
@@ -818,22 +822,6 @@ function handleKnowledgeKindTriggerKeyDown(event, openPicker) {
   openPicker();
 }
 
-function loadAuthFrom(storage) {
-  return parseAccountHint(storage.getItem(AUTH_STORAGE_KEY));
-}
-
-function loadAuth() {
-  const account = loadAuthFrom(localStorage) || loadAuthFrom(sessionStorage);
-  sessionStorage.removeItem(AUTH_STORAGE_KEY);
-  if (!account) {
-    localStorage.removeItem(AUTH_STORAGE_KEY);
-    return null;
-  }
-
-  localStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify(account));
-  return account;
-}
-
 function storeAuth() {
   if (!auth) return;
   localStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify({
@@ -841,6 +829,22 @@ function storeAuth() {
     email: auth.email,
   }));
   sessionStorage.removeItem(AUTH_STORAGE_KEY);
+}
+
+function storeRefreshToken(token) {
+  refreshToken = token;
+  if (token) localStorage.setItem(REFRESH_TOKEN_STORAGE_KEY, token);
+  else localStorage.removeItem(REFRESH_TOKEN_STORAGE_KEY);
+}
+
+function applyTokenSession(payload) {
+  const session = parseTokenSession(payload);
+  if (!session) throw new Error('The server returned an invalid sign-in response.');
+
+  auth = session.account;
+  accessToken = session.accessToken;
+  storeRefreshToken(session.refreshToken);
+  storeAuth();
 }
 
 function isCloudMode() {
@@ -2776,24 +2780,63 @@ class ApiError extends Error {
   }
 }
 
+async function refreshAccessToken() {
+  if (!refreshToken) throw new Error('Authentication required.');
+  if (refreshInFlight) return refreshInFlight;
+
+  const tokenToRefresh = refreshToken;
+  refreshInFlight = (async () => {
+    const response = await fetch(`${API_URL}/auth/token/refresh/`, {
+      method: 'POST',
+      headers: buildBearerHeaders({ hasBody: true }),
+      body: JSON.stringify({ refresh: tokenToRefresh }),
+    });
+    const payload = await response.json().catch(() => null);
+    if (!response.ok) throw new ApiError(response.status, payload);
+
+    const refreshed = parseRefreshResponse(payload);
+    if (!refreshed) throw new Error('The server returned an invalid token refresh.');
+
+    accessToken = refreshed.accessToken;
+    if (refreshed.refreshToken) storeRefreshToken(refreshed.refreshToken);
+    return accessToken;
+  })();
+
+  try {
+    return await refreshInFlight;
+  } finally {
+    refreshInFlight = null;
+  }
+}
+
 async function requestApi(path, {
   method = 'GET', body, authSnapshot = auth,
 } = {}) {
-  const headers = buildSessionHeaders({
+  const performRequest = () => fetch(`${API_URL}${path}`, {
     method,
-    hasBody: body !== undefined,
-    csrfToken: sessionCsrfToken,
-  });
-
-  const response = await fetch(`${API_URL}${path}`, {
-    method,
-    credentials: 'include',
-    headers,
+    headers: buildBearerHeaders({
+      accessToken: authSnapshot ? accessToken : null,
+      hasBody: body !== undefined,
+    }),
     body: body === undefined ? undefined : JSON.stringify(body),
   });
 
+  let response = await performRequest();
+  const isCurrentAccountRequest = (
+    authSnapshot?.id && authSnapshot.id === auth?.id
+  );
+  if (response.status === 401 && isCurrentAccountRequest) {
+    try {
+      await refreshAccessToken();
+      response = await performRequest();
+    } catch {
+      clearAuthenticatedState('Your session ended. Please sign in again.');
+      throw new ApiError(401, { detail: 'Authentication required.' });
+    }
+  }
+
   const payload = await response.json().catch(() => null);
-  if (response.status === 401 && authSnapshot?.id && authSnapshot.id === auth?.id) {
+  if (response.status === 401 && isCurrentAccountRequest) {
     clearAuthenticatedState('Your session ended. Please sign in again.');
   }
   if (!response.ok) throw new ApiError(response.status, payload);
@@ -4761,49 +4804,98 @@ function startLogin({ switchAccount = false } = {}) {
   window.location.assign(`${API_URL}/auth/sso/login/${query}`);
 }
 
-async function restoreBrowserSession() {
+function clearSsoFragment() {
+  window.history.replaceState(
+    null,
+    document.title,
+    `${window.location.pathname}${window.location.search}`,
+  );
+}
+
+async function exchangeSsoCallback() {
+  const { code, error } = parseSsoFragment(window.location.hash);
+  if (!code && !error) return false;
+  clearSsoFragment();
+
+  if (error) {
+    if (error === 'access_denied') return false;
+    throw new Error('Majom ID could not complete sign in.');
+  }
+
+  const response = await fetch(`${API_URL}/auth/sso/exchange/`, {
+    method: 'POST',
+    headers: buildBearerHeaders({ hasBody: true }),
+    body: JSON.stringify({ code }),
+  });
+  const payload = await response.json().catch(() => null);
+  if (!response.ok) throw new Error(apiErrorMessage(payload));
+
+  applyTokenSession(payload);
+  return true;
+}
+
+async function loadCurrentIdentity() {
+  const response = await fetch(`${API_URL}/auth/sso/me/`, {
+    headers: buildBearerHeaders({ accessToken }),
+  });
+  const payload = await response.json().catch(() => null);
+  if (!response.ok) throw new ApiError(response.status, payload);
+
+  const account = parseIdentityResponse(payload);
+  if (!account) throw new Error('The server returned an invalid account identity.');
+  auth = account;
+  storeAuth();
+}
+
+async function activateAuthenticatedAccount() {
+  sessionValidated = true;
+  serverStateReady = false;
+  legacyOutboxQuarantined = quarantineLegacyOutbox(auth.id);
+  const guestThoughts = loadStoredThoughts(STORAGE_KEY);
+  const cachedAccountThoughts = applyOutboxOperations(
+    loadAccountThoughts(auth.id),
+    loadOutbox(auth.id),
+  );
+  const pendingForAccount = loadPendingThoughts(auth.id);
+  const thoughtsToSync = mergeThoughts(pendingForAccount, guestThoughts);
+  syncPending = thoughtsToSync.length > 0;
+  if (syncPending) {
+    storePendingThoughts(auth.id, thoughtsToSync);
+    localStorage.removeItem(STORAGE_KEY);
+  }
+  replaceThoughts(mergeThoughts(cachedAccountThoughts, thoughtsToSync));
+  updateAccountControl();
+  if (legacyOutboxQuarantined) {
+    announce('Older unsynced changes were paused to protect server data.');
+  }
+  const ready = await restoreAuthenticatedThoughts();
+  if (ready) announce('Signed in.');
+  return ready;
+}
+
+async function restoreTokenSession() {
+  let callbackError = null;
+  let completedLogin = false;
   try {
-    const response = await fetch(`${API_URL}/auth/sso/session/`, {
-      credentials: 'include',
-      headers: { Accept: 'application/json' },
-    });
-    const payload = await response.json().catch(() => null);
-    if (response.status === 401) {
-      sessionValidated = true;
-      clearAuthenticatedState(null);
-      return false;
-    }
-    if (!response.ok) throw new Error(apiErrorMessage(payload));
+    completedLogin = await exchangeSsoCallback();
+  } catch (error) {
+    callbackError = error;
+  }
 
-    const session = parseBrowserSession(payload);
-    if (!session) throw new Error('The server returned an invalid sign-in session.');
-
-    auth = session.account;
-    sessionCsrfToken = session.csrfToken;
-    sessionValidated = true;
-    serverStateReady = false;
-    storeAuth();
-    legacyOutboxQuarantined = quarantineLegacyOutbox(auth.id);
-    const guestThoughts = loadStoredThoughts(STORAGE_KEY);
-    const cachedAccountThoughts = applyOutboxOperations(
-      loadAccountThoughts(auth.id),
-      loadOutbox(auth.id),
-    );
-    const pendingForAccount = loadPendingThoughts(auth.id);
-    const thoughtsToSync = mergeThoughts(pendingForAccount, guestThoughts);
-    syncPending = thoughtsToSync.length > 0;
-    if (syncPending) {
-      storePendingThoughts(auth.id, thoughtsToSync);
-      localStorage.removeItem(STORAGE_KEY);
+  try {
+    if (!completedLogin) {
+      if (!refreshToken) {
+        if (callbackError) throw callbackError;
+        clearAuthenticatedState(null);
+        return false;
+      }
+      await refreshAccessToken();
+      await loadCurrentIdentity();
+      if (callbackError) {
+        announce(`Could not switch account: ${callbackError.message}`);
+      }
     }
-    replaceThoughts(mergeThoughts(cachedAccountThoughts, thoughtsToSync));
-    updateAccountControl();
-    if (legacyOutboxQuarantined) {
-      announce('Older unsynced changes were paused to protect server data.');
-    }
-    const ready = await restoreAuthenticatedThoughts();
-    if (ready) announce('Signed in.');
-    return ready;
+    return await activateAuthenticatedAccount();
   } catch (error) {
     sessionValidated = true;
     clearAuthenticatedState(`Could not check your sign-in session: ${error.message}`);
@@ -4817,7 +4909,8 @@ function clearAuthenticatedState(message) {
   window.clearTimeout(outboxRetryTimer);
   outboxRetryDelay = 2000;
   auth = null;
-  sessionCsrfToken = null;
+  accessToken = null;
+  storeRefreshToken(null);
   sessionValidated = true;
   serverStateReady = true;
   syncPending = false;
@@ -4831,13 +4924,15 @@ function clearAuthenticatedState(message) {
 }
 
 async function signOut(message = 'Signed out. Local thoughts stay on this browser.') {
-  const csrfToken = sessionCsrfToken;
+  const tokenToRevoke = refreshToken;
   try {
-    await fetch(`${API_URL}/auth/sso/logout/`, {
-      method: 'POST',
-      credentials: 'include',
-      headers: buildSessionHeaders({ method: 'POST', csrfToken }),
-    });
+    if (tokenToRevoke) {
+      await fetch(`${API_URL}/auth/token/blacklist/`, {
+        method: 'POST',
+        headers: buildBearerHeaders({ hasBody: true }),
+        body: JSON.stringify({ refresh: tokenToRevoke }),
+      });
+    }
   } finally {
     clearAuthenticatedState(message);
   }
@@ -5289,7 +5384,7 @@ renderCanvasCamera();
 void loadBoardGeometry();
 if (isSpatialSpace(activeSpaceId)) void activateSpatialView();
 updateAccountControl();
-void restoreBrowserSession();
+void restoreTokenSession();
 window.addEventListener('online', () => {
   renderBoardArrangeControl();
   if (!auth) return;
