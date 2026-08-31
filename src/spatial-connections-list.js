@@ -43,7 +43,7 @@ function createConnectionRow(item, group, disabled) {
   text.className = 'spatial-connection-text';
   text.textContent = item.text;
 
-  button.append(direction, kind, text);
+  button.append(kind, text, direction);
   return button;
 }
 
