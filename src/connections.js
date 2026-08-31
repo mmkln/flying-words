@@ -4,6 +4,12 @@ export const ConnectionKind = Object.freeze({
   RELATED: 'related',
 });
 
+export const ConnectionDirection = Object.freeze({
+  INCOMING: 'incoming',
+  OUTGOING: 'outgoing',
+  BOTH: 'both',
+});
+
 export const ConnectionSpacing = Object.freeze({
   TIGHT: 'tight',
   NORMAL: 'normal',
@@ -159,4 +165,87 @@ export function flattenConnections(thoughts) {
   return thoughts.flatMap((source) => getOutgoingConnections(source).map(
     (connection) => ({ ...connection, sourceId: source.id }),
   ));
+}
+
+function appendIndexedConnection(index, thoughtId, connection) {
+  const existing = index.get(thoughtId);
+  if (existing) {
+    existing.push(connection);
+    return;
+  }
+
+  index.set(thoughtId, [connection]);
+}
+
+/**
+ * Build read-only graph lookups from the canonical outgoing connection data.
+ * Incoming relationships are derived rather than persisted, so both directions
+ * can never drift out of sync.
+ */
+export function buildConnectionIndex(thoughts) {
+  const knownThoughtIds = new Set(thoughts.map((thought) => thought.id));
+  const incomingById = new Map();
+  const outgoingById = new Map();
+
+  flattenConnections(thoughts).forEach((connection) => {
+    if (
+      !knownThoughtIds.has(connection.sourceId)
+      || !knownThoughtIds.has(connection.targetId)
+    ) {
+      return;
+    }
+
+    appendIndexedConnection(outgoingById, connection.sourceId, connection);
+    appendIndexedConnection(incomingById, connection.targetId, connection);
+  });
+
+  function getIncoming(thoughtId) {
+    return incomingById.get(thoughtId) || [];
+  }
+
+  function getOutgoing(thoughtId) {
+    return outgoingById.get(thoughtId) || [];
+  }
+
+  function getNeighbours(thoughtId) {
+    const neighbours = new Map();
+
+    getOutgoing(thoughtId).forEach((connection) => {
+      neighbours.set(connection.targetId, {
+        thoughtId: connection.targetId,
+        direction: ConnectionDirection.OUTGOING,
+        connectionIds: [connection.id],
+      });
+    });
+
+    getIncoming(thoughtId).forEach((connection) => {
+      const existing = neighbours.get(connection.sourceId);
+      if (existing) {
+        existing.direction = ConnectionDirection.BOTH;
+        existing.connectionIds.push(connection.id);
+        return;
+      }
+
+      neighbours.set(connection.sourceId, {
+        thoughtId: connection.sourceId,
+        direction: ConnectionDirection.INCOMING,
+        connectionIds: [connection.id],
+      });
+    });
+
+    return [...neighbours.values()];
+  }
+
+  function hasConnectionBetween(firstId, secondId) {
+    return getNeighbours(firstId).some(
+      ({ thoughtId }) => thoughtId === secondId,
+    );
+  }
+
+  return {
+    getIncoming,
+    getOutgoing,
+    getNeighbours,
+    hasConnectionBetween,
+  };
 }

@@ -20,6 +20,7 @@ import {
 import { createThoughtEditor } from './thought-editor.js';
 import {
   MAX_CONNECTIONS_PER_THOUGHT,
+  buildConnectionIndex,
   detachIncomingConnections,
   flattenConnections,
   getOutgoingConnections,
@@ -28,6 +29,7 @@ import {
 import { createConnectionRenderer } from './connection-renderer.js';
 import { findConnectionSearchResults } from './connection-search.js';
 import { getSpatialLinkSuggestions } from './spatial-link-suggestions.js';
+import { createSpatialConnectionsList } from './spatial-connections-list.js';
 import { createCanvasMinimap } from './canvas-minimap.js';
 import { calculateBoardGraphLayout } from './board-graph-layout.js';
 import {
@@ -156,6 +158,10 @@ const spatialInspector = document.querySelector('#spatial-inspector');
 const spatialInspectorKind = document.querySelector('#spatial-inspector-kind');
 const spatialInspectorKindLabel = document.querySelector('#spatial-inspector-kind-label');
 const spatialInspectorText = document.querySelector('#spatial-inspector-text');
+const spatialInspectorConnections = document.querySelector('#spatial-inspector-connections');
+const spatialInspectorConnectionsToggle = document.querySelector('#spatial-inspector-connections-toggle');
+const spatialInspectorConnectionsCount = document.querySelector('#spatial-inspector-connections-count');
+const spatialInspectorConnectionList = document.querySelector('#spatial-inspector-connection-list');
 const spatialInspectorSuggestions = document.querySelector('#spatial-inspector-suggestions');
 const spatialInspectorSuggestionList = document.querySelector('#spatial-inspector-suggestion-list');
 const spatialInspectorClose = document.querySelector('#spatial-inspector-close');
@@ -293,6 +299,16 @@ canvasHudVisible = isCanvasSpace(activeSpaceId) && canvasCamera.scale < MAX_CANV
 const connectionRenderer = createConnectionRenderer({
   layer: connectionLayer,
   getThoughtById,
+});
+
+const spatialConnectionsList = createSpatialConnectionsList({
+  section: spatialInspectorConnections,
+  toggle: spatialInspectorConnectionsToggle,
+  list: spatialInspectorConnectionList,
+  count: spatialInspectorConnectionsCount,
+  onNavigate(thoughtId) {
+    void navigateToSpatialThought(thoughtId, { focus: true });
+  },
 });
 
 const canvasMinimap = createCanvasMinimap({
@@ -1229,7 +1245,28 @@ function openSpatialDeleteConfirmation() {
   deleteThoughtDialog.showModal();
 }
 
-function renderSpatialLinkSuggestions(thought) {
+function renderSpatialConnections(thought, connectionIndex) {
+  const items = connectionIndex
+    .getNeighbours(thought.id)
+    .map(({ thoughtId, direction }) => {
+      const connectedThought = getThoughtById(thoughtId);
+      if (!connectedThought) return null;
+
+      return {
+        thoughtId,
+        direction,
+        text: connectedThought.text,
+        kind: getThoughtKnowledgeKind(connectedThought),
+      };
+    })
+    .filter(Boolean);
+
+  spatialConnectionsList.render(items, {
+    disabled: Boolean(connectionEditor || magnetEditor),
+  });
+}
+
+function renderSpatialLinkSuggestions(thought, connectionIndex) {
   spatialInspectorSuggestionList.replaceChildren();
 
   const canShowSuggestions = Boolean(
@@ -1244,7 +1281,11 @@ function renderSpatialLinkSuggestions(thought) {
     return;
   }
 
-  const suggestions = getSpatialLinkSuggestions(thoughts, thought.id);
+  const suggestions = getSpatialLinkSuggestions(
+    thoughts,
+    thought.id,
+    connectionIndex,
+  );
   if (!suggestions.length) {
     spatialInspectorSuggestions.hidden = true;
     return;
@@ -1293,16 +1334,19 @@ function renderSpatialInspector() {
   spatialInspector.hidden = !visible;
   spatialFocusButton.disabled = !canFocusSelectedSpatialThought();
   if (!visible) {
+    spatialConnectionsList.clear();
     spatialInspectorSuggestions.hidden = true;
     closeSpatialInspectorMenu();
     return;
   }
 
+  const connectionIndex = buildConnectionIndex(thoughts);
   const kind = getThoughtKnowledgeKind(thought);
   renderKnowledgeKindTrigger(spatialInspectorKind, kind);
   spatialInspectorKindLabel.textContent = getKnowledgeKindLabel(kind);
   spatialInspectorText.textContent = thought.text;
-  renderSpatialLinkSuggestions(thought);
+  renderSpatialConnections(thought, connectionIndex);
+  renderSpatialLinkSuggestions(thought, connectionIndex);
   const pinned = getSpatialPlacement(thought, activeSpaceId)?.pinned === true;
   const anchored = hasAnchor(thought);
   const editingConnections = Boolean(connectionEditor);
@@ -4221,19 +4265,27 @@ function addOrFocusThoughtOnCanvas(thought) {
   announce('Thought added to Board.');
 }
 
-async function addOrFocusThoughtInSpatial(thought) {
+async function navigateToSpatialThought(thoughtId, { focus = true } = {}) {
+  if (!isSpatialSpace(activeSpaceId)) return false;
+
+  const thought = getThoughtById(thoughtId);
+  if (!thought) return false;
+
   const view = await ensureSpatialView();
-  if (!isSpatialSpace(activeSpaceId)) return;
+  if (focus && view?.focusThought(thoughtId)) {
+    // focusThought emits onThoughtSelect, which owns the selection update.
+    announce('Thought focused in Spatial.');
+    return true;
+  }
 
   selectThought(thought);
-  updateUi();
-  view?.focusThought(thought.id);
-  announce('Thought focused in Spatial.');
+  announce('Thought selected in Spatial.');
+  return true;
 }
 
 async function focusThoughtInActiveSpace(thought) {
   if (isSpatialSpace(activeSpaceId)) {
-    await addOrFocusThoughtInSpatial(thought);
+    await navigateToSpatialThought(thought.id, { focus: true });
     return;
   }
 
@@ -5346,7 +5398,7 @@ window.addEventListener('keydown', (event) => {
 document.addEventListener('pointerdown', (event) => {
   if (!event.target.closest('#spatial-layout-picker')) closeSpatialLayoutMenu();
   if (!event.target.closest(
-    '.thought-card, .spatial-toolbar, .spatial-inspector, .thought-focus-dialog, .selection-toolbar, .connection-search-panel',
+    '.thought-card, .spatial-toolbar, .spatial-inspector-stack, .thought-focus-dialog, .selection-toolbar, .connection-search-panel',
   )) {
     clearThoughtSelection();
   }

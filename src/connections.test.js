@@ -2,8 +2,10 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import {
+  ConnectionDirection,
   ConnectionKind,
   ConnectionSpacing,
+  buildConnectionIndex,
   detachIncomingConnections,
   flattenConnections,
   getOutgoingConnections,
@@ -183,4 +185,55 @@ test('flattens links without duplicating thoughts', () => {
   assert.equal(flattened[0].targetId, target.id);
   assert.equal('source' in flattened[0], false);
   assert.equal('target' in flattened[0], false);
+});
+
+test('indexes incoming and outgoing neighbours from canonical links', () => {
+  const first = thought('first');
+  const second = thought('second');
+  const third = thought('third');
+  reconcileConnections(first, [second.id]);
+  reconcileConnections(third, [first.id]);
+
+  const index = buildConnectionIndex([first, second, third]);
+
+  assert.deepEqual(
+    index.getNeighbours(first.id).map(({ thoughtId, direction }) => ({
+      thoughtId,
+      direction,
+    })),
+    [
+      {
+        thoughtId: second.id,
+        direction: ConnectionDirection.OUTGOING,
+      },
+      {
+        thoughtId: third.id,
+        direction: ConnectionDirection.INCOMING,
+      },
+    ],
+  );
+});
+
+test('merges reciprocal links into one bidirectional neighbour', () => {
+  const first = thought('first');
+  const second = thought('second');
+  reconcileConnections(first, [second.id]);
+  reconcileConnections(second, [first.id]);
+
+  const neighbours = buildConnectionIndex([first, second]).getNeighbours(first.id);
+
+  assert.equal(neighbours.length, 1);
+  assert.equal(neighbours[0].thoughtId, second.id);
+  assert.equal(neighbours[0].direction, ConnectionDirection.BOTH);
+  assert.equal(neighbours[0].connectionIds.length, 2);
+});
+
+test('connection index ignores targets missing from the thought collection', () => {
+  const first = thought('first');
+  reconcileConnections(first, ['missing']);
+
+  const index = buildConnectionIndex([first]);
+
+  assert.deepEqual(index.getNeighbours(first.id), []);
+  assert.equal(index.hasConnectionBetween(first.id, 'missing'), false);
 });
