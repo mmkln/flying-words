@@ -19,6 +19,8 @@ const CONNECTION_GROUPS = Object.freeze([
   }),
 ]);
 
+const MOBILE_VIEWPORT_QUERY = '(max-width: 560px)';
+
 function createConnectionRow(item, group, disabled) {
   const button = document.createElement('button');
   const direction = document.createElement('span');
@@ -54,7 +56,7 @@ export function createSpatialConnectionsList({
   count,
   onNavigate,
 }) {
-  let collapsed = false;
+  let collapsed = window.matchMedia(MOBILE_VIEWPORT_QUERY).matches;
 
   function renderCollapsedState() {
     section.classList.toggle('is-collapsed', collapsed);
