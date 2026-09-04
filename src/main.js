@@ -172,6 +172,7 @@ const spatialInspectorAddRelated = document.querySelector('#spatial-inspector-ad
 const spatialInspectorMore = document.querySelector('#spatial-inspector-more');
 const spatialInspectorMenu = document.querySelector('#spatial-inspector-menu');
 const spatialInspectorAnchor = document.querySelector('#spatial-inspector-anchor');
+const spatialInspectorCopyId = document.querySelector('#spatial-inspector-copy-id');
 const spatialInspectorDelete = document.querySelector('#spatial-inspector-delete');
 const deleteThoughtDialog = document.querySelector('#delete-thought-dialog');
 const deleteThoughtMessage = document.querySelector('#delete-thought-message');
@@ -1229,6 +1230,46 @@ function getThoughtById(thoughtId) {
 function closeSpatialInspectorMenu() {
   spatialInspectorMenu.hidden = true;
   spatialInspectorMore.setAttribute('aria-expanded', 'false');
+}
+
+async function copyTextToClipboard(text) {
+  if (navigator.clipboard?.writeText) {
+    try {
+      await navigator.clipboard.writeText(text);
+      return;
+    } catch {
+      // Fall back for browsers that expose the API but deny direct access.
+    }
+  }
+
+  const input = document.createElement('textarea');
+  input.value = text;
+  input.setAttribute('readonly', '');
+  input.style.position = 'fixed';
+  input.style.opacity = '0';
+  document.body.append(input);
+  input.select();
+
+  let copied = false;
+  try {
+    copied = document.execCommand('copy');
+  } finally {
+    input.remove();
+  }
+  if (!copied) throw new Error('Clipboard copy was rejected.');
+}
+
+async function copySelectedThoughtId() {
+  const thought = selectedThoughtId ? getThoughtById(selectedThoughtId) : null;
+  if (!thought) return;
+
+  closeSpatialInspectorMenu();
+  try {
+    await copyTextToClipboard(thought.id);
+    announce('Thought ID copied.');
+  } catch {
+    announce('Could not copy the thought ID.');
+  }
 }
 
 function openSpatialDeleteConfirmation() {
@@ -5073,6 +5114,7 @@ spatialInspectorAnchor.addEventListener('click', () => {
 
   toggleThoughtAnchor(thought);
 });
+spatialInspectorCopyId.addEventListener('click', () => void copySelectedThoughtId());
 spatialInspectorDelete.addEventListener('click', openSpatialDeleteConfirmation);
 deleteThoughtCancel.addEventListener('click', () => {
   pendingThoughtDeletionId = null;

@@ -671,7 +671,7 @@ button { -webkit-tap-highlight-color: transparent; }
   padding: 8px 10px;
   border: 0;
   border-radius: 8px;
-  color: #c84149;
+  color: var(--text-secondary);
   cursor: pointer;
   background: transparent;
   font: inherit;
@@ -679,7 +679,18 @@ button { -webkit-tap-highlight-color: transparent; }
   text-align: left;
 }
 
-.spatial-inspector-menu button:hover { background: rgba(200, 65, 73, .1); }
+.spatial-inspector-menu button:hover { background: var(--surface-muted); }
+
+.spatial-inspector-menu button.is-destructive {
+  margin-top: 4px;
+  border-top: 1px solid var(--border-subtle);
+  border-radius: 0 0 8px 8px;
+  color: #c84149;
+}
+
+.spatial-inspector-menu button.is-destructive:hover {
+  background: rgba(200, 65, 73, .1);
+}
 
 .delete-thought-dialog {
   width: min(400px, calc(100vw - 32px));
