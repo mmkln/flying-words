@@ -62,7 +62,7 @@ test('maps standard Xbox sticks, triggers, and face buttons', () => {
   assert.ok(state.leftStick.y < 0);
   assert.ok(state.rightStick.x < 0);
   assert.ok(state.rightStick.y > 0);
-  assert.ok(state.zoom > 0.68 && state.zoom < 0.69);
+  assert.ok(state.thrust > 0.68 && state.thrust < 0.69);
   assert.equal(state.selectPressed, true);
   assert.equal(state.focusPressed, true);
   assert.equal(state.backPressed, false);
@@ -78,12 +78,24 @@ test('reports a held button only on its rising edge', () => {
   assert.equal(held.fitAllPressed, false);
 });
 
-test('removes minor trigger drift from zoom input', () => {
+test('removes minor trigger drift from thrust input', () => {
   const state = readSpatialGamepad([
     createGamepad({ buttonValues: { 7: 0.03 } }),
   ]);
 
-  assert.equal(state.zoom, 0);
+  assert.equal(state.thrust, 0);
+});
+
+test('maps the left trigger to reverse thrust and cancels equal triggers', () => {
+  const reverse = readSpatialGamepad([
+    createGamepad({ buttonValues: { 6: 0.8 } }),
+  ]);
+  const cancelled = readSpatialGamepad([
+    createGamepad({ buttonValues: { 6: 0.8, 7: 0.8 } }),
+  ]);
+
+  assert.ok(reverse.thrust < 0);
+  assert.equal(cancelled.thrust, 0);
 });
 
 test('ignores disconnected and non-standard controllers', () => {

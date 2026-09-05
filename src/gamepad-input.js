@@ -67,7 +67,7 @@ export function readSpatialGamepad(gamepads, previousButtons = []) {
     index: gamepad.index,
     leftStick: normalizeGamepadStick(gamepad.axes?.[0], gamepad.axes?.[1]),
     rightStick: normalizeGamepadStick(gamepad.axes?.[2], gamepad.axes?.[3]),
-    zoom: normalizeTriggerDifference(
+    thrust: normalizeTriggerDifference(
       buttonValue(gamepad.buttons?.[STANDARD_GAMEPAD_BUTTON.RIGHT_TRIGGER])
         - buttonValue(gamepad.buttons?.[STANDARD_GAMEPAD_BUTTON.LEFT_TRIGGER]),
     ),

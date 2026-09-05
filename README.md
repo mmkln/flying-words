@@ -53,8 +53,10 @@ http://127.0.0.1:8001/api/v1/auth/sso/callback/
 In Spatial, drag the background to orbit, scroll or pinch to zoom, and drag a
 node to reshape the graph. Click a node to inspect it, use **Focus** to move the
 camera to it, or pin its position when it should stop participating in the
-layout. The Three.js renderer and graph simulation are loaded only when Spatial
-is opened.
+layout. With a standard gamepad, use the left stick to strafe, the right stick
+to look around, and the right/left triggers to fly forward/backward. Movement
+stops as soon as the controls are released. The Three.js renderer and graph
+simulation are loaded only when Spatial is opened.
 
 ## Do you need a backend?
 

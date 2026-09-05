@@ -19,12 +19,11 @@ const NODE_HIT_PADDING = 8;
 const DRAG_THRESHOLD = 5;
 const CAMERA_TWEEN_DURATION = 280;
 const MAX_KEYBOARD_PAN_DELTA_SECONDS = 0.05;
-const KEYBOARD_PAN_SPEED_FACTOR = 1.15;
-const MIN_KEYBOARD_PAN_SPEED = 90;
-const MAX_KEYBOARD_PAN_SPEED = 1600;
+const CAMERA_TRANSLATION_SPEED_FACTOR = 1.15;
+const MIN_CAMERA_TRANSLATION_SPEED = 90;
+const MAX_CAMERA_TRANSLATION_SPEED = 1600;
 const MAX_GAMEPAD_DELTA_SECONDS = 0.05;
-const GAMEPAD_ORBIT_SPEED = 1.8;
-const GAMEPAD_ZOOM_SPEED = 2.2;
+const GAMEPAD_LOOK_SPEED = 1.8;
 const GAMEPAD_UI_TIMEOUT = 2200;
 const CONNECTION_SOURCE_COLOR = 0x7055c5;
 const CONNECTION_TARGET_COLOR = 0x248af0;
@@ -125,6 +124,7 @@ export function createSpatialView({
 }) {
   const scene = new THREE.Scene();
   const camera = new THREE.PerspectiveCamera(48, 1, 1, 10000);
+  camera.up.set(0, 1, 0);
   const renderer = new THREE.WebGLRenderer({
     alpha: true,
     antialias: true,
@@ -148,6 +148,8 @@ export function createSpatialView({
   controls.dampingFactor = 0.075;
   controls.minDistance = 90;
   controls.maxDistance = 5000;
+  controls.minPolarAngle = THREE.MathUtils.degToRad(10);
+  controls.maxPolarAngle = THREE.MathUtils.degToRad(170);
   controls.screenSpacePanning = true;
 
   const storedCamera = loadCameraState(storageKey);
@@ -239,8 +241,7 @@ export function createSpatialView({
   const cameraDirection = new THREE.Vector3();
   const cameraRight = new THREE.Vector3();
   const cameraUp = new THREE.Vector3();
-  const keyboardOffset = new THREE.Vector3();
-  const gamepadCameraOffset = new THREE.Vector3();
+  const cameraTranslation = new THREE.Vector3();
   const gamepadSpherical = new THREE.Spherical();
 
   let nodes = [];
@@ -697,31 +698,31 @@ export function createSpatialView({
     return { horizontal, vertical };
   }
 
-  function panCamera(horizontal, vertical, deltaSeconds) {
-    if (!horizontal && !vertical) return false;
+  function translateCamera(horizontal, vertical, forward, deltaSeconds) {
+    if (!horizontal && !vertical && !forward) return false;
 
-    // Keep navigation in the visible camera plane, independently of its rotation.
     camera.getWorldDirection(cameraDirection).normalize();
     cameraRight.copy(cameraDirection).cross(camera.up).normalize();
     cameraUp.copy(cameraRight).cross(cameraDirection).normalize();
-    keyboardOffset
+    cameraTranslation
       .copy(cameraRight)
       .multiplyScalar(horizontal)
-      .addScaledVector(cameraUp, vertical);
+      .addScaledVector(cameraUp, vertical)
+      .addScaledVector(cameraDirection, forward);
 
-    if (keyboardOffset.lengthSq() < 0.0001) return false;
-    keyboardOffset.normalize();
+    const magnitude = cameraTranslation.length();
+    if (magnitude < 0.0001) return false;
+    if (magnitude > 1) cameraTranslation.divideScalar(magnitude);
 
     const speed = THREE.MathUtils.clamp(
-      camera.position.distanceTo(controls.target) * KEYBOARD_PAN_SPEED_FACTOR,
-      MIN_KEYBOARD_PAN_SPEED,
-      MAX_KEYBOARD_PAN_SPEED,
+      camera.position.distanceTo(controls.target) * CAMERA_TRANSLATION_SPEED_FACTOR,
+      MIN_CAMERA_TRANSLATION_SPEED,
+      MAX_CAMERA_TRANSLATION_SPEED,
     );
-    keyboardOffset.multiplyScalar(speed * deltaSeconds);
+    cameraTranslation.multiplyScalar(speed * deltaSeconds);
 
-    // Move position and target together so the camera never rotates or zooms.
-    camera.position.add(keyboardOffset);
-    controls.target.add(keyboardOffset);
+    camera.position.add(cameraTranslation);
+    controls.target.add(cameraTranslation);
     return true;
   }
 
@@ -745,45 +746,31 @@ export function createSpatialView({
     if (!deltaSeconds) return true;
 
     const { horizontal, vertical } = keyboardPanAxis();
-    const moved = panCamera(horizontal, vertical, deltaSeconds);
+    const moved = translateCamera(horizontal, vertical, 0, deltaSeconds);
     if (moved) keyboardPanMoved = true;
     return moved;
   }
 
-  function orbitCamera(horizontal, vertical, deltaSeconds) {
+  function lookCamera(horizontal, vertical, deltaSeconds) {
     if (!horizontal && !vertical) return false;
 
-    gamepadCameraOffset.copy(camera.position).sub(controls.target);
-    if (gamepadCameraOffset.lengthSq() < 0.0001) return false;
+    const lookDistance = camera.position.distanceTo(controls.target);
+    if (lookDistance < 0.001) return false;
 
-    gamepadSpherical.setFromVector3(gamepadCameraOffset);
-    gamepadSpherical.theta -= horizontal * GAMEPAD_ORBIT_SPEED * deltaSeconds;
-    gamepadSpherical.phi += vertical * GAMEPAD_ORBIT_SPEED * deltaSeconds;
+    camera.getWorldDirection(cameraDirection).normalize();
+    gamepadSpherical.setFromVector3(cameraDirection);
+    gamepadSpherical.theta -= horizontal * GAMEPAD_LOOK_SPEED * deltaSeconds;
+    gamepadSpherical.phi += vertical * GAMEPAD_LOOK_SPEED * deltaSeconds;
     gamepadSpherical.phi = THREE.MathUtils.clamp(
       gamepadSpherical.phi,
-      0.12,
-      Math.PI - 0.12,
+      controls.minPolarAngle,
+      controls.maxPolarAngle,
     );
 
-    gamepadCameraOffset.setFromSpherical(gamepadSpherical);
-    camera.position.copy(controls.target).add(gamepadCameraOffset);
-    return true;
-  }
-
-  function zoomCamera(amount, deltaSeconds) {
-    if (!amount) return false;
-
-    gamepadCameraOffset.copy(camera.position).sub(controls.target);
-    if (gamepadCameraOffset.lengthSq() < 0.0001) return false;
-
-    const distance = THREE.MathUtils.clamp(
-      gamepadCameraOffset.length()
-        * Math.exp(-amount * GAMEPAD_ZOOM_SPEED * deltaSeconds),
-      controls.minDistance,
-      controls.maxDistance,
-    );
-    gamepadCameraOffset.setLength(distance);
-    camera.position.copy(controls.target).add(gamepadCameraOffset);
+    cameraDirection.setFromSpherical(gamepadSpherical);
+    controls.target
+      .copy(camera.position)
+      .addScaledVector(cameraDirection, lookDistance);
     return true;
   }
 
@@ -869,7 +856,7 @@ export function createSpatialView({
       || state.leftStick.y
       || state.rightStick.x
       || state.rightStick.y
-      || state.zoom,
+      || state.thrust,
     );
     const hasButtonInput = Boolean(
       state.selectPressed
@@ -897,18 +884,18 @@ export function createSpatialView({
       && !pressedKeyboardPanCodes.size
       && deltaSeconds
     ) {
-      const panned = panCamera(
+      const translated = translateCamera(
         state.leftStick.x,
         -state.leftStick.y,
+        state.thrust,
         deltaSeconds,
       );
-      const orbited = orbitCamera(
+      const looked = lookCamera(
         state.rightStick.x,
         state.rightStick.y,
         deltaSeconds,
       );
-      const zoomed = zoomCamera(state.zoom, deltaSeconds);
-      moved = panned || orbited || zoomed;
+      moved = translated || looked;
     }
 
     if (!drag && !controlsInteracting) {
