@@ -70,8 +70,8 @@ export function readSpatialGamepad(gamepads, previousButtons = []) {
     leftStick: normalizeGamepadStick(gamepad.axes?.[0], gamepad.axes?.[1]),
     rightStick: normalizeGamepadStick(gamepad.axes?.[2], gamepad.axes?.[3]),
     roll: (
-      Number(buttons[STANDARD_GAMEPAD_BUTTON.RIGHT_BUMPER])
-      - Number(buttons[STANDARD_GAMEPAD_BUTTON.LEFT_BUMPER])
+      Number(buttons[STANDARD_GAMEPAD_BUTTON.LEFT_BUMPER])
+      - Number(buttons[STANDARD_GAMEPAD_BUTTON.RIGHT_BUMPER])
     ),
     thrust: normalizeTriggerDifference(
       buttonValue(gamepad.buttons?.[STANDARD_GAMEPAD_BUTTON.RIGHT_TRIGGER])

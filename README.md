@@ -54,7 +54,7 @@ In Spatial, drag the background to orbit, scroll or pinch to zoom, and drag a
 node to reshape the graph. Click a node to inspect it, use **Focus** to move the
 camera to it, or pin its position when it should stop participating in the
 layout. With a standard gamepad, use the left stick to strafe, the right stick
-to look around, the right/left triggers to fly forward/backward, and RB/LB to
+to look around, the right/left triggers to fly forward/backward, and LB/RB to
 roll clockwise/counterclockwise. Movement stops as soon as the controls are
 released. The Three.js renderer and graph simulation are loaded only when
 Spatial is opened.

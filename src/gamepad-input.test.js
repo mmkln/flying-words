@@ -119,8 +119,8 @@ test('maps bumpers to a continuous camera roll axis', () => {
     }),
   ]);
 
-  assert.equal(left.roll, -1);
-  assert.equal(right.roll, 1);
+  assert.equal(left.roll, 1);
+  assert.equal(right.roll, -1);
   assert.equal(cancelled.roll, 0);
 });
 
