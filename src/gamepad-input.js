@@ -3,6 +3,8 @@ export const STANDARD_GAMEPAD_BUTTON = Object.freeze({
   BACK: 1,
   FOCUS: 2,
   FIT_ALL: 3,
+  LEFT_BUMPER: 4,
+  RIGHT_BUMPER: 5,
   LEFT_TRIGGER: 6,
   RIGHT_TRIGGER: 7,
 });
@@ -67,6 +69,10 @@ export function readSpatialGamepad(gamepads, previousButtons = []) {
     index: gamepad.index,
     leftStick: normalizeGamepadStick(gamepad.axes?.[0], gamepad.axes?.[1]),
     rightStick: normalizeGamepadStick(gamepad.axes?.[2], gamepad.axes?.[3]),
+    roll: (
+      Number(buttons[STANDARD_GAMEPAD_BUTTON.RIGHT_BUMPER])
+      - Number(buttons[STANDARD_GAMEPAD_BUTTON.LEFT_BUMPER])
+    ),
     thrust: normalizeTriggerDifference(
       buttonValue(gamepad.buttons?.[STANDARD_GAMEPAD_BUTTON.RIGHT_TRIGGER])
         - buttonValue(gamepad.buttons?.[STANDARD_GAMEPAD_BUTTON.LEFT_TRIGGER]),

@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 
 import {
   GAMEPAD_STICK_DEAD_ZONE,
+  STANDARD_GAMEPAD_BUTTON,
   normalizeGamepadStick,
   readSpatialGamepad,
 } from './gamepad-input.js';
@@ -96,6 +97,31 @@ test('maps the left trigger to reverse thrust and cancels equal triggers', () =>
 
   assert.ok(reverse.thrust < 0);
   assert.equal(cancelled.thrust, 0);
+});
+
+test('maps bumpers to a continuous camera roll axis', () => {
+  const left = readSpatialGamepad([
+    createGamepad({
+      buttonValues: { [STANDARD_GAMEPAD_BUTTON.LEFT_BUMPER]: 1 },
+    }),
+  ]);
+  const right = readSpatialGamepad([
+    createGamepad({
+      buttonValues: { [STANDARD_GAMEPAD_BUTTON.RIGHT_BUMPER]: 1 },
+    }),
+  ]);
+  const cancelled = readSpatialGamepad([
+    createGamepad({
+      buttonValues: {
+        [STANDARD_GAMEPAD_BUTTON.LEFT_BUMPER]: 1,
+        [STANDARD_GAMEPAD_BUTTON.RIGHT_BUMPER]: 1,
+      },
+    }),
+  ]);
+
+  assert.equal(left.roll, -1);
+  assert.equal(right.roll, 1);
+  assert.equal(cancelled.roll, 0);
 });
 
 test('ignores disconnected and non-standard controllers', () => {

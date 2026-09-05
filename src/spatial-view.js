@@ -24,6 +24,7 @@ const MIN_CAMERA_TRANSLATION_SPEED = 90;
 const MAX_CAMERA_TRANSLATION_SPEED = 1600;
 const MAX_GAMEPAD_DELTA_SECONDS = 0.05;
 const GAMEPAD_LOOK_SPEED = 1.8;
+const GAMEPAD_ROLL_SPEED = 1.6;
 const GAMEPAD_UI_TIMEOUT = 2200;
 const CONNECTION_SOURCE_COLOR = 0x7055c5;
 const CONNECTION_TARGET_COLOR = 0x248af0;
@@ -70,6 +71,11 @@ function finitePosition(value) {
   );
 }
 
+function normalizeCameraRoll(value) {
+  if (!Number.isFinite(value)) return 0;
+  return Math.atan2(Math.sin(value), Math.cos(value));
+}
+
 function loadJson(storageKey) {
   try {
     return JSON.parse(localStorage.getItem(storageKey));
@@ -81,7 +87,10 @@ function loadJson(storageKey) {
 function loadCameraState(storageKey) {
   const stored = loadJson(storageKey);
   if (!finitePosition(stored?.position) || !finitePosition(stored?.target)) return null;
-  return stored;
+  return {
+    ...stored,
+    roll: normalizeCameraRoll(stored.roll),
+  };
 }
 
 function loadLayoutState(storageKey) {
@@ -266,6 +275,7 @@ export function createSpatialView({
   let gamepadMoved = false;
   let gamepadLastActivityAt = 0;
   let gamepadAimedThoughtId = null;
+  let cameraRoll = storedCamera?.roll ?? 0;
   let controlsInteracting = false;
   let activeLayoutMode = normalizeSpatialLayoutMode(layoutMode);
   let layoutCache = loadLayoutState(`${layoutStorageKey}${activeLayoutMode}`);
@@ -289,6 +299,7 @@ export function createSpatialView({
           y: controls.target.y,
           z: controls.target.z,
         },
+        roll: cameraRoll,
       }));
     } catch {
       // Camera persistence is optional; rendering should continue without it.
@@ -702,8 +713,14 @@ export function createSpatialView({
     if (!horizontal && !vertical && !forward) return false;
 
     camera.getWorldDirection(cameraDirection).normalize();
-    cameraRight.copy(cameraDirection).cross(camera.up).normalize();
-    cameraUp.copy(cameraRight).cross(cameraDirection).normalize();
+    cameraRight
+      .set(1, 0, 0)
+      .applyQuaternion(camera.quaternion)
+      .normalize();
+    cameraUp
+      .set(0, 1, 0)
+      .applyQuaternion(camera.quaternion)
+      .normalize();
     cameraTranslation
       .copy(cameraRight)
       .multiplyScalar(horizontal)
@@ -757,10 +774,15 @@ export function createSpatialView({
     const lookDistance = camera.position.distanceTo(controls.target);
     if (lookDistance < 0.001) return false;
 
+    const cosRoll = Math.cos(cameraRoll);
+    const sinRoll = Math.sin(cameraRoll);
+    const localHorizontal = horizontal * cosRoll + vertical * sinRoll;
+    const localVertical = vertical * cosRoll - horizontal * sinRoll;
+
     camera.getWorldDirection(cameraDirection).normalize();
     gamepadSpherical.setFromVector3(cameraDirection);
-    gamepadSpherical.theta -= horizontal * GAMEPAD_LOOK_SPEED * deltaSeconds;
-    gamepadSpherical.phi += vertical * GAMEPAD_LOOK_SPEED * deltaSeconds;
+    gamepadSpherical.theta -= localHorizontal * GAMEPAD_LOOK_SPEED * deltaSeconds;
+    gamepadSpherical.phi += localVertical * GAMEPAD_LOOK_SPEED * deltaSeconds;
     gamepadSpherical.phi = THREE.MathUtils.clamp(
       gamepadSpherical.phi,
       controls.minPolarAngle,
@@ -772,6 +794,19 @@ export function createSpatialView({
       .copy(camera.position)
       .addScaledVector(cameraDirection, lookDistance);
     return true;
+  }
+
+  function rollCamera(direction, deltaSeconds) {
+    if (!direction) return false;
+    cameraRoll = normalizeCameraRoll(
+      cameraRoll + direction * GAMEPAD_ROLL_SPEED * deltaSeconds,
+    );
+    return true;
+  }
+
+  function applyCameraRoll() {
+    camera.lookAt(controls.target);
+    camera.rotateZ(cameraRoll);
   }
 
   function setGamepadAim(thoughtId) {
@@ -856,7 +891,8 @@ export function createSpatialView({
       || state.leftStick.y
       || state.rightStick.x
       || state.rightStick.y
-      || state.thrust,
+      || state.thrust
+      || state.roll,
     );
     const hasButtonInput = Boolean(
       state.selectPressed
@@ -895,7 +931,8 @@ export function createSpatialView({
         state.rightStick.y,
         deltaSeconds,
       );
-      moved = translated || looked;
+      const rolled = rollCamera(state.roll, deltaSeconds);
+      moved = translated || looked || rolled;
     }
 
     if (!drag && !controlsInteracting) {
@@ -987,6 +1024,7 @@ export function createSpatialView({
     const tweening = updateCameraTween(timestamp);
     const keyboardPanning = updateKeyboardPan(timestamp);
     const controlsChanged = controls.update();
+    applyCameraRoll();
     camera.updateMatrixWorld();
     updateNodeInstances();
     updateEdgeGeometry();
@@ -1154,6 +1192,7 @@ export function createSpatialView({
   }
 
   function resetView() {
+    cameraRoll = 0;
     startCameraTween(
       new THREE.Vector3(0, 160, 720),
       new THREE.Vector3(0, 0, 0),
