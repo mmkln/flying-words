@@ -118,6 +118,8 @@ button { -webkit-tap-highlight-color: transparent; }
 }
 
 .spatial-world {
+  --spatial-composer-height: 82px;
+  --spatial-composer-bottom: 25px;
   position: absolute;
   inset: 0;
   overflow: hidden;
@@ -132,7 +134,7 @@ button { -webkit-tap-highlight-color: transparent; }
 .spatial-orientation {
   position: absolute;
   z-index: 4;
-  top: 78px;
+  bottom: max(24px, env(safe-area-inset-bottom));
   left: 20px;
   display: grid;
   justify-items: center;
@@ -144,16 +146,15 @@ button { -webkit-tap-highlight-color: transparent; }
 .spatial-orientation button {
   min-height: 44px;
   padding: 0;
-  border: 1px solid var(--border-subtle);
+  border: 0;
   color: var(--text-secondary);
-  background: var(--surface);
+  background: transparent;
   cursor: pointer;
   pointer-events: auto;
 }
 
 .spatial-orientation button:hover:not(:disabled) {
-  border-color: var(--border-hover);
-  background: var(--surface-hover);
+  background: var(--surface-tint);
 }
 
 .spatial-orientation button:focus-visible {
@@ -2533,6 +2534,25 @@ kbd {
 
 .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
 
+/* When the composer occupies the bottom-left corner, dock above its actual
+   height, including a multiline draft and the related-thought context. */
+@media (max-width: 960px) {
+  .spatial-orientation {
+    bottom: calc(var(--spatial-composer-bottom) + var(--spatial-composer-height) + 12px);
+    left: 12px;
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    width: 116px;
+  }
+  .spatial-orientation-level { width: 56px; height: 56px; flex: 0 0 56px; }
+  .orientation-pole text { font-size: 13px; }
+  .spatial-orientation-center { width: 56px; height: 56px; flex-direction: column; gap: 2px; }
+  .orientation-center-copy { text-align: center; gap: 0; font-size: 11px; }
+  .orientation-center-status { font-size: 8px; }
+  .spatial-orientation[data-center-state="direction"] .orientation-center-status { display: none; }
+}
+
 @media (max-width: 560px) {
   .account-menu { top: 12px; right: 12px; }
   .history-button { top: 12px; left: 12px; }
@@ -2548,36 +2568,20 @@ kbd {
     border-radius: 12px;
   }
   .board-arrange-button { right: 140px; bottom: 92px; }
+  .spatial-world { --spatial-composer-bottom: 16px; }
   .spatial-toolbar {
-    top: 67px;
-    left: auto;
-    right: 12px;
+    top: 58px;
     width: max-content;
-    transform: none;
   }
   .spatial-toolbar button { white-space: nowrap; }
   .spatial-toolbar p { display: none; }
-  .spatial-orientation {
-    top: 58px;
-    left: 12px;
-    display: flex;
-    align-items: center;
-    gap: 4px;
-    width: 116px;
-  }
-  .spatial-orientation-level { width: 56px; height: 56px; flex: 0 0 56px; }
-  .orientation-pole text { font-size: 13px; }
-  .spatial-orientation-center { width: 56px; height: 56px; flex-direction: column; gap: 2px; }
-  .orientation-center-copy { text-align: center; gap: 0; font-size: 11px; }
-  .orientation-center-status { font-size: 8px; }
-  .spatial-orientation[data-center-state="direction"] .orientation-center-status { display: none; }
   .spatial-inspector-stack {
+    --spatial-details-bottom: calc(var(--spatial-composer-bottom) + var(--spatial-composer-height) + 80px);
     top: auto;
     right: 10px;
-    bottom: 104px;
+    bottom: var(--spatial-details-bottom);
     width: calc(100vw - 20px);
-    /* Leave the shared 58–114px navigation row and a 12px gap above details. */
-    max-height: calc(100dvh - 230px);
+    max-height: calc(100dvh - var(--spatial-details-bottom) - 110px);
   }
   .spatial-inspector {
     max-height: min(54dvh, 470px);

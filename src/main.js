@@ -767,6 +767,14 @@ function resizeComposer() {
 renderComposerKnowledgeKind(composerKnowledgeKind);
 resizeComposer();
 
+// Spatial's bottom-left controls must clear the composer even as a draft
+// grows or the related-thought context appears. No camera-frame measurements.
+const spatialComposerSizeObserver = new ResizeObserver(([entry]) => {
+  const height = entry.borderBoxSize?.[0]?.blockSize ?? entry.contentRect.height;
+  spatialWorld.style.setProperty('--spatial-composer-height', `${Math.ceil(height)}px`);
+});
+spatialComposerSizeObserver.observe(composerWrap);
+
 function openComposerKnowledgeKindPicker() {
   if (magnetEditor || connectionEditor) {
     announce('Finish the current card relationship first.');
