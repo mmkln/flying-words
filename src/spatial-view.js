@@ -286,21 +286,21 @@ export function createSpatialView({
 
   const pressedKeyboardPanCodes = new Set();
 
+  function getCameraState({ settled = false } = {}) {
+    // A quick next/Back action should remember the intended destination,
+    // rather than an arbitrary frame halfway through a focus transition.
+    const position = settled && cameraTween ? cameraTween.toPosition : camera.position;
+    const target = settled && cameraTween ? cameraTween.toTarget : controls.target;
+    return {
+      position: { x: position.x, y: position.y, z: position.z },
+      target: { x: target.x, y: target.y, z: target.z },
+      roll: cameraRoll,
+    };
+  }
+
   function saveCamera() {
     try {
-      localStorage.setItem(storageKey, JSON.stringify({
-        position: {
-          x: camera.position.x,
-          y: camera.position.y,
-          z: camera.position.z,
-        },
-        target: {
-          x: controls.target.x,
-          y: controls.target.y,
-          z: controls.target.z,
-        },
-        roll: cameraRoll,
-      }));
+      localStorage.setItem(storageKey, JSON.stringify(getCameraState()));
     } catch {
       // Camera persistence is optional; rendering should continue without it.
     }
@@ -1111,12 +1111,8 @@ export function createSpatialView({
 
   function selectThoughtAndNotify(thoughtId) {
     if (!nodesById.has(thoughtId)) return false;
-    selectedThoughtId = thoughtId;
-    updateNeighbourIds();
-    nodeInstancesDirty = true;
-    edgeGeometryDirty = true;
+    // The app owns selection and navigation history; it calls setSelectedThought.
     onThoughtSelect(thoughtId);
-    requestRender();
     return true;
   }
 
@@ -1136,7 +1132,28 @@ export function createSpatialView({
     requestRender();
   }
 
+  function clearCameraMotion() {
+    const position = camera.position.clone();
+    const target = controls.target.clone();
+    const damping = controls.enableDamping;
+    cameraTween = null;
+    viewportTransition = null;
+    initialFitPending = false;
+    fitAfterLayout = false;
+    clearKeyboardPan({ persist: false });
+
+    // Flush OrbitControls inertia through its public API without changing
+    // the visible camera position or depending on private control fields.
+    controls.enableDamping = false;
+    controls.update();
+    camera.position.copy(position);
+    controls.target.copy(target);
+    controls.update();
+    controls.enableDamping = damping;
+  }
+
   function startCameraTween(toPosition, toTarget, duration = CAMERA_TWEEN_DURATION) {
+    clearCameraMotion();
     cameraTween = {
       fromPosition: camera.position.clone(),
       fromTarget: controls.target.clone(),
@@ -1149,11 +1166,22 @@ export function createSpatialView({
     requestRender();
   }
 
+  function restoreCameraState(state) {
+    if (drag || !finitePosition(state?.position) || !finitePosition(state?.target)) {
+      return false;
+    }
+    const position = new THREE.Vector3().copy(state.position);
+    const target = new THREE.Vector3().copy(state.target);
+    if (position.distanceToSquared(target) < 0.000001) return false;
+    cameraRoll = normalizeCameraRoll(state.roll);
+    startCameraTween(position, target);
+    return true;
+  }
+
   function focusThought(thoughtId) {
     const node = nodesById.get(thoughtId);
     if (!node) return false;
 
-    selectThoughtAndNotify(thoughtId);
     cameraDirection.copy(camera.position).sub(controls.target);
     if (cameraDirection.lengthSq() < 0.001) cameraDirection.set(0, 0, 1);
     cameraDirection.normalize();
@@ -1463,8 +1491,10 @@ export function createSpatialView({
     dispose,
     fitAll,
     focusThought,
+    getCameraState,
     getThoughtPosition,
     resetView,
+    restoreCameraState,
     resize,
     setGraph,
     setConnectionSelection,

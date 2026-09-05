@@ -30,6 +30,7 @@ import { createConnectionRenderer } from './connection-renderer.js';
 import { findConnectionSearchResults } from './connection-search.js';
 import { getSpatialLinkSuggestions } from './spatial-link-suggestions.js';
 import { createSpatialConnectionsList } from './spatial-connections-list.js';
+import { createSpatialNavigationHistory } from './spatial-navigation-history.js';
 import { createCanvasMinimap } from './canvas-minimap.js';
 import { calculateBoardGraphLayout } from './board-graph-layout.js';
 import {
@@ -150,6 +151,7 @@ const boardArrangeUndo = document.querySelector('#board-arrange-undo');
 const spatialWorld = document.querySelector('#spatial-world');
 const spatialFitButton = document.querySelector('#spatial-fit');
 const spatialFocusButton = document.querySelector('#spatial-focus');
+const spatialBackButton = document.querySelector('#spatial-back');
 const spatialLayoutButton = document.querySelector('#spatial-layout');
 const spatialLayoutMenu = document.querySelector('#spatial-layout-menu');
 const spatialLayoutOptions = [...spatialLayoutMenu.querySelectorAll('[data-spatial-layout]')];
@@ -284,6 +286,8 @@ let composerRelationTargetId = null;
 let composerKnowledgeKind = KnowledgeKind.THOUGHT;
 let knowledgeKindEditor = null;
 let selectedThoughtId = null;
+const spatialNavigationHistory = createSpatialNavigationHistory();
+let spatialNavigationRequestId = 0;
 let pendingThoughtDeletionId = null;
 let spatialView = null;
 let spatialViewPromise = null;
@@ -524,6 +528,7 @@ function setSpatialLayoutMode(mode) {
   }
 
   spatialLayoutMode = nextMode;
+  clearSpatialNavigationHistory();
   storeSpatialLayoutMode();
   renderSpatialLayoutPicker();
   closeSpatialLayoutMenu();
@@ -568,8 +573,7 @@ async function ensureSpatialView() {
           layoutStorageKey: `${SPATIAL_LAYOUT_STORAGE_PREFIX}spatial-1:`,
           layoutMode: spatialLayoutMode,
           onThoughtSelect(thoughtId) {
-            const thought = getThoughtById(thoughtId);
-            if (thought) selectThought(thought);
+            void navigateToSpatialThought(thoughtId, { focus: false });
           },
           onConnectionTargetToggle(thoughtId) {
             const thought = getThoughtById(thoughtId);
@@ -637,6 +641,7 @@ async function activateSpatialView() {
 }
 
 function deactivateSpatialView() {
+  ++spatialNavigationRequestId;
   spatialView?.deactivate();
   spatialInspector.hidden = true;
   spatialWorld.hidden = true;
@@ -692,6 +697,9 @@ const thoughtEditor = createThoughtEditor({
     return true;
   },
   onClose({ thoughtId, restoreFocus }) {
+    // Saving can refresh the graph while the editor is still open.
+    // Re-enable navigation after the modal session has actually closed.
+    if (isSpatialSpace(activeSpaceId)) renderSpatialInspector();
     if (!restoreFocus) return;
     if (isSpatialSpace(activeSpaceId)) {
       spatialInspectorEdit.focus({ preventScroll: true });
@@ -1382,6 +1390,7 @@ function renderSpatialInspector() {
   const visible = Boolean(thought && isSpatialSpace(activeSpaceId));
   spatialInspector.hidden = !visible;
   spatialFocusButton.disabled = !canFocusSelectedSpatialThought();
+  spatialBackButton.disabled = !canNavigateSpatialBack();
   if (!visible) {
     spatialConnectionsList.clear();
     spatialInspectorSuggestions.hidden = true;
@@ -2519,7 +2528,7 @@ function renderConnectionSearchResults() {
     locateButton.textContent = 'Locate';
     locateButton.setAttribute('aria-label', `Locate ${thought.text} in Spatial`);
     locateButton.addEventListener('click', () => {
-      spatialView?.focusThought(thought.id);
+      void navigateToSpatialThought(thought.id, { focus: true, remember: false });
     });
 
     row.append(selectButton, locateButton);
@@ -4314,22 +4323,77 @@ function addOrFocusThoughtOnCanvas(thought) {
   announce('Thought added to Board.');
 }
 
-async function navigateToSpatialThought(thoughtId, { focus = true } = {}) {
+async function navigateToSpatialThought(
+  thoughtId,
+  { focus = true, remember = true } = {},
+) {
   if (!isSpatialSpace(activeSpaceId)) return false;
 
-  const thought = getThoughtById(thoughtId);
-  if (!thought) return false;
+  const requestId = ++spatialNavigationRequestId;
+  const view = spatialView || await ensureSpatialView();
+  if (
+    requestId !== spatialNavigationRequestId
+    || !isSpatialSpace(activeSpaceId)
+    || !view
+  ) return false;
 
-  const view = await ensureSpatialView();
-  if (focus && view?.focusThought(thoughtId)) {
-    // focusThought emits onThoughtSelect, which owns the selection update.
-    announce('Thought focused in Spatial.');
-    return true;
+  const thought = getThoughtById(thoughtId);
+  if (
+    !thought
+    || thought.element?.classList.contains('is-removing')
+    || !view.getThoughtPosition(thoughtId)
+  ) return false;
+
+  if (remember && !connectionEditor && !magnetEditor) {
+    spatialNavigationHistory.record({
+      thoughtId: selectedThoughtId,
+      camera: view.getCameraState({ settled: true }),
+    }, thoughtId);
   }
 
   selectThought(thought);
-  announce('Thought selected in Spatial.');
+  if (focus) view.focusThought(thoughtId);
+  announce(focus ? 'Thought focused in Spatial.' : 'Thought selected in Spatial.');
   return true;
+}
+
+function canReturnToSpatialThought(thoughtId) {
+  const thought = getThoughtById(thoughtId);
+  return Boolean(
+    thoughtId !== selectedThoughtId
+    && thought
+    && !thought.element?.classList.contains('is-removing')
+    && spatialView?.getThoughtPosition(thoughtId),
+  );
+}
+
+function canNavigateSpatialBack() {
+  return Boolean(
+    isSpatialSpace(activeSpaceId)
+    && spatialView
+    && !connectionEditor
+    && !magnetEditor
+    && !thoughtEditor.isOpen()
+    && spatialNavigationHistory.peek(canReturnToSpatialThought),
+  );
+}
+
+function navigateSpatialBack() {
+  if (!canNavigateSpatialBack()) return false;
+  const entry = spatialNavigationHistory.peek(canReturnToSpatialThought);
+  if (!spatialView.restoreCameraState(entry.camera)) return false;
+
+  ++spatialNavigationRequestId;
+  spatialNavigationHistory.pop(canReturnToSpatialThought);
+  selectThought(getThoughtById(entry.thoughtId));
+  announce('Returned to previous thought.');
+  return true;
+}
+
+function clearSpatialNavigationHistory() {
+  ++spatialNavigationRequestId;
+  spatialNavigationHistory.clear();
+  spatialBackButton.disabled = true;
 }
 
 async function focusThoughtInActiveSpace(thought) {
@@ -4949,6 +5013,7 @@ async function loadCurrentIdentity() {
 }
 
 async function activateAuthenticatedAccount() {
+  clearSpatialNavigationHistory();
   sessionValidated = true;
   serverStateReady = false;
   legacyOutboxQuarantined = quarantineLegacyOutbox(auth.id);
@@ -5005,6 +5070,7 @@ async function restoreTokenSession() {
 }
 
 function clearAuthenticatedState(message) {
+  clearSpatialNavigationHistory();
   knowledgeKindPicker.close();
   saveThoughts();
   window.clearTimeout(outboxRetryTimer);
@@ -5090,6 +5156,7 @@ spatialFocusButton.addEventListener('click', () => {
     announce('Select a node to focus it.');
   }
 });
+spatialBackButton.addEventListener('click', navigateSpatialBack);
 spatialLayoutButton.addEventListener('click', () => {
   const willOpen = spatialLayoutMenu.hidden;
   spatialLayoutMenu.hidden = !willOpen;
