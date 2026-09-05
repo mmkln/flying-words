@@ -10,6 +10,7 @@ import {
   SpatialGraphTransitionKind,
   normalizeSpatialGraphTransition,
 } from './spatial-graph-transition.js';
+import { readSpatialGamepad } from './gamepad-input.js';
 import { MAX_THOUGHTS } from './app-limits.js';
 
 const MAX_VISIBLE_LABELS = 60;
@@ -21,6 +22,10 @@ const MAX_KEYBOARD_PAN_DELTA_SECONDS = 0.05;
 const KEYBOARD_PAN_SPEED_FACTOR = 1.15;
 const MIN_KEYBOARD_PAN_SPEED = 90;
 const MAX_KEYBOARD_PAN_SPEED = 1600;
+const MAX_GAMEPAD_DELTA_SECONDS = 0.05;
+const GAMEPAD_ORBIT_SPEED = 1.8;
+const GAMEPAD_ZOOM_SPEED = 2.2;
+const GAMEPAD_UI_TIMEOUT = 2200;
 const CONNECTION_SOURCE_COLOR = 0x7055c5;
 const CONNECTION_TARGET_COLOR = 0x248af0;
 
@@ -115,6 +120,7 @@ export function createSpatialView({
   onConnectionTargetToggle = () => {},
   onThoughtActivate = () => {},
   onThoughtMove = () => {},
+  onDismissRequest = () => {},
   onError = () => {},
 }) {
   const scene = new THREE.Scene();
@@ -132,7 +138,10 @@ export function createSpatialView({
   const labelLayer = document.createElement('div');
   labelLayer.className = 'spatial-label-layer';
   const labels = createLabelPool(labelLayer);
-  container.prepend(renderer.domElement, labelLayer);
+  const gamepadReticle = document.createElement('span');
+  gamepadReticle.className = 'spatial-gamepad-reticle';
+  gamepadReticle.setAttribute('aria-hidden', 'true');
+  container.prepend(renderer.domElement, labelLayer, gamepadReticle);
 
   const controls = new OrbitControls(camera, renderer.domElement);
   controls.enableDamping = true;
@@ -231,6 +240,8 @@ export function createSpatialView({
   const cameraRight = new THREE.Vector3();
   const cameraUp = new THREE.Vector3();
   const keyboardOffset = new THREE.Vector3();
+  const gamepadCameraOffset = new THREE.Vector3();
+  const gamepadSpherical = new THREE.Spherical();
 
   let nodes = [];
   let links = [];
@@ -248,6 +259,13 @@ export function createSpatialView({
   let viewportTransition = null;
   let keyboardPanLastTimestamp = null;
   let keyboardPanMoved = false;
+  let gamepadPollFrame = null;
+  let gamepadButtons = [];
+  let gamepadLastTimestamp = null;
+  let gamepadMoved = false;
+  let gamepadLastActivityAt = 0;
+  let gamepadAimedThoughtId = null;
+  let controlsInteracting = false;
   let activeLayoutMode = normalizeSpatialLayoutMode(layoutMode);
   let layoutCache = loadLayoutState(`${layoutStorageKey}${activeLayoutMode}`);
   let initialFitPending = !storedCamera;
@@ -370,12 +388,25 @@ export function createSpatialView({
     },
   });
 
-  function updatePointer(event) {
-    const bounds = renderer.domElement.getBoundingClientRect();
-    pointer.x = ((event.clientX - bounds.left) / Math.max(1, bounds.width)) * 2 - 1;
-    pointer.y = -((event.clientY - bounds.top) / Math.max(1, bounds.height)) * 2 + 1;
+  function updateRaycaster(x, y) {
+    pointer.set(x, y);
     camera.updateMatrixWorld();
     raycaster.setFromCamera(pointer, camera);
+  }
+
+  function pickThoughtAtNdc(x, y) {
+    updateRaycaster(x, y);
+    const [hit] = raycaster.intersectObject(hitMesh);
+    if (hit?.instanceId === undefined) return null;
+    return thoughtIdByInstance[hit.instanceId] || null;
+  }
+
+  function updatePointer(event) {
+    const bounds = renderer.domElement.getBoundingClientRect();
+    updateRaycaster(
+      ((event.clientX - bounds.left) / Math.max(1, bounds.width)) * 2 - 1,
+      -((event.clientY - bounds.top) / Math.max(1, bounds.height)) * 2 + 1,
+    );
   }
 
   function pickThought(event) {
@@ -666,26 +697,7 @@ export function createSpatialView({
     return { horizontal, vertical };
   }
 
-  function updateKeyboardPan(timestamp) {
-    if (
-      !active
-      || drag
-      || cameraTween
-      || !pressedKeyboardPanCodes.size
-    ) {
-      keyboardPanLastTimestamp = timestamp;
-      return false;
-    }
-
-    const previousTimestamp = keyboardPanLastTimestamp ?? timestamp;
-    keyboardPanLastTimestamp = timestamp;
-    const deltaSeconds = Math.min(
-      MAX_KEYBOARD_PAN_DELTA_SECONDS,
-      Math.max(0, (timestamp - previousTimestamp) / 1000),
-    );
-    if (!deltaSeconds) return true;
-
-    const { horizontal, vertical } = keyboardPanAxis();
+  function panCamera(horizontal, vertical, deltaSeconds) {
     if (!horizontal && !vertical) return false;
 
     // Keep navigation in the visible camera plane, independently of its rotation.
@@ -710,11 +722,243 @@ export function createSpatialView({
     // Move position and target together so the camera never rotates or zooms.
     camera.position.add(keyboardOffset);
     controls.target.add(keyboardOffset);
-    keyboardPanMoved = true;
     return true;
   }
 
+  function updateKeyboardPan(timestamp) {
+    if (
+      !active
+      || drag
+      || cameraTween
+      || !pressedKeyboardPanCodes.size
+    ) {
+      keyboardPanLastTimestamp = timestamp;
+      return false;
+    }
+
+    const previousTimestamp = keyboardPanLastTimestamp ?? timestamp;
+    keyboardPanLastTimestamp = timestamp;
+    const deltaSeconds = Math.min(
+      MAX_KEYBOARD_PAN_DELTA_SECONDS,
+      Math.max(0, (timestamp - previousTimestamp) / 1000),
+    );
+    if (!deltaSeconds) return true;
+
+    const { horizontal, vertical } = keyboardPanAxis();
+    const moved = panCamera(horizontal, vertical, deltaSeconds);
+    if (moved) keyboardPanMoved = true;
+    return moved;
+  }
+
+  function orbitCamera(horizontal, vertical, deltaSeconds) {
+    if (!horizontal && !vertical) return false;
+
+    gamepadCameraOffset.copy(camera.position).sub(controls.target);
+    if (gamepadCameraOffset.lengthSq() < 0.0001) return false;
+
+    gamepadSpherical.setFromVector3(gamepadCameraOffset);
+    gamepadSpherical.theta -= horizontal * GAMEPAD_ORBIT_SPEED * deltaSeconds;
+    gamepadSpherical.phi += vertical * GAMEPAD_ORBIT_SPEED * deltaSeconds;
+    gamepadSpherical.phi = THREE.MathUtils.clamp(
+      gamepadSpherical.phi,
+      0.12,
+      Math.PI - 0.12,
+    );
+
+    gamepadCameraOffset.setFromSpherical(gamepadSpherical);
+    camera.position.copy(controls.target).add(gamepadCameraOffset);
+    return true;
+  }
+
+  function zoomCamera(amount, deltaSeconds) {
+    if (!amount) return false;
+
+    gamepadCameraOffset.copy(camera.position).sub(controls.target);
+    if (gamepadCameraOffset.lengthSq() < 0.0001) return false;
+
+    const distance = THREE.MathUtils.clamp(
+      gamepadCameraOffset.length()
+        * Math.exp(-amount * GAMEPAD_ZOOM_SPEED * deltaSeconds),
+      controls.minDistance,
+      controls.maxDistance,
+    );
+    gamepadCameraOffset.setLength(distance);
+    camera.position.copy(controls.target).add(gamepadCameraOffset);
+    return true;
+  }
+
+  function setGamepadAim(thoughtId) {
+    if (thoughtId === gamepadAimedThoughtId) return;
+    if (hoveredThoughtId === gamepadAimedThoughtId) hoveredThoughtId = null;
+    gamepadAimedThoughtId = thoughtId;
+    if (thoughtId) hoveredThoughtId = thoughtId;
+    nodeInstancesDirty = true;
+    requestRender();
+  }
+
+  function hideGamepadUi() {
+    container.classList.remove('is-gamepad-active');
+    gamepadLastActivityAt = 0;
+    setGamepadAim(null);
+  }
+
+  function markGamepadActivity(timestamp) {
+    gamepadLastActivityAt = timestamp;
+    container.classList.add('is-gamepad-active');
+  }
+
+  function updateGamepadAim() {
+    setGamepadAim(pickThoughtAtNdc(0, 0));
+  }
+
+  function selectThoughtAtGamepadAim() {
+    const thoughtId = pickThoughtAtNdc(0, 0);
+    setGamepadAim(thoughtId);
+    if (!thoughtId) return false;
+
+    if (connectionSelection) {
+      if (thoughtId !== connectionSelection.sourceId) {
+        onConnectionTargetToggle(thoughtId);
+      }
+      return true;
+    }
+
+    return selectThoughtAndNotify(thoughtId);
+  }
+
+  function stopGamepadPolling({ persist = true } = {}) {
+    if (gamepadPollFrame !== null) cancelAnimationFrame(gamepadPollFrame);
+    gamepadPollFrame = null;
+    gamepadButtons = [];
+    gamepadLastTimestamp = null;
+    if (persist && gamepadMoved) saveCamera();
+    gamepadMoved = false;
+    hideGamepadUi();
+  }
+
+  function readBrowserGamepad(previousButtons = []) {
+    try {
+      return readSpatialGamepad(
+        navigator.getGamepads?.() || [],
+        previousButtons,
+      );
+    } catch {
+      return null;
+    }
+  }
+
+  function pollGamepad(timestamp) {
+    gamepadPollFrame = null;
+    if (!active || document.hidden) return;
+
+    const state = readBrowserGamepad(gamepadButtons);
+    if (!state) {
+      stopGamepadPolling();
+      return;
+    }
+
+    gamepadButtons = state.buttons;
+    const previousTimestamp = gamepadLastTimestamp ?? timestamp;
+    gamepadLastTimestamp = timestamp;
+    const deltaSeconds = Math.min(
+      MAX_GAMEPAD_DELTA_SECONDS,
+      Math.max(0, (timestamp - previousTimestamp) / 1000),
+    );
+    const hasCameraInput = Boolean(
+      state.leftStick.x
+      || state.leftStick.y
+      || state.rightStick.x
+      || state.rightStick.y
+      || state.zoom,
+    );
+    const hasButtonInput = Boolean(
+      state.selectPressed
+      || state.backPressed
+      || state.focusPressed
+      || state.fitAllPressed,
+    );
+    const hasInput = hasCameraInput || hasButtonInput;
+
+    if (hasInput) markGamepadActivity(timestamp);
+    if (
+      gamepadLastActivityAt
+      && timestamp - gamepadLastActivityAt > GAMEPAD_UI_TIMEOUT
+    ) hideGamepadUi();
+
+    if (hasCameraInput && cameraTween) {
+      cameraTween = null;
+      controls.enabled = active && !drag;
+    }
+
+    let moved = false;
+    if (
+      !drag
+      && !controlsInteracting
+      && !pressedKeyboardPanCodes.size
+      && deltaSeconds
+    ) {
+      const panned = panCamera(
+        state.leftStick.x,
+        -state.leftStick.y,
+        deltaSeconds,
+      );
+      const orbited = orbitCamera(
+        state.rightStick.x,
+        state.rightStick.y,
+        deltaSeconds,
+      );
+      const zoomed = zoomCamera(state.zoom, deltaSeconds);
+      moved = panned || orbited || zoomed;
+    }
+
+    if (!drag && !controlsInteracting) {
+      if (state.fitAllPressed) fitAll();
+      if (state.focusPressed && selectedThoughtId) focusThought(selectedThoughtId);
+      if (state.selectPressed) selectThoughtAtGamepadAim();
+      if (state.backPressed) onDismissRequest();
+    }
+
+    if (moved) {
+      gamepadMoved = true;
+      updateGamepadAim();
+      requestRender();
+    } else if (gamepadMoved) {
+      gamepadMoved = false;
+      saveCamera();
+    } else if (container.classList.contains('is-gamepad-active')) {
+      updateGamepadAim();
+    }
+
+    gamepadPollFrame = requestAnimationFrame(pollGamepad);
+  }
+
+  function startGamepadPolling() {
+    if (
+      !active
+      || document.hidden
+      || gamepadPollFrame !== null
+      || typeof navigator.getGamepads !== 'function'
+    ) return;
+
+    const state = readBrowserGamepad();
+    if (!state) return;
+    gamepadButtons = state.buttons;
+    gamepadLastTimestamp = null;
+    gamepadPollFrame = requestAnimationFrame(pollGamepad);
+  }
+
+  function handleGamepadConnected(event) {
+    if (event.gamepad?.mapping !== 'standard') return;
+    startGamepadPolling();
+  }
+
+  function handleGamepadDisconnected() {
+    stopGamepadPolling();
+    startGamepadPolling();
+  }
+
   function focusSpatialViewport() {
+    hideGamepadUi();
     container.focus({ preventScroll: true });
   }
 
@@ -729,6 +973,7 @@ export function createSpatialView({
 
     event.preventDefault();
     event.stopPropagation();
+    hideGamepadUi();
 
     if (cameraTween) {
       cameraTween = null;
@@ -839,6 +1084,17 @@ export function createSpatialView({
     requestRender();
   }
 
+  function selectThoughtAndNotify(thoughtId) {
+    if (!nodesById.has(thoughtId)) return false;
+    selectedThoughtId = thoughtId;
+    updateNeighbourIds();
+    nodeInstancesDirty = true;
+    edgeGeometryDirty = true;
+    onThoughtSelect(thoughtId);
+    requestRender();
+    return true;
+  }
+
   function setConnectionSelection(selection) {
     connectionSelection = selection && typeof selection.sourceId === 'string'
       ? {
@@ -872,11 +1128,7 @@ export function createSpatialView({
     const node = nodesById.get(thoughtId);
     if (!node) return false;
 
-    selectedThoughtId = thoughtId;
-    updateNeighbourIds();
-    nodeInstancesDirty = true;
-    edgeGeometryDirty = true;
-    onThoughtSelect(thoughtId);
+    selectThoughtAndNotify(thoughtId);
     cameraDirection.copy(camera.position).sub(controls.target);
     if (cameraDirection.lengthSq() < 0.001) cameraDirection.set(0, 0, 1);
     cameraDirection.normalize();
@@ -948,9 +1200,11 @@ export function createSpatialView({
     controls.enabled = !drag && !cameraTween;
     resize();
     layout.reheat(0.22);
+    startGamepadPolling();
   }
 
   function deactivate() {
+    stopGamepadPolling();
     clearKeyboardPan();
     active = false;
     controls.enabled = false;
@@ -1010,11 +1264,7 @@ export function createSpatialView({
 
     event.preventDefault();
     event.stopImmediatePropagation();
-    selectedThoughtId = thoughtId;
-    updateNeighbourIds();
-    nodeInstancesDirty = true;
-    edgeGeometryDirty = true;
-    onThoughtSelect(thoughtId);
+    selectThoughtAndNotify(thoughtId);
     controls.enabled = false;
     renderer.domElement.setPointerCapture(event.pointerId);
     renderer.domElement.classList.add('is-node-dragging');
@@ -1042,6 +1292,7 @@ export function createSpatialView({
   }
 
   function handlePointerMove(event) {
+    hideGamepadUi();
     if (!drag) {
       const nextHoveredThoughtId = active ? pickThought(event) : null;
       if (nextHoveredThoughtId !== hoveredThoughtId) {
@@ -1095,11 +1346,28 @@ export function createSpatialView({
     finishDrag(event, { cancelled: true });
   }
 
+  function handleControlsStart() {
+    controlsInteracting = true;
+    hideGamepadUi();
+  }
+
+  function handleControlsEnd() {
+    controlsInteracting = false;
+    saveCamera();
+  }
+
+  function handleWindowBlur() {
+    clearKeyboardPan();
+    stopGamepadPolling();
+  }
+
   function handleVisibilityChange() {
     if (document.hidden) {
       clearKeyboardPan();
+      stopGamepadPolling();
       return;
     }
+    startGamepadPolling();
     requestRender();
   }
 
@@ -1112,6 +1380,9 @@ export function createSpatialView({
     deactivate();
     clearKeyboardPan({ persist: false });
     layout.dispose();
+    controls.removeEventListener('change', requestRender);
+    controls.removeEventListener('start', handleControlsStart);
+    controls.removeEventListener('end', handleControlsEnd);
     controls.dispose();
     nodeGeometry.dispose();
     nodeMaterial.dispose();
@@ -1132,13 +1403,18 @@ export function createSpatialView({
     document.removeEventListener('visibilitychange', handleVisibilityChange);
     container.removeEventListener('keydown', handleKeyboardPanKeyDown);
     window.removeEventListener('keyup', handleKeyboardPanKeyUp);
-    window.removeEventListener('blur', clearKeyboardPan);
+    window.removeEventListener('blur', handleWindowBlur);
+    window.removeEventListener('focus', startGamepadPolling);
+    window.removeEventListener('gamepadconnected', handleGamepadConnected);
+    window.removeEventListener('gamepaddisconnected', handleGamepadDisconnected);
     renderer.domElement.remove();
     labelLayer.remove();
+    gamepadReticle.remove();
   }
 
   controls.addEventListener('change', requestRender);
-  controls.addEventListener('end', saveCamera);
+  controls.addEventListener('start', handleControlsStart);
+  controls.addEventListener('end', handleControlsEnd);
   renderer.domElement.addEventListener('pointerdown', focusSpatialViewport, true);
   renderer.domElement.addEventListener('pointerdown', handlePointerDown, true);
   renderer.domElement.addEventListener('pointermove', handlePointerMove, true);
@@ -1150,7 +1426,10 @@ export function createSpatialView({
   document.addEventListener('visibilitychange', handleVisibilityChange);
   container.addEventListener('keydown', handleKeyboardPanKeyDown);
   window.addEventListener('keyup', handleKeyboardPanKeyUp);
-  window.addEventListener('blur', clearKeyboardPan);
+  window.addEventListener('blur', handleWindowBlur);
+  window.addEventListener('focus', startGamepadPolling);
+  window.addEventListener('gamepadconnected', handleGamepadConnected);
+  window.addEventListener('gamepaddisconnected', handleGamepadDisconnected);
 
   return {
     activate,

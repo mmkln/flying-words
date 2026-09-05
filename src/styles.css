@@ -143,6 +143,35 @@ button { -webkit-tap-highlight-color: transparent; }
 .spatial-canvas.is-node-dragging { cursor: grabbing; }
 .spatial-canvas.is-node-hovered:not(.is-node-dragging) { cursor: pointer; }
 
+.spatial-gamepad-reticle {
+  position: absolute;
+  z-index: 2;
+  top: 50%;
+  left: 50%;
+  width: 16px;
+  height: 16px;
+  border: 1.5px solid rgba(112, 85, 197, .8);
+  border-radius: 50%;
+  opacity: 0;
+  box-shadow: 0 0 0 3px rgba(255, 255, 255, .58);
+  pointer-events: none;
+  transform: translate(-50%, -50%) scale(.82);
+  transition: opacity 160ms ease, transform 160ms ease;
+}
+
+.spatial-gamepad-reticle::after {
+  content: "";
+  position: absolute;
+  inset: 5px;
+  border-radius: 50%;
+  background: rgba(112, 85, 197, .88);
+}
+
+.spatial-world.is-gamepad-active .spatial-gamepad-reticle {
+  opacity: 1;
+  transform: translate(-50%, -50%) scale(1);
+}
+
 .spatial-label-layer {
   position: absolute;
   z-index: 1;

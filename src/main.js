@@ -588,6 +588,14 @@ async function ensureSpatialView() {
             if (isCloudMode()) enqueueThoughtMetaPatch(thought, ['spatial']);
             renderSpatialInspector();
           },
+          onDismissRequest() {
+            if (connectionEditor) {
+              closeConnectionEditor();
+              announce('Connection changes cancelled.');
+              return;
+            }
+            if (selectedThoughtId) clearThoughtSelection();
+          },
           onError(message) {
             announce(message);
           },
