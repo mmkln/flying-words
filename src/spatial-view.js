@@ -11,6 +11,7 @@ import {
   normalizeSpatialGraphTransition,
 } from './spatial-graph-transition.js';
 import { readSpatialGamepad } from './gamepad-input.js';
+import { createSpatialOrientation } from './spatial-orientation.js';
 import { MAX_THOUGHTS } from './app-limits.js';
 
 const MAX_VISIBLE_LABELS = 60;
@@ -252,6 +253,9 @@ export function createSpatialView({
   const cameraUp = new THREE.Vector3();
   const cameraTranslation = new THREE.Vector3();
   const gamepadSpherical = new THREE.Spherical();
+  const graphBoundsBox = new THREE.Box3();
+  const graphBoundsSphere = new THREE.Sphere();
+  const boundsPoint = new THREE.Vector3();
 
   let nodes = [];
   let links = [];
@@ -283,8 +287,36 @@ export function createSpatialView({
   let fitAfterLayout = false;
   let nodeInstancesDirty = true;
   let edgeGeometryDirty = true;
+  let graphBoundsDirty = true;
+  let cachedGraphBounds = null;
 
   const pressedKeyboardPanCodes = new Set();
+  const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)');
+  const orientation = createSpatialOrientation({
+    container,
+    onLevel: levelView,
+    onCenter: fitAll,
+  });
+
+  function getGraphBounds() {
+    if (!graphBoundsDirty) return cachedGraphBounds;
+    graphBoundsDirty = false;
+    graphBoundsBox.makeEmpty();
+    for (const node of nodes) {
+      if (!finitePosition(node)) continue;
+      const radius = Math.max(5, node.radius || 7);
+      graphBoundsBox.expandByPoint(boundsPoint.set(
+        node.x - radius, node.y - radius, node.z - radius,
+      ));
+      graphBoundsBox.expandByPoint(boundsPoint.set(
+        node.x + radius, node.y + radius, node.z + radius,
+      ));
+    }
+    cachedGraphBounds = graphBoundsBox.isEmpty()
+      ? null
+      : graphBoundsBox.getBoundingSphere(graphBoundsSphere);
+    return cachedGraphBounds;
+  }
 
   function getCameraState({ settled = false } = {}) {
     // A quick next/Back action should remember the intended destination,
@@ -294,7 +326,7 @@ export function createSpatialView({
     return {
       position: { x: position.x, y: position.y, z: position.z },
       target: { x: target.x, y: target.y, z: target.z },
-      roll: cameraRoll,
+      roll: settled && cameraTween ? cameraTween.toRoll : cameraRoll,
     };
   }
 
@@ -377,6 +409,7 @@ export function createSpatialView({
     onTick(nextNodes, nextLinks) {
       nodes = nextNodes;
       links = nextLinks;
+      graphBoundsDirty = true;
       nodesById = new Map(nodes.map((node) => [node.id, node]));
       preserveViewportAnchor();
       updateNeighbourIds();
@@ -662,13 +695,20 @@ export function createSpatialView({
 
   function updateCameraTween(timestamp) {
     if (!cameraTween) return false;
-    const progress = Math.min(1, (timestamp - cameraTween.startedAt) / cameraTween.duration);
+    const progress = cameraTween.duration <= 0
+      ? 1
+      : Math.min(1, (timestamp - cameraTween.startedAt) / cameraTween.duration);
     const eased = 1 - ((1 - progress) ** 3);
 
     camera.position.lerpVectors(cameraTween.fromPosition, cameraTween.toPosition, eased);
     controls.target.lerpVectors(cameraTween.fromTarget, cameraTween.toTarget, eased);
+    cameraRoll = normalizeCameraRoll(
+      cameraTween.fromRoll
+      + normalizeCameraRoll(cameraTween.toRoll - cameraTween.fromRoll) * eased,
+    );
     if (progress < 1) return true;
 
+    cameraRoll = cameraTween.toRoll;
     cameraTween = null;
     controls.enabled = active && !drag;
     controls.update();
@@ -909,8 +949,7 @@ export function createSpatialView({
     ) hideGamepadUi();
 
     if (hasCameraInput && cameraTween) {
-      cameraTween = null;
-      controls.enabled = active && !drag;
+      interruptCameraTween();
     }
 
     let moved = false;
@@ -1000,8 +1039,7 @@ export function createSpatialView({
     hideGamepadUi();
 
     if (cameraTween) {
-      cameraTween = null;
-      controls.enabled = active && !drag;
+      interruptCameraTween();
     }
 
     pressedKeyboardPanCodes.add(event.code);
@@ -1026,6 +1064,7 @@ export function createSpatialView({
     const controlsChanged = controls.update();
     applyCameraRoll();
     camera.updateMatrixWorld();
+    orientation.update({ camera, graphCenter: getGraphBounds()?.center ?? null });
     updateNodeInstances();
     updateEdgeGeometry();
     updateLabels();
@@ -1092,6 +1131,7 @@ export function createSpatialView({
     );
     nodes = layout.getNodes();
     links = layout.getLinks();
+    graphBoundsDirty = true;
     nodesById = new Map(nodes.map((node) => [node.id, node]));
     if (!nodesById.has(selectedThoughtId)) selectedThoughtId = null;
     updateNeighbourIds();
@@ -1152,14 +1192,28 @@ export function createSpatialView({
     controls.enableDamping = damping;
   }
 
-  function startCameraTween(toPosition, toTarget, duration = CAMERA_TWEEN_DURATION) {
+  function interruptCameraTween() {
+    if (!cameraTween) return;
+    cameraTween = null;
+    controls.enabled = active && !drag;
+    requestRender();
+  }
+
+  function startCameraTween(
+    toPosition,
+    toTarget,
+    duration = CAMERA_TWEEN_DURATION,
+    { roll = cameraRoll } = {},
+  ) {
     clearCameraMotion();
     cameraTween = {
       fromPosition: camera.position.clone(),
       fromTarget: controls.target.clone(),
       toPosition: toPosition.clone(),
       toTarget: toTarget.clone(),
-      duration,
+      fromRoll: cameraRoll,
+      toRoll: normalizeCameraRoll(roll),
+      duration: reducedMotion.matches ? 0 : duration,
       startedAt: performance.now(),
     };
     controls.enabled = false;
@@ -1173,8 +1227,9 @@ export function createSpatialView({
     const position = new THREE.Vector3().copy(state.position);
     const target = new THREE.Vector3().copy(state.target);
     if (position.distanceToSquared(target) < 0.000001) return false;
-    cameraRoll = normalizeCameraRoll(state.roll);
-    startCameraTween(position, target);
+    startCameraTween(position, target, CAMERA_TWEEN_DURATION, {
+      roll: normalizeCameraRoll(state.roll),
+    });
     return true;
   }
 
@@ -1197,14 +1252,9 @@ export function createSpatialView({
   }
 
   function fitAll() {
-    if (!nodes.length) return false;
-    const box = new THREE.Box3();
-    nodes.forEach((node) => {
-      const radius = Math.max(5, node.radius || 7);
-      box.expandByPoint(new THREE.Vector3(node.x - radius, node.y - radius, node.z - radius));
-      box.expandByPoint(new THREE.Vector3(node.x + radius, node.y + radius, node.z + radius));
-    });
-    const sphere = box.getBoundingSphere(new THREE.Sphere());
+    if (drag) return false;
+    const sphere = getGraphBounds();
+    if (!sphere) return false;
     cameraDirection.copy(camera.position).sub(controls.target);
     if (cameraDirection.lengthSq() < 0.001) cameraDirection.set(0, 0, 1);
     cameraDirection.normalize();
@@ -1220,11 +1270,18 @@ export function createSpatialView({
   }
 
   function resetView() {
-    cameraRoll = 0;
     startCameraTween(
       new THREE.Vector3(0, 160, 720),
       new THREE.Vector3(0, 0, 0),
+      CAMERA_TWEEN_DURATION,
+      { roll: 0 },
     );
+  }
+
+  function levelView() {
+    if (!active || drag) return false;
+    startCameraTween(camera.position, controls.target, CAMERA_TWEEN_DURATION, { roll: 0 });
+    return true;
   }
 
   function getThoughtPosition(thoughtId) {
@@ -1432,6 +1489,7 @@ export function createSpatialView({
 
   function dispose() {
     deactivate();
+    orientation.dispose();
     clearKeyboardPan({ persist: false });
     layout.dispose();
     controls.removeEventListener('change', requestRender);
@@ -1446,6 +1504,8 @@ export function createSpatialView({
     activeEdgeGeometry.dispose();
     activeEdgeMaterial.dispose();
     renderer.dispose();
+    renderer.domElement.removeEventListener('pointerdown', interruptCameraTween, true);
+    renderer.domElement.removeEventListener('wheel', interruptCameraTween, true);
     renderer.domElement.removeEventListener('pointerdown', focusSpatialViewport, true);
     renderer.domElement.removeEventListener('pointerdown', handlePointerDown, true);
     renderer.domElement.removeEventListener('pointermove', handlePointerMove, true);
@@ -1469,6 +1529,10 @@ export function createSpatialView({
   controls.addEventListener('change', requestRender);
   controls.addEventListener('start', handleControlsStart);
   controls.addEventListener('end', handleControlsEnd);
+  // Capture runs before OrbitControls' handlers, which are disabled during a
+  // tween. Allow the same pointer/wheel event to take over camera navigation.
+  renderer.domElement.addEventListener('pointerdown', interruptCameraTween, true);
+  renderer.domElement.addEventListener('wheel', interruptCameraTween, { capture: true, passive: true });
   renderer.domElement.addEventListener('pointerdown', focusSpatialViewport, true);
   renderer.domElement.addEventListener('pointerdown', handlePointerDown, true);
   renderer.domElement.addEventListener('pointermove', handlePointerMove, true);

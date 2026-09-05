@@ -129,6 +129,76 @@ button { -webkit-tap-highlight-color: transparent; }
   outline-offset: -3px;
 }
 
+.spatial-orientation {
+  position: absolute;
+  z-index: 4;
+  top: 78px;
+  left: 20px;
+  display: grid;
+  justify-items: center;
+  gap: 4px;
+  width: 104px;
+  pointer-events: none;
+}
+
+.spatial-orientation button {
+  min-height: 44px;
+  padding: 0;
+  border: 1px solid var(--border-subtle);
+  color: var(--text-secondary);
+  background: var(--surface);
+  cursor: pointer;
+  pointer-events: auto;
+}
+
+.spatial-orientation button:hover:not(:disabled) {
+  border-color: var(--border-hover);
+  background: var(--surface-hover);
+}
+
+.spatial-orientation button:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 3px;
+}
+
+.spatial-orientation button:disabled { cursor: default; opacity: .5; }
+.spatial-orientation svg { display: block; pointer-events: none; }
+.spatial-orientation [hidden] { display: none; }
+
+.spatial-orientation-level { width: 76px; height: 76px; border-radius: 50%; }
+.spatial-orientation-level svg { width: 100%; height: 100%; overflow: visible; }
+.orientation-globe { fill: none; stroke: var(--border-subtle); }
+.orientation-equator { fill: none; stroke: var(--text-tertiary); stroke-width: 1; }
+.orientation-axis { stroke: var(--border-subtle); stroke-dasharray: 2 3; }
+.orientation-pole rect { fill: var(--surface-solid); }
+.orientation-pole text { font-size: 11px; font-weight: 600; text-anchor: middle; }
+.orientation-up text { fill: var(--accent); }
+.orientation-down text { fill: var(--text-secondary); }
+.orientation-pole-view { fill: var(--text-secondary); font-size: 10px; text-anchor: middle; }
+
+.spatial-orientation-center {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  width: 104px;
+  border-radius: 12px;
+}
+
+.spatial-orientation-center svg {
+  flex: 0 0 19px;
+  width: 19px;
+  height: 19px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.6;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.orientation-center-copy { display: grid; gap: 2px; text-align: left; font-size: 12px; }
+.orientation-center-status { font-size: 9px; color: var(--text-tertiary); }
+
 .spatial-canvas {
   position: absolute;
   z-index: 0;
@@ -2478,14 +2548,36 @@ kbd {
     border-radius: 12px;
   }
   .board-arrange-button { right: 140px; bottom: 92px; }
-  .spatial-toolbar { top: 58px; }
+  .spatial-toolbar {
+    top: 67px;
+    left: auto;
+    right: 12px;
+    width: max-content;
+    transform: none;
+  }
+  .spatial-toolbar button { white-space: nowrap; }
   .spatial-toolbar p { display: none; }
+  .spatial-orientation {
+    top: 58px;
+    left: 12px;
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    width: 116px;
+  }
+  .spatial-orientation-level { width: 56px; height: 56px; flex: 0 0 56px; }
+  .orientation-pole text { font-size: 13px; }
+  .spatial-orientation-center { width: 56px; height: 56px; flex-direction: column; gap: 2px; }
+  .orientation-center-copy { text-align: center; gap: 0; font-size: 11px; }
+  .orientation-center-status { font-size: 8px; }
+  .spatial-orientation[data-center-state="direction"] .orientation-center-status { display: none; }
   .spatial-inspector-stack {
     top: auto;
     right: 10px;
     bottom: 104px;
     width: calc(100vw - 20px);
-    max-height: calc(100dvh - 126px);
+    /* Leave the shared 58–114px navigation row and a 12px gap above details. */
+    max-height: calc(100dvh - 230px);
   }
   .spatial-inspector {
     max-height: min(54dvh, 470px);

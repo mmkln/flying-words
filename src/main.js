@@ -5515,7 +5515,7 @@ window.addEventListener('keydown', (event) => {
 document.addEventListener('pointerdown', (event) => {
   if (!event.target.closest('#spatial-layout-picker')) closeSpatialLayoutMenu();
   if (!event.target.closest(
-    '.thought-card, .spatial-toolbar, .spatial-inspector-stack, .thought-focus-dialog, .selection-toolbar, .connection-search-panel',
+    '.thought-card, .spatial-toolbar, .spatial-orientation, .spatial-inspector-stack, .thought-focus-dialog, .selection-toolbar, .connection-search-panel',
   )) {
     clearThoughtSelection();
   }
