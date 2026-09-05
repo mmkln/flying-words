@@ -38,8 +38,8 @@
           : '#f9f8fe';
       })();
     </script>
-    <script type="module" crossorigin src="/assets/index-BpY59wCd.js"></script>
-    <link rel="stylesheet" crossorigin href="/assets/index-BY0rRn_T.css">
+    <script type="module" crossorigin src="/assets/index-DM87hbIb.js"></script>
+    <link rel="stylesheet" crossorigin href="/assets/index-DiS6tOz4.css">
   </head>
   <body>
     <main class="app-shell">
@@ -267,24 +267,39 @@
             </header>
             <div class="spatial-inspector-body">
               <p id="spatial-inspector-text"></p>
-              <button
-                class="spatial-inspector-focus"
-                id="spatial-focus"
-                type="button"
-                aria-label="Focus selected thought"
-                aria-keyshortcuts="F"
-                title="Focus selected thought (F)"
-              >
-                <svg viewBox="0 0 24 24" aria-hidden="true">
-                  <path d="M4 9V6a2 2 0 0 1 2-2h3"></path>
-                  <path d="M15 4h3a2 2 0 0 1 2 2v3"></path>
-                  <path d="M20 15v3a2 2 0 0 1-2 2h-3"></path>
-                  <path d="M9 20H6a2 2 0 0 1-2-2v-3"></path>
-                  <circle cx="12" cy="12" r="3"></circle>
-                </svg>
-                <span>Focus in Spatial</span>
-                <kbd aria-hidden="true">F</kbd>
-              </button>
+              <div class="spatial-inspector-navigation">
+                <button
+                  id="spatial-back"
+                  class="spatial-inspector-back"
+                  type="button"
+                  aria-label="Return to previous thought"
+                  title="Return to previous thought"
+                  disabled
+                >
+                  <svg viewBox="0 0 24 24" aria-hidden="true">
+                    <path d="m14 6-6 6 6 6"></path>
+                  </svg>
+                  <span>Back</span>
+                </button>
+                <button
+                  class="spatial-inspector-focus"
+                  id="spatial-focus"
+                  type="button"
+                  aria-label="Focus selected thought"
+                  aria-keyshortcuts="F"
+                  title="Focus selected thought (F)"
+                >
+                  <svg viewBox="0 0 24 24" aria-hidden="true">
+                    <path d="M4 9V6a2 2 0 0 1 2-2h3"></path>
+                    <path d="M15 4h3a2 2 0 0 1 2 2v3"></path>
+                    <path d="M20 15v3a2 2 0 0 1-2 2h-3"></path>
+                    <path d="M9 20H6a2 2 0 0 1-2-2v-3"></path>
+                    <circle cx="12" cy="12" r="3"></circle>
+                  </svg>
+                  <span>Focus in Spatial</span>
+                  <kbd aria-hidden="true">F</kbd>
+                </button>
+              </div>
               <section
                 class="spatial-inspector-suggestions"
                 id="spatial-inspector-suggestions"
