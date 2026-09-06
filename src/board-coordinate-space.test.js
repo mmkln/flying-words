@@ -4,12 +4,23 @@ import test from 'node:test';
 import {
   boardWorldToClientPoint,
   clientPointToBoardWorld,
+  getManualBoardDragPosition,
   getBoardSpawnGap,
   zoomBoardCameraAtClientPoint,
 } from './board-coordinate-space.js';
 
 const bounds = { left: 36, top: 24 };
 const geometry = { cardWidth: 280, cardHeight: 96, gap: 24 };
+
+test('manual Board dragging preserves the exact pointer-relative position', () => {
+  assert.deepEqual(
+    getManualBoardDragPosition(
+      { x: 212.75, y: -18.5 },
+      { x: 37.25, y: 16.5 },
+    ),
+    { x: 175.5, y: -35 },
+  );
+});
 
 test('converts Board pointer coordinates correctly at every supported zoom', () => {
   const worldPoint = { x: 612.5, y: -184.25 };

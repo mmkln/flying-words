@@ -37,13 +37,14 @@ function addCandidate(queue, seen, candidate) {
 }
 
 /**
- * Projects a manually dragged Board card to the closest practical legal
- * position. Unlike automatic layout, it never moves the surrounding cards.
+ * Projects a Board rectangle to the closest practical collision-free
+ * position. This is for programmatic insertion; manual dragging deliberately
+ * does not call it because a user's drop position is authoritative.
  *
  * Coordinates describe the card's top-left corner in stable Board world
  * space, so the configured gap stays visually correct at every zoom level.
  */
-export function resolveManualBoardPosition({
+export function resolveCollisionFreeBoardPosition({
   candidate,
   obstacles = [],
   gap = 8,

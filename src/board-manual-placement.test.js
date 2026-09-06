@@ -1,15 +1,15 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { resolveManualBoardPosition } from './board-manual-placement.js';
+import { resolveCollisionFreeBoardPosition } from './board-manual-placement.js';
 import { rectanglesOverlap } from './board-rectangle-collision.js';
 
 const gap = 8;
 const card = (x, y, width = 120, height = 64) => ({ x, y, width, height });
 
-test('keeps a manually dragged Board card at the pointer position when it is clear', () => {
+test('keeps a requested insertion position when it is clear', () => {
   const candidate = card(20, 30);
-  const result = resolveManualBoardPosition({
+  const result = resolveCollisionFreeBoardPosition({
     candidate,
     obstacles: [card(400, 300)],
     gap,
@@ -18,9 +18,9 @@ test('keeps a manually dragged Board card at the pointer position when it is cle
   assert.deepEqual(result, candidate);
 });
 
-test('stops manual placement with the smaller Board clearance', () => {
+test('resolves an insertion with the tighter Board clearance', () => {
   const obstacle = card(200, 100);
-  const result = resolveManualBoardPosition({
+  const result = resolveCollisionFreeBoardPosition({
     candidate: card(170, 100),
     obstacles: [obstacle],
     gap,
@@ -36,13 +36,13 @@ test('stops manual placement with the smaller Board clearance', () => {
   );
 });
 
-test('finds a legal position when a dragged card meets multiple neighbours', () => {
+test('finds a legal insertion position among multiple neighbours', () => {
   const obstacles = [
     card(200, 100),
     card(200, 172),
     card(328, 100),
   ];
-  const result = resolveManualBoardPosition({
+  const result = resolveCollisionFreeBoardPosition({
     candidate: card(220, 120),
     obstacles,
     gap,

@@ -41,14 +41,14 @@ import {
 } from './canvas-placements.js';
 import {
   DEFAULT_BOARD_GEOMETRY,
-  MANUAL_BOARD_GAP,
+  BOARD_INSERTION_GAP,
   applyBoardGeometryCss,
   normalizeBoardGeometry,
 } from './board-geometry.js';
-import { resolveManualBoardPosition } from './board-manual-placement.js';
 import { planBoardInsertion } from './board-insertion.js';
 import {
   clientPointToBoardWorld,
+  getManualBoardDragPosition,
   getBoardSpawnGap,
   zoomBoardCameraAtClientPoint,
 } from './board-coordinate-space.js';
@@ -1216,7 +1216,7 @@ function placeThoughtInVisibleCanvas(thought) {
         width: boardGeometry.cardWidth,
         height: boardGeometry.cardHeight,
       })),
-    gap: MANUAL_BOARD_GAP,
+    gap: BOARD_INSERTION_GAP,
   });
   const displacedThoughts = insertion.moved
     .map(({ id, x, y }) => {
@@ -4014,26 +4014,9 @@ function moveDrag(event) {
 
   if (isCanvasSpace(activeSpaceId)) {
     const pointer = pointerToCanvasWorld(event);
-    const position = resolveManualBoardPosition({
-      candidate: {
-        x: pointer.x - dragOffset.x,
-        y: pointer.y - dragOffset.y,
-        width: draggedThought.width,
-        height: draggedThought.height,
-      },
-      obstacles: thoughts
-        .filter((thought) => (
-          thought !== draggedThought
-          && hasCanvasPlacement(thought, activeSpaceId)
-        ))
-        .map((thought) => ({
-          x: thought.x,
-          y: thought.y,
-          width: thought.width,
-          height: thought.height,
-        })),
-      gap: MANUAL_BOARD_GAP,
-    });
+    // A manual Board drop is authoritative. Automatic insertion and Arrange
+    // still avoid collisions, but dragging never snaps away from the pointer.
+    const position = getManualBoardDragPosition(pointer, dragOffset);
     draggedThought.x = position.x;
     draggedThought.y = position.y;
     draggedThought.rotation = 0;

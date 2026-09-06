@@ -3,14 +3,14 @@ import test from 'node:test';
 
 import {
   DEFAULT_BOARD_GEOMETRY,
-  MANUAL_BOARD_GAP,
+  BOARD_INSERTION_GAP,
   applyBoardGeometryCss,
   normalizeBoardGeometry,
 } from './board-geometry.js';
 
-test('keeps manual Board clearance independent from automatic geometry', () => {
+test('keeps Board insertion clearance independent from automatic geometry', () => {
   assert.equal(DEFAULT_BOARD_GEOMETRY.gap, 24);
-  assert.equal(MANUAL_BOARD_GAP, 8);
+  assert.equal(BOARD_INSERTION_GAP, 8);
 });
 
 test('accepts the complete versioned Board geometry from the API', () => {

@@ -1,5 +1,5 @@
 import { rectanglesOverlap } from './board-rectangle-collision.js';
-import { resolveManualBoardPosition } from './board-manual-placement.js';
+import { resolveCollisionFreeBoardPosition } from './board-manual-placement.js';
 
 function isFiniteRectangle(rectangle) {
   return (
@@ -78,7 +78,7 @@ export function planBoardInsertion({
     const obstacle = plannedById.get(id);
     if (!obstacle || !rectanglesOverlap(candidate, obstacle, gap)) return;
 
-    const resolved = resolveManualBoardPosition({
+    const resolved = resolveCollisionFreeBoardPosition({
       candidate: pushedAwayFrom(candidate, obstacle, gap),
       obstacles: [candidate, ...plannedById.values()].filter((item) => item.id !== id),
       gap,

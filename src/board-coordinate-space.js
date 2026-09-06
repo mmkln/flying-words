@@ -15,6 +15,18 @@ export function clientPointToBoardWorld(point, bounds, camera) {
 }
 
 /**
+ * Keep a manually dragged card exactly under the pointer. This intentionally
+ * has no bounds, snapping, gap, or collision policy: Board is unbounded and
+ * the user's chosen position wins.
+ */
+export function getManualBoardDragPosition(pointer, dragOffset) {
+  return {
+    x: pointer.x - dragOffset.x,
+    y: pointer.y - dragOffset.y,
+  };
+}
+
+/**
  * Project a stable Board position into browser viewport coordinates.
  */
 export function boardWorldToClientPoint(point, bounds, camera) {
