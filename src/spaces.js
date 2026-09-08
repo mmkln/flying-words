@@ -5,6 +5,7 @@ export const SpaceId = Object.freeze({
   TWO: 'space-2',
   THREE: 'space-3',
   CANVAS: 'canvas-1',
+  LOCAL_CANVAS: 'canvas-1',
   SPATIAL: 'spatial-1',
 });
 
@@ -34,20 +35,64 @@ const SPACE_CAPABILITIES = Object.freeze({
   }),
 });
 
-export const SPACES = Object.freeze([
+const FLOW_SPACES = Object.freeze([
   Object.freeze({ id: SpaceId.ONE, label: 'Space 1', kind: SpaceKind.FLOW }),
   Object.freeze({ id: SpaceId.TWO, label: 'Space 2', kind: SpaceKind.FLOW }),
   Object.freeze({ id: SpaceId.THREE, label: 'Space 3', kind: SpaceKind.FLOW }),
-  Object.freeze({ id: SpaceId.CANVAS, label: 'Board', kind: SpaceKind.CANVAS }),
-  Object.freeze({ id: SpaceId.SPATIAL, label: 'Spatial', kind: SpaceKind.SPATIAL }),
 ]);
+
+const LOCAL_BOARD_SPACE = Object.freeze({
+  id: SpaceId.LOCAL_CANVAS,
+  label: 'Board',
+  kind: SpaceKind.CANVAS,
+});
+
+const SPATIAL_SPACE = Object.freeze({
+  id: SpaceId.SPATIAL,
+  label: 'Spatial',
+  kind: SpaceKind.SPATIAL,
+});
+
+let boardSpaces = [LOCAL_BOARD_SPACE];
 
 export const DEFAULT_SPACE_ID = SpaceId.ONE;
 
-const SPACE_IDS = new Set(SPACES.map(({ id }) => id));
+export function normalizeBoardSpaces(boards = []) {
+  const seen = new Set();
+  return boards
+    .map((board) => ({
+      id: typeof board?.id === 'string' ? board.id : '',
+      label: typeof board?.title === 'string' && board.title.trim()
+        ? board.title.trim()
+        : 'Board',
+      kind: SpaceKind.CANVAS,
+    }))
+    .filter((space) => {
+      if (!space.id || seen.has(space.id)) return false;
+      seen.add(space.id);
+      return true;
+    });
+}
+
+export function setBoardSpaces(boards = []) {
+  const normalized = normalizeBoardSpaces(boards);
+  boardSpaces = normalized.length ? normalized : [LOCAL_BOARD_SPACE];
+}
+
+export function getBoardSpaces() {
+  return boardSpaces.slice();
+}
+
+export function getSpaces() {
+  return [
+    ...FLOW_SPACES,
+    ...boardSpaces,
+    SPATIAL_SPACE,
+  ];
+}
 
 export function isSpaceId(value) {
-  return SPACE_IDS.has(value);
+  return getSpaces().some(({ id }) => id === value);
 }
 
 export function normalizeSpaceId(value) {
@@ -56,7 +101,8 @@ export function normalizeSpaceId(value) {
 }
 
 export function getSpace(spaceId) {
-  return SPACES.find(({ id }) => id === normalizeSpaceId(spaceId)) || SPACES[0];
+  const spaces = getSpaces();
+  return spaces.find(({ id }) => id === normalizeSpaceId(spaceId)) || spaces[0];
 }
 
 export function getSpaceCapabilities(spaceId) {

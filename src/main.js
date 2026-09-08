@@ -65,7 +65,8 @@ import {
 } from './anchors.js';
 import {
   DEFAULT_SPACE_ID,
-  SPACES,
+  getBoardSpaces,
+  getSpaces,
   getSpaceCapabilities,
   getThoughtSpaceId,
   isCanvasSpace,
@@ -73,6 +74,7 @@ import {
   isSpaceId,
   isSpatialSpace,
   isThoughtAvailableInSpace,
+  setBoardSpaces,
 } from './spaces.js';
 import {
   applyThoughtPatch,
@@ -295,11 +297,13 @@ let themeMode = normalizeThemeMode(document.documentElement.dataset.themeMode);
 let resolvedTheme = resolveTheme(themeMode, systemThemeQuery.matches);
 let spatialLayoutMode = loadSpatialLayoutMode();
 let viewMode = 'canvas';
-let activeSpaceId = localStorage.getItem(ACTIVE_SPACE_STORAGE_KEY);
+let storedActiveSpaceId = localStorage.getItem(ACTIVE_SPACE_STORAGE_KEY);
+let activeSpaceId = storedActiveSpaceId;
 if (!isSpaceId(activeSpaceId)) activeSpaceId = DEFAULT_SPACE_ID;
 let canvasCamera = loadCanvasCamera(activeSpaceId);
 let boardGeometry = applyBoardGeometryCss(DEFAULT_BOARD_GEOMETRY);
 canvasHudVisible = isCanvasSpace(activeSpaceId) && canvasCamera.scale < MAX_CANVAS_SCALE;
+let boards = [];
 
 const connectionRenderer = createConnectionRenderer({
   layer: connectionLayer,
@@ -2974,6 +2978,77 @@ async function loadBoardGeometry() {
   rebuildConnectionLayer();
 }
 
+function applyBoardRecords(records, { preferStored = false } = {}) {
+  const previousSpaceId = activeSpaceId;
+  const wasBoardActive = isCanvasSpace(previousSpaceId);
+  boards = Array.isArray(records) ? records : [];
+  setBoardSpaces(boards);
+
+  const storedSpaceId = localStorage.getItem(ACTIVE_SPACE_STORAGE_KEY);
+  let nextSpaceId = (
+    preferStored
+    && storedSpaceId
+    && isSpaceId(storedSpaceId)
+  )
+    ? storedSpaceId
+    : activeSpaceId;
+
+  if (!isSpaceId(nextSpaceId)) {
+    nextSpaceId = wasBoardActive
+      ? getBoardSpaces()[0]?.id || DEFAULT_SPACE_ID
+      : DEFAULT_SPACE_ID;
+  }
+
+  if (nextSpaceId !== activeSpaceId) {
+    switchSpace(nextSpaceId);
+    return;
+  }
+
+  if (viewMode === 'spaces') renderSpacesOverview();
+  updateUi();
+}
+
+async function loadBoards() {
+  if (!auth) {
+    applyBoardRecords([]);
+    return false;
+  }
+
+  try {
+    const records = await requestApi('/boards/');
+    applyBoardRecords(records, { preferStored: true });
+    return true;
+  } catch (error) {
+    applyBoardRecords([]);
+    announce(`Could not load Boards: ${error.message}`);
+    return false;
+  }
+}
+
+function nextBoardTitle() {
+  return `Board ${boards.length + 1}`;
+}
+
+async function createBoard() {
+  if (!auth) {
+    announce('Sign in to create more Boards.');
+    return;
+  }
+  if (blockEditsDuringAccountSync()) return;
+
+  try {
+    const board = await requestApi('/boards/', {
+      method: 'POST',
+      body: { title: nextBoardTitle() },
+    });
+    applyBoardRecords([...boards, board]);
+    switchSpace(board.id);
+    announce(`${board.title} created.`);
+  } catch (error) {
+    announce(`Could not create Board: ${error.message}`);
+  }
+}
+
 function apiErrorMessage(payload) {
   if (!payload) return 'The server could not complete that request.';
   if (typeof payload.detail === 'string') return payload.detail;
@@ -4609,7 +4684,7 @@ function renderSpacesOverview() {
   const canvasWidth = Math.max(1, canvasBounds.width);
   const canvasHeight = Math.max(1, canvasBounds.height - RESERVED_BOTTOM_SPACE);
 
-  SPACES.forEach((space) => {
+  getSpaces().forEach((space) => {
     const tile = document.createElement('button');
     const label = document.createElement('span');
     const surface = document.createElement('span');
@@ -4698,6 +4773,28 @@ function renderSpacesOverview() {
     tile.addEventListener('click', () => switchSpace(space.id));
     spacesGrid.append(tile);
   });
+
+  if (auth) {
+    const createTile = document.createElement('button');
+    const createSurface = document.createElement('span');
+    const createIcon = document.createElement('span');
+    const createLabel = document.createElement('span');
+
+    createTile.type = 'button';
+    createTile.className = 'space-tile is-create-board';
+    createTile.setAttribute('aria-label', 'Create Board');
+
+    createSurface.className = 'space-create-surface';
+    createIcon.className = 'space-create-icon';
+    createIcon.textContent = '+';
+    createSurface.append(createIcon);
+
+    createLabel.className = 'space-tile-label';
+    createLabel.textContent = 'New Board';
+    createTile.append(createSurface, createLabel);
+    createTile.addEventListener('click', () => void createBoard());
+    spacesGrid.append(createTile);
+  }
 }
 
 function closeSpacesOverview({ restoreFocus = true } = {}) {
@@ -4740,7 +4837,7 @@ function switchSpace(spaceId) {
     closeSpacesOverview();
     void activateSpatialView();
 
-    const label = SPACES.find((space) => space.id === activeSpaceId)?.label;
+    const label = getSpaces().find((space) => space.id === activeSpaceId)?.label;
     announce(`${label || 'Space'} opened.`);
     return;
   }
@@ -4767,7 +4864,7 @@ function switchSpace(spaceId) {
   updateUi();
   closeSpacesOverview();
 
-  const label = SPACES.find((space) => space.id === activeSpaceId)?.label;
+  const label = getSpaces().find((space) => space.id === activeSpaceId)?.label;
   announce(`${label || 'Space'} opened.`);
 }
 
@@ -5026,6 +5123,7 @@ async function activateAuthenticatedAccount() {
     announce('Older unsynced changes were paused to protect server data.');
   }
   const ready = await restoreAuthenticatedThoughts();
+  if (ready) await loadBoards();
   if (ready) announce('Signed in.');
   return ready;
 }
@@ -5076,6 +5174,7 @@ function clearAuthenticatedState(message) {
   syncInFlight = false;
   localStorage.removeItem(AUTH_STORAGE_KEY);
   sessionStorage.removeItem(AUTH_STORAGE_KEY);
+  applyBoardRecords([]);
   updateAccountControl();
   replaceThoughts(loadStoredThoughts(STORAGE_KEY));
   if (message) announce(message);
@@ -5410,7 +5509,7 @@ window.addEventListener('keydown', (event) => {
     const focusedIndex = tiles.indexOf(document.activeElement);
     const currentIndex = focusedIndex >= 0
       ? focusedIndex
-      : SPACES.findIndex((space) => space.id === activeSpaceId);
+      : getSpaces().findIndex((space) => space.id === activeSpaceId);
     const columnCount = window.matchMedia('(max-width: 560px)').matches ? 2 : 3;
     let nextIndex = currentIndex;
 

@@ -3,11 +3,12 @@ import test from 'node:test';
 
 import {
   DEFAULT_SPACE_ID,
-  SPACES,
   SpaceId,
   SpaceKind,
+  getBoardSpaces,
   getSpace,
   getSpaceCapabilities,
+  getSpaces,
   getThoughtSpaceId,
   isCanvasSpace,
   isFlowSpace,
@@ -15,12 +16,14 @@ import {
   isSpatialSpace,
   isThoughtAvailableInSpace,
   normalizeSpaceId,
+  setBoardSpaces,
 } from './spaces.js';
 
-test('exposes three Flow spaces, one Canvas, and one Spatial view', () => {
-  assert.equal(SPACES.length, 5);
+test('exposes three Flow spaces, one fallback Canvas, and one Spatial view', () => {
+  setBoardSpaces([]);
+  assert.equal(getSpaces().length, 5);
   assert.deepEqual(
-    SPACES.map(({ id }) => id),
+    getSpaces().map(({ id }) => id),
     [SpaceId.ONE, SpaceId.TWO, SpaceId.THREE, SpaceId.CANVAS, SpaceId.SPATIAL],
   );
   assert.equal(isFlowSpace(SpaceId.ONE), true);
@@ -30,7 +33,30 @@ test('exposes three Flow spaces, one Canvas, and one Spatial view', () => {
   assert.equal(isSpatialSpace(SpaceId.SPATIAL), true);
 });
 
+test('adds account Boards as Canvas spaces', () => {
+  const boardId = '4db158ff-6f66-4332-97a7-cf38c3e094de';
+  setBoardSpaces([
+    { id: boardId, title: 'Research Board' },
+    { id: boardId, title: 'Duplicate ignored' },
+  ]);
+
+  assert.deepEqual(getBoardSpaces(), [{
+    id: boardId,
+    label: 'Research Board',
+    kind: SpaceKind.CANVAS,
+  }]);
+  assert.equal(isCanvasSpace(boardId), true);
+  assert.equal(getSpace(boardId).label, 'Research Board');
+  assert.deepEqual(
+    getSpaces().map(({ id }) => id),
+    [SpaceId.ONE, SpaceId.TWO, SpaceId.THREE, boardId, SpaceId.SPATIAL],
+  );
+
+  setBoardSpaces([]);
+});
+
 test('enables magnets in Flow and connections in Canvas and Spatial', () => {
+  setBoardSpaces([]);
   assert.deepEqual(getSpaceCapabilities(SpaceId.ONE), {
     magnets: true,
     connections: false,
@@ -49,6 +75,7 @@ test('enables magnets in Flow and connections in Canvas and Spatial', () => {
 });
 
 test('falls back to the first space for legacy and invalid layouts', () => {
+  setBoardSpaces([]);
   assert.equal(normalizeSpaceId('unknown'), DEFAULT_SPACE_ID);
   assert.equal(normalizeSpaceId('space-4'), SpaceId.THREE);
   assert.equal(getThoughtSpaceId({ pinned: true, meta: {} }), DEFAULT_SPACE_ID);
@@ -56,6 +83,7 @@ test('falls back to the first space for legacy and invalid layouts', () => {
 });
 
 test('makes unpinned thoughts global and pinned thoughts space-specific', () => {
+  setBoardSpaces([]);
   const globalThought = { pinned: false, meta: {} };
   const pinnedThought = {
     pinned: true,
@@ -69,6 +97,7 @@ test('makes unpinned thoughts global and pinned thoughts space-specific', () => 
 });
 
 test('keeps Canvas placement independent from flying spaces', () => {
+  setBoardSpaces([]);
   const canvasThought = {
     pinned: false,
     meta: {
@@ -84,6 +113,7 @@ test('keeps Canvas placement independent from flying spaces', () => {
 });
 
 test('shows every thought in Spatial while placements only describe fixed positions', () => {
+  setBoardSpaces([]);
   const thought = {
     pinned: false,
     meta: {

@@ -32,7 +32,7 @@ function normalizeStoredConnection(connection, sourceId, { legacy = false } = {}
     && typeof connection?.targetId === 'string'
     && allowedKinds.has(connection.kind)
     && connection.targetId !== sourceId
-    && (!legacy || connection.spaceId === SpaceId.CANVAS)
+    && (!legacy || connection.spaceId === SpaceId.LOCAL_CANVAS)
   );
   if (!valid) return null;
 
