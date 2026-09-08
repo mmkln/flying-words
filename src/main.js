@@ -4786,7 +4786,11 @@ function renderSpacesOverview() {
 
     createSurface.className = 'space-create-surface';
     createIcon.className = 'space-create-icon';
-    createIcon.textContent = '+';
+    createIcon.innerHTML = `
+      <svg viewBox="0 0 20 20" aria-hidden="true" focusable="false">
+        <path d="M10 4.75v10.5M4.75 10h10.5" />
+      </svg>
+    `;
     createSurface.append(createIcon);
 
     createLabel.className = 'space-tile-label';

@@ -1365,11 +1365,21 @@ button { -webkit-tap-highlight-color: transparent; }
   border: 1px solid rgba(107, 79, 204, .12);
   border-radius: 50%;
   color: #7055c5;
-  font-size: 30px;
-  font-weight: 300;
-  line-height: 1;
   background: rgba(255, 255, 255, .72);
   box-shadow: 0 8px 20px rgba(67, 55, 120, .08);
+}
+
+.space-create-icon svg {
+  display: block;
+  width: 18px;
+  height: 18px;
+}
+
+.space-create-icon path {
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.8;
+  stroke-linecap: round;
 }
 
 .space-tile-label {
