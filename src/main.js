@@ -123,7 +123,7 @@ const QUARANTINED_OUTBOX_STORAGE_PREFIX = 'flying-thoughts:outbox-quarantine:v1:
 const THEME_STORAGE_KEY = 'flying-thoughts:theme:v1';
 const MAX_THOUGHT_TEXT_LENGTH = 2000;
 const THOUGHT_TEXT_WARNING_THRESHOLD = 1700;
-const INITIAL_THOUGHT_PAGE_SIZE = 100;
+const INITIAL_THOUGHT_PAGE_SIZE = 1000;
 const HISTORY_PAGE_SIZE = 50;
 const CONNECTION_SEARCH_PAGE_SIZE = 30;
 const PANEL_SEARCH_DEBOUNCE_MS = 250;
@@ -273,6 +273,7 @@ let manualRefreshInFlight = null;
 let manualRefreshStatus = 'idle';
 let manualRefreshTimer = null;
 let serverThoughtsNextCursor = null;
+let serverThoughtsRequestId = 0;
 let historyThoughtIds = [];
 let historyNextCursor = null;
 let historyHasMore = false;
@@ -973,6 +974,7 @@ function currentThoughtStorageKey() {
 function resetPaginatedThoughtState() {
   window.clearTimeout(historySearchTimer);
   window.clearTimeout(connectionSearchTimer);
+  serverThoughtsRequestId += 1;
   serverThoughtsNextCursor = null;
   historyThoughtIds = [];
   historyNextCursor = null;
@@ -3915,15 +3917,61 @@ function mergeServerThoughts(records) {
   return merged;
 }
 
+async function loadRemainingServerThoughts({
+  cursor,
+  requestId,
+  silent = false,
+} = {}) {
+  let nextCursor = cursor;
+
+  while (nextCursor) {
+    if (!auth || syncPending || requestId !== serverThoughtsRequestId) return false;
+
+    try {
+      const page = await requestThoughtListPage({
+        limit: INITIAL_THOUGHT_PAGE_SIZE,
+        cursor: nextCursor,
+      });
+
+      if (!auth || syncPending || requestId !== serverThoughtsRequestId) return false;
+
+      mergeServerThoughts(page.results);
+      serverThoughtsNextCursor = page.nextCursor;
+      nextCursor = page.nextCursor;
+
+      if (isSpatialSpace(activeSpaceId)) refreshSpatialGraph();
+    } catch (error) {
+      if (!silent && requestId === serverThoughtsRequestId) {
+        announce(`Could not load all saved thoughts: ${error.message}`);
+      }
+      return false;
+    }
+  }
+
+  return true;
+}
+
 async function loadServerThoughts({ silent = false } = {}) {
   if (!auth || syncPending) return false;
+
+  const requestId = ++serverThoughtsRequestId;
 
   try {
     const page = await requestThoughtListPage({
       limit: INITIAL_THOUGHT_PAGE_SIZE,
     });
+
+    if (!auth || syncPending || requestId !== serverThoughtsRequestId) return false;
+
     applyServerThoughts(page.results);
     serverThoughtsNextCursor = page.nextCursor;
+    if (page.nextCursor) {
+      void loadRemainingServerThoughts({
+        cursor: page.nextCursor,
+        requestId,
+        silent,
+      });
+    }
     if (!silent) announce('Your saved thoughts are ready.');
     return true;
   } catch (error) {
