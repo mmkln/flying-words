@@ -136,11 +136,20 @@
       >
         <header class="connection-search-header">
           <span>Connect to</span>
-          <button
-            id="connection-search-close"
-            type="button"
-            aria-label="Close connection search"
-          >×</button>
+          <div class="panel-header-actions">
+            <button
+              class="panel-refresh-button"
+              id="connection-search-refresh"
+              type="button"
+              aria-label="Refresh thoughts"
+              hidden
+            ></button>
+            <button
+              id="connection-search-close"
+              type="button"
+              aria-label="Close connection search"
+            >×</button>
+          </div>
         </header>
         <label class="connection-search-field">
           <span class="sr-only">Search thoughts</span>
@@ -444,11 +453,20 @@
           <h2 id="history-title">History</h2>
           <p>Your thoughts, newest first.</p>
         </div>
-        <button class="history-close" id="history-close" type="button" aria-label="Close history">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true">
-            <path d="m6 6 12 12M18 6 6 18"></path>
-          </svg>
-        </button>
+        <div class="panel-header-actions">
+          <button
+            class="panel-refresh-button"
+            id="history-refresh"
+            type="button"
+            aria-label="Refresh thoughts"
+            hidden
+          ></button>
+          <button class="history-close" id="history-close" type="button" aria-label="Close history">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true">
+              <path d="m6 6 12 12M18 6 6 18"></path>
+            </svg>
+          </button>
+        </div>
       </div>
       <label class="history-search" for="history-search">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true">

@@ -141,6 +141,12 @@ const API_URL = CONFIGURED_API_URL || (
     ? LOCAL_API_URL
     : PRODUCTION_API_URL
 );
+const refreshIconSvg = `
+  <svg viewBox="0 0 20 20" aria-hidden="true" focusable="false">
+    <path d="M15.25 7.25A5.5 5.5 0 1 0 16 10" />
+    <path d="M15.25 4.75v2.75h-2.75" />
+  </svg>
+`;
 
 const canvas = document.querySelector('#canvas');
 const canvasWorld = document.querySelector('#canvas-world');
@@ -199,6 +205,7 @@ const announcer = document.querySelector('#announcer');
 const historyButton = document.querySelector('#history-button');
 const historyDialog = document.querySelector('#history-dialog');
 const historyClose = document.querySelector('#history-close');
+const historyRefresh = document.querySelector('#history-refresh');
 const historySearch = document.querySelector('#history-search');
 const historyList = document.querySelector('#history-list');
 const anchorsButton = document.querySelector('#anchors-button');
@@ -231,6 +238,7 @@ const selectionDone = document.querySelector('#selection-done');
 const connectionSearchTrigger = document.querySelector('#connection-search-trigger');
 const connectionSearchPanel = document.querySelector('#connection-search-panel');
 const connectionSearchClose = document.querySelector('#connection-search-close');
+const connectionSearchRefresh = document.querySelector('#connection-search-refresh');
 const connectionSearchInput = document.querySelector('#connection-search-input');
 const connectionSearchResults = document.querySelector('#connection-search-results');
 const thoughtFocusDialog = document.querySelector('#thought-focus-dialog');
@@ -251,6 +259,9 @@ let syncPending = false;
 let syncInFlight = false;
 let serverStateReady = true;
 let syncOperationId = 0;
+let manualRefreshInFlight = null;
+let manualRefreshStatus = 'idle';
+let manualRefreshTimer = null;
 const visibilityStates = new Map();
 const componentByThoughtId = new Map();
 const magnetPhysics = createMagnetPhysics();
@@ -2564,6 +2575,7 @@ function openConnectionSearch() {
   connectionSearchPanel.hidden = false;
   connectionSearchTrigger.setAttribute('aria-expanded', 'true');
   renderConnectionSearchResults();
+  updateManualRefreshControls();
   connectionSearchInput.focus({ preventScroll: true });
 }
 
@@ -3698,16 +3710,16 @@ function applyServerThoughts(records) {
   replaceThoughts(visibleThoughts);
 }
 
-async function loadServerThoughts() {
+async function loadServerThoughts({ silent = false } = {}) {
   if (!auth || syncPending) return false;
 
   try {
     const records = await requestApi('/thoughts/');
     applyServerThoughts(records);
-    announce('Your saved thoughts are ready.');
+    if (!silent) announce('Your saved thoughts are ready.');
     return true;
   } catch (error) {
-    announce(`Could not load saved thoughts: ${error.message}`);
+    if (!silent) announce(`Could not load saved thoughts: ${error.message}`);
     return false;
   }
 }
@@ -3769,17 +3781,162 @@ async function syncGuestThoughts() {
   }
 }
 
-async function restoreAuthenticatedThoughts() {
+async function restoreAuthenticatedThoughts({ silent = false } = {}) {
   let ready;
   if (syncPending) {
     ready = await syncGuestThoughts();
   } else {
-    ready = await loadServerThoughts();
+    ready = await loadServerThoughts({ silent });
   }
 
   if (ready && auth) serverStateReady = true;
   if (isCloudMode()) void flushOutbox();
   return ready;
+}
+
+function setupPanelRefreshButton(button) {
+  if (!button) return;
+  button.innerHTML = refreshIconSvg;
+  button.addEventListener('click', () => void refreshThoughtsManually());
+}
+
+function setManualRefreshStatus(status) {
+  window.clearTimeout(manualRefreshTimer);
+  manualRefreshStatus = status;
+  updateManualRefreshControls();
+
+  if (status === 'updated' || status === 'error') {
+    manualRefreshTimer = window.setTimeout(() => {
+      manualRefreshStatus = 'idle';
+      updateManualRefreshControls();
+    }, 1000);
+  }
+}
+
+function updateManualRefreshControls() {
+  const buttons = [
+    historyRefresh,
+    connectionSearchRefresh,
+  ].filter(Boolean);
+  const refreshing = manualRefreshStatus === 'refreshing';
+
+  buttons.forEach((button) => {
+    button.hidden = !auth;
+    button.disabled = refreshing || syncInFlight || syncPending;
+    button.classList.toggle('is-refreshing', refreshing);
+    button.classList.toggle('is-updated', manualRefreshStatus === 'updated');
+    button.classList.toggle('is-error', manualRefreshStatus === 'error');
+    button.setAttribute(
+      'aria-label',
+      refreshing ? 'Refreshing thoughts' : 'Refresh thoughts',
+    );
+  });
+}
+
+function captureManualRefreshUiSnapshot() {
+  return {
+    historyOpen: historyDialog.open,
+    historyScrollTop: historyList.scrollTop,
+    connectionSearchOpen: isConnectionSearchOpen(),
+    connectionSearchQuery: connectionSearchInput.value,
+    connectionSearchActiveIndex,
+    connectionEditor: connectionEditor
+      ? {
+          sourceId: connectionEditor.sourceId,
+          selectedTargetIds: [...connectionEditor.selectedTargetIds],
+        }
+      : null,
+  };
+}
+
+function restoreConnectionEditorSnapshot(snapshot) {
+  if (!snapshot?.connectionEditor) return false;
+  if (!getSpaceCapabilities(activeSpaceId).connections) return false;
+
+  const source = getThoughtById(snapshot.connectionEditor.sourceId);
+  if (!source) {
+    announce('Connection source is no longer available.');
+    return false;
+  }
+
+  const availableIds = new Set(thoughts.map((thought) => thought.id));
+  connectionEditor = {
+    sourceId: source.id,
+    selectedTargetIds: new Set(
+      snapshot.connectionEditor.selectedTargetIds.filter((targetId) => (
+        targetId !== source.id && availableIds.has(targetId)
+      )),
+    ),
+  };
+  renderConnectionUi();
+  return true;
+}
+
+function rerenderOpenThoughtPanels(snapshot = {}) {
+  const connectionEditorRestored = restoreConnectionEditorSnapshot(snapshot);
+
+  if (
+    connectionEditorRestored
+    && snapshot.connectionSearchOpen
+    && isSpatialSpace(activeSpaceId)
+  ) {
+    connectionSearchInput.value = snapshot.connectionSearchQuery || '';
+    connectionSearchActiveIndex = Number.isInteger(snapshot.connectionSearchActiveIndex)
+      ? snapshot.connectionSearchActiveIndex
+      : 0;
+    connectionSearchPanel.hidden = false;
+    connectionSearchTrigger.setAttribute('aria-expanded', 'true');
+    renderConnectionSearchResults();
+    connectionSearchInput.focus({ preventScroll: true });
+  }
+
+  if (snapshot.historyOpen && historyDialog.open) {
+    renderHistory();
+    historyList.scrollTop = snapshot.historyScrollTop || 0;
+  }
+
+  if (anchorsDialog.open) renderAnchors();
+  renderSpatialInspector();
+  updateManualRefreshControls();
+}
+
+async function refreshThoughtsManually() {
+  if (!auth) {
+    announce('Sign in to refresh thoughts.');
+    return false;
+  }
+
+  if (syncPending || syncInFlight) {
+    announce('Your local thoughts are being synced. Please try again in a moment.');
+    return false;
+  }
+
+  if (manualRefreshInFlight) return manualRefreshInFlight;
+
+  const snapshot = captureManualRefreshUiSnapshot();
+  const previousIds = new Set(thoughts.map((thought) => thought.id));
+  setManualRefreshStatus('refreshing');
+
+  manualRefreshInFlight = (async () => {
+    const ready = await restoreAuthenticatedThoughts({ silent: true });
+
+    if (!ready) {
+      setManualRefreshStatus('error');
+      announce('Could not refresh thoughts.');
+      return false;
+    }
+
+    const newCount = thoughts.filter((thought) => !previousIds.has(thought.id)).length;
+    rerenderOpenThoughtPanels(snapshot);
+    setManualRefreshStatus('updated');
+    announce(newCount ? `${newCount} new thoughts loaded.` : 'Thoughts updated.');
+    return true;
+  })().finally(() => {
+    manualRefreshInFlight = null;
+    updateManualRefreshControls();
+  });
+
+  return manualRefreshInFlight;
 }
 
 async function addThought(rawText, { relationTargetId = null } = {}) {
@@ -4674,6 +4831,7 @@ function openHistory() {
   knowledgeKindPicker.close();
   historySearch.value = '';
   renderHistory();
+  updateManualRefreshControls();
   historyDialog.showModal();
   historySearch.focus();
 }
@@ -4920,6 +5078,7 @@ function updateUi() {
   if (historyDialog.open) renderHistory();
   if (anchorsDialog.open) renderAnchors();
   renderSpatialInspector();
+  updateManualRefreshControls();
   renderBoardArrangeControl();
 }
 
@@ -5364,6 +5523,7 @@ connectionSearchTrigger.addEventListener('click', () => {
   else openConnectionSearch();
 });
 connectionSearchClose.addEventListener('click', () => closeConnectionSearch());
+setupPanelRefreshButton(connectionSearchRefresh);
 connectionSearchInput.addEventListener('input', () => {
   connectionSearchActiveIndex = 0;
   renderConnectionSearchResults();
@@ -5407,6 +5567,7 @@ connectionSearchInput.addEventListener('keydown', (event) => {
   }
 });
 historyClose.addEventListener('click', () => historyDialog.close());
+setupPanelRefreshButton(historyRefresh);
 composerRelationClear.addEventListener('click', clearComposerRelation);
 historySearch.addEventListener('input', renderHistory);
 historyDialog.addEventListener('click', (event) => {

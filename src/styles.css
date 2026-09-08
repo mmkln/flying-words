@@ -1492,6 +1492,70 @@ button { -webkit-tap-highlight-color: transparent; }
 .history-close:hover { color: #4b435f; background: #f0eef7; }
 .history-close svg { width: 16px; height: 16px; }
 
+.panel-header-actions {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 6px;
+}
+
+.panel-refresh-button {
+  display: grid;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  place-items: center;
+  border: 0;
+  border-radius: 50%;
+  color: #817a95;
+  cursor: pointer;
+  background: transparent;
+}
+
+.panel-refresh-button[hidden] { display: none; }
+
+.panel-refresh-button svg {
+  display: block;
+  width: 17px;
+  height: 17px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.panel-refresh-button:hover:not(:disabled),
+.panel-refresh-button:focus-visible {
+  color: var(--accent);
+  background: var(--surface-tint);
+}
+
+.panel-refresh-button:focus-visible {
+  outline: 3px solid var(--focus-ring);
+  outline-offset: 1px;
+}
+
+.panel-refresh-button:disabled {
+  cursor: default;
+  opacity: .45;
+}
+
+.panel-refresh-button.is-refreshing svg {
+  animation: panel-refresh-spin .75s linear infinite;
+}
+
+.panel-refresh-button.is-updated { color: var(--accent); }
+.panel-refresh-button.is-error { color: #c44f68; }
+
+@keyframes panel-refresh-spin {
+  to { transform: rotate(360deg); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .panel-refresh-button.is-refreshing svg { animation: none; }
+}
+
 .history-search {
   display: flex;
   align-items: center;
@@ -2027,7 +2091,7 @@ kbd { padding: 1px 4px; border: 1px solid rgba(114,104,143,.25); border-bottom-w
   font-weight: 700;
 }
 
-.connection-search-header button,
+#connection-search-close,
 .connection-search-locate {
   border: 0;
   border-radius: 8px;
@@ -2036,7 +2100,7 @@ kbd { padding: 1px 4px; border: 1px solid rgba(114,104,143,.25); border-bottom-w
   background: transparent;
 }
 
-.connection-search-header button {
+#connection-search-close {
   display: grid;
   width: 28px;
   height: 28px;
@@ -2046,7 +2110,7 @@ kbd { padding: 1px 4px; border: 1px solid rgba(114,104,143,.25); border-bottom-w
   line-height: 1;
 }
 
-.connection-search-header button:hover,
+#connection-search-close:hover,
 .connection-search-locate:hover {
   color: var(--accent);
   background: var(--surface-tint);
@@ -2416,9 +2480,11 @@ kbd { padding: 1px 4px; border: 1px solid rgba(114,104,143,.25); border-bottom-w
 .composer-tip { color: var(--text-tertiary); }
 
 .history-close,
+.panel-refresh-button,
 .anchor-remove { color: var(--text-tertiary); }
 
-.history-close:hover {
+.history-close:hover,
+.panel-refresh-button:hover:not(:disabled) {
   color: var(--text-primary);
   background: var(--surface-muted);
 }
