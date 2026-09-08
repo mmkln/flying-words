@@ -102,6 +102,10 @@ import {
   parseTokenSession,
 } from './browser-session.js';
 import { MAX_THOUGHTS } from './app-limits.js';
+import {
+  buildThoughtListPath,
+  normalizeThoughtListResponse,
+} from './thought-list-api.js';
 
 const STORAGE_KEY = 'flying-thoughts:v1';
 const AUTH_STORAGE_KEY = 'flying-thoughts:auth:v1';
@@ -119,6 +123,10 @@ const QUARANTINED_OUTBOX_STORAGE_PREFIX = 'flying-thoughts:outbox-quarantine:v1:
 const THEME_STORAGE_KEY = 'flying-thoughts:theme:v1';
 const MAX_THOUGHT_TEXT_LENGTH = 2000;
 const THOUGHT_TEXT_WARNING_THRESHOLD = 1700;
+const INITIAL_THOUGHT_PAGE_SIZE = 100;
+const HISTORY_PAGE_SIZE = 50;
+const CONNECTION_SEARCH_PAGE_SIZE = 30;
+const PANEL_SEARCH_DEBOUNCE_MS = 250;
 const RESERVED_BOTTOM_SPACE = 0;
 const MIN_VISIBLE_THOUGHTS = 4;
 const MAX_VISIBLE_THOUGHTS = 30;
@@ -208,6 +216,7 @@ const historyClose = document.querySelector('#history-close');
 const historyRefresh = document.querySelector('#history-refresh');
 const historySearch = document.querySelector('#history-search');
 const historyList = document.querySelector('#history-list');
+const historyLoadMore = document.querySelector('#history-load-more');
 const anchorsButton = document.querySelector('#anchors-button');
 const anchorsDialog = document.querySelector('#anchors-dialog');
 const anchorsClose = document.querySelector('#anchors-close');
@@ -241,6 +250,7 @@ const connectionSearchClose = document.querySelector('#connection-search-close')
 const connectionSearchRefresh = document.querySelector('#connection-search-refresh');
 const connectionSearchInput = document.querySelector('#connection-search-input');
 const connectionSearchResults = document.querySelector('#connection-search-results');
+const connectionSearchLoadMore = document.querySelector('#connection-search-load-more');
 const thoughtFocusDialog = document.querySelector('#thought-focus-dialog');
 const thoughtFocusForm = document.querySelector('#thought-focus-form');
 const thoughtFocusEditor = document.querySelector('#thought-focus-editor');
@@ -262,6 +272,19 @@ let syncOperationId = 0;
 let manualRefreshInFlight = null;
 let manualRefreshStatus = 'idle';
 let manualRefreshTimer = null;
+let serverThoughtsNextCursor = null;
+let historyThoughtIds = [];
+let historyNextCursor = null;
+let historyHasMore = false;
+let historyLoading = false;
+let historyRequestId = 0;
+let historySearchTimer = null;
+let connectionSearchThoughtIds = [];
+let connectionSearchNextCursor = null;
+let connectionSearchHasMore = false;
+let connectionSearchLoading = false;
+let connectionSearchRequestId = 0;
+let connectionSearchTimer = null;
 const visibilityStates = new Map();
 const componentByThoughtId = new Map();
 const magnetPhysics = createMagnetPhysics();
@@ -945,6 +968,24 @@ function quarantineLegacyOutbox(accountId) {
 
 function currentThoughtStorageKey() {
   return auth ? accountStorageKey(auth.id) : STORAGE_KEY;
+}
+
+function resetPaginatedThoughtState() {
+  window.clearTimeout(historySearchTimer);
+  window.clearTimeout(connectionSearchTimer);
+  serverThoughtsNextCursor = null;
+  historyThoughtIds = [];
+  historyNextCursor = null;
+  historyHasMore = false;
+  historyLoading = false;
+  historyRequestId += 1;
+  connectionSearchThoughtIds = [];
+  connectionSearchNextCursor = null;
+  connectionSearchHasMore = false;
+  connectionSearchLoading = false;
+  connectionSearchRequestId += 1;
+  renderHistoryLoadMore();
+  renderConnectionSearchLoadMore();
 }
 
 function loadOutbox(accountId) {
@@ -2479,10 +2520,88 @@ function isConnectionSearchOpen() {
 function getConnectionSearchMatches() {
   if (!connectionEditor) return [];
 
+  if (auth) {
+    return connectionSearchThoughtIds
+      .map(getThoughtById)
+      .filter(Boolean)
+      .filter((thought) => thought.id !== connectionEditor.sourceId);
+  }
+
   return findConnectionSearchResults(thoughts, {
     sourceId: connectionEditor.sourceId,
     query: connectionSearchInput.value,
   });
+}
+
+function renderConnectionSearchLoadMore() {
+  if (!connectionSearchLoadMore) return;
+
+  connectionSearchLoadMore.hidden = (
+    !auth
+    || !connectionEditor
+    || (!connectionSearchHasMore && !connectionSearchLoading)
+  );
+  connectionSearchLoadMore.disabled = connectionSearchLoading;
+  connectionSearchLoadMore.textContent = connectionSearchLoading ? 'Loading…' : 'Load more';
+}
+
+async function loadConnectionSearchPage({ reset = false } = {}) {
+  if (!auth) {
+    renderConnectionSearchResults();
+    return true;
+  }
+
+  if (!connectionEditor) return false;
+  if (connectionSearchLoading && !reset) return false;
+
+  const requestId = ++connectionSearchRequestId;
+  connectionSearchLoading = true;
+  renderConnectionSearchResults();
+
+  try {
+    const page = await requestThoughtListPage({
+      limit: CONNECTION_SEARCH_PAGE_SIZE,
+      cursor: reset ? null : connectionSearchNextCursor,
+      query: connectionSearchInput.value,
+    });
+
+    if (requestId !== connectionSearchRequestId || !connectionEditor) return false;
+
+    const merged = mergeServerThoughts(page.results)
+      .filter((thought) => thought.id !== connectionEditor.sourceId);
+    if (reset) connectionSearchThoughtIds = [];
+
+    const knownIds = new Set(connectionSearchThoughtIds);
+    merged.forEach((thought) => {
+      if (!knownIds.has(thought.id)) {
+        connectionSearchThoughtIds.push(thought.id);
+        knownIds.add(thought.id);
+      }
+    });
+
+    connectionSearchNextCursor = page.nextCursor;
+    connectionSearchHasMore = page.hasMore;
+    renderConnectionSearchResults();
+    return true;
+  } catch (error) {
+    if (requestId === connectionSearchRequestId) {
+      announce(`Could not search thoughts: ${error.message}`);
+    }
+    return false;
+  } finally {
+    if (requestId === connectionSearchRequestId) {
+      connectionSearchLoading = false;
+      renderConnectionSearchLoadMore();
+      renderConnectionSearchResults();
+    }
+  }
+}
+
+function scheduleConnectionSearch() {
+  window.clearTimeout(connectionSearchTimer);
+  connectionSearchTimer = window.setTimeout(() => {
+    void loadConnectionSearchPage({ reset: true });
+  }, PANEL_SEARCH_DEBOUNCE_MS);
 }
 
 function closeConnectionSearch({ restoreFocus = true } = {}) {
@@ -2502,8 +2621,11 @@ function renderConnectionSearchResults() {
   if (!matches.length) {
     const empty = document.createElement('p');
     empty.className = 'connection-search-empty';
-    empty.textContent = 'No matching thoughts.';
+    empty.textContent = auth && connectionSearchLoading
+      ? 'Loading thoughts…'
+      : 'No matching thoughts.';
     connectionSearchResults.append(empty);
+    renderConnectionSearchLoadMore();
     return;
   }
 
@@ -2557,6 +2679,7 @@ function renderConnectionSearchResults() {
     row.append(selectButton, locateButton);
     connectionSearchResults.append(row);
   });
+  renderConnectionSearchLoadMore();
 }
 
 function toggleActiveConnectionSearchMatch() {
@@ -2572,16 +2695,26 @@ function openConnectionSearch() {
 
   connectionSearchActiveIndex = 0;
   connectionSearchInput.value = '';
+  connectionSearchThoughtIds = [];
+  connectionSearchNextCursor = null;
+  connectionSearchHasMore = false;
   connectionSearchPanel.hidden = false;
   connectionSearchTrigger.setAttribute('aria-expanded', 'true');
   renderConnectionSearchResults();
   updateManualRefreshControls();
   connectionSearchInput.focus({ preventScroll: true });
+  if (auth) void loadConnectionSearchPage({ reset: true });
 }
 
 function closeConnectionEditor() {
   if (!connectionEditor) return;
   closeConnectionSearch({ restoreFocus: false });
+  window.clearTimeout(connectionSearchTimer);
+  connectionSearchThoughtIds = [];
+  connectionSearchNextCursor = null;
+  connectionSearchHasMore = false;
+  connectionSearchLoading = false;
+  connectionSearchRequestId += 1;
   connectionEditor = null;
   renderConnectionUi();
   renderSpatialInspector();
@@ -2641,6 +2774,7 @@ function commitConnectionEditor() {
 
   if (result.changed) {
     rebuildConnectionLayer();
+    if (isSpatialSpace(activeSpaceId)) refreshSpatialGraph();
     saveThoughts();
     if (isCloudMode()) enqueueThoughtMetaPatch(source, ['connections']);
   }
@@ -3688,7 +3822,22 @@ async function undoBoardArrange() {
   }
 }
 
-function applyServerThoughts(records) {
+async function requestThoughtListPage({
+  limit,
+  cursor = null,
+  query = '',
+  knowledgeKind = '',
+} = {}) {
+  const payload = await requestApi(buildThoughtListPath({
+    limit,
+    cursor,
+    query,
+    knowledgeKind,
+  }));
+  return normalizeThoughtListResponse(payload);
+}
+
+function serverRecordsToClientThoughts(records) {
   const layouts = new Map(thoughts.map((thought) => [thought.id, thought]));
   const serverThoughts = records.slice(0, MAX_THOUGHTS).map((record) => {
     const currentLayout = layouts.get(record.id);
@@ -3707,15 +3856,74 @@ function applyServerThoughts(records) {
     ? applyOutboxOperations(serverThoughts, loadOutbox(auth.id))
     : serverThoughts;
 
-  replaceThoughts(visibleThoughts);
+  return visibleThoughts;
+}
+
+function applyServerThoughts(records) {
+  replaceThoughts(serverRecordsToClientThoughts(records));
+}
+
+function syncThoughtElementVisibility(thought) {
+  if (isSpatialSpace(activeSpaceId)) {
+    thought.element.hidden = true;
+    return;
+  }
+
+  thought.element.hidden = !isThoughtAvailableInActiveSpace(thought);
+}
+
+function mergeServerThoughts(records) {
+  if (!Array.isArray(records) || !records.length) return [];
+
+  const byId = new Map(thoughts.map((thought) => [thought.id, thought]));
+  const merged = [];
+
+  serverRecordsToClientThoughts(records).forEach((next) => {
+    const existing = byId.get(next.id);
+
+    if (existing) {
+      const element = existing.element;
+      const width = existing.width;
+      const height = existing.height;
+      Object.assign(existing, next, { element, width, height });
+      if (isCanvasSpace(activeSpaceId)) applyCanvasPlacement(existing);
+      else if (isFlowSpace(activeSpaceId) && existing.pinned) applyPinnedLayout(existing);
+      renderThought(existing);
+      measureThought(existing);
+      renderThought(existing);
+      syncThoughtElementVisibility(existing);
+      merged.push(existing);
+      return;
+    }
+
+    if (thoughts.length >= MAX_THOUGHTS) return;
+
+    const thought = makeThought(next.text, next);
+    syncThoughtElementVisibility(thought);
+    thoughts.push(thought);
+    byId.set(thought.id, thought);
+    merged.push(thought);
+  });
+
+  repairMagnetRelations();
+  rebuildMagnetComponents({ preserveVisibility: true });
+  initializeThoughtVisibility();
+  rebuildConnectionLayer();
+  updateUi();
+  saveThoughts();
+
+  return merged;
 }
 
 async function loadServerThoughts({ silent = false } = {}) {
   if (!auth || syncPending) return false;
 
   try {
-    const records = await requestApi('/thoughts/');
-    applyServerThoughts(records);
+    const page = await requestThoughtListPage({
+      limit: INITIAL_THOUGHT_PAGE_SIZE,
+    });
+    applyServerThoughts(page.results);
+    serverThoughtsNextCursor = page.nextCursor;
     if (!silent) announce('Your saved thoughts are ready.');
     return true;
   } catch (error) {
@@ -3836,6 +4044,7 @@ function updateManualRefreshControls() {
 function captureManualRefreshUiSnapshot() {
   return {
     historyOpen: historyDialog.open,
+    historyQuery: historySearch.value,
     historyScrollTop: historyList.scrollTop,
     connectionSearchOpen: isConnectionSearchOpen(),
     connectionSearchQuery: connectionSearchInput.value,
@@ -3884,15 +4093,32 @@ function rerenderOpenThoughtPanels(snapshot = {}) {
     connectionSearchActiveIndex = Number.isInteger(snapshot.connectionSearchActiveIndex)
       ? snapshot.connectionSearchActiveIndex
       : 0;
+    connectionSearchThoughtIds = [];
+    connectionSearchNextCursor = null;
+    connectionSearchHasMore = false;
+    connectionSearchLoading = false;
+    connectionSearchRequestId += 1;
     connectionSearchPanel.hidden = false;
     connectionSearchTrigger.setAttribute('aria-expanded', 'true');
     renderConnectionSearchResults();
     connectionSearchInput.focus({ preventScroll: true });
+    if (auth) void loadConnectionSearchPage({ reset: true });
   }
 
   if (snapshot.historyOpen && historyDialog.open) {
-    renderHistory();
-    historyList.scrollTop = snapshot.historyScrollTop || 0;
+    historySearch.value = snapshot.historyQuery || '';
+    if (auth) {
+      historyThoughtIds = [];
+      historyNextCursor = null;
+      historyHasMore = false;
+      historyLoading = false;
+      historyRequestId += 1;
+      renderHistory();
+      void loadHistoryPage({ reset: true });
+    } else {
+      renderHistory();
+      historyList.scrollTop = snapshot.historyScrollTop || 0;
+    }
   }
 
   if (anchorsDialog.open) renderAnchors();
@@ -4564,8 +4790,9 @@ async function navigateToSpatialThought(
   if (
     !thought
     || thought.element?.classList.contains('is-removing')
-    || !view.getThoughtPosition(thoughtId)
   ) return false;
+  if (!view.getThoughtPosition(thoughtId)) refreshSpatialGraph();
+  if (!view.getThoughtPosition(thoughtId)) return false;
 
   if (remember && !connectionEditor && !magnetEditor) {
     spatialNavigationHistory.record({
@@ -4668,20 +4895,105 @@ async function focusThoughtFromAnchors(thought) {
   await focusThoughtInActiveSpace(thought);
 }
 
-function renderHistory() {
+function renderHistoryLoadMore() {
+  if (!historyLoadMore) return;
+
+  historyLoadMore.hidden = !auth || (!historyHasMore && !historyLoading);
+  historyLoadMore.disabled = historyLoading;
+  historyLoadMore.textContent = historyLoading ? 'Loading…' : 'Load more';
+}
+
+function getLocalHistoryMatches() {
   const query = historySearch.value.trim().toLocaleLowerCase();
-  const matchingThoughts = [...thoughts]
+
+  return [...thoughts]
     .filter((thought) => thought.text.toLocaleLowerCase().includes(query))
     .sort((first, second) => (
       validCreatedAt(second.createdAt) - validCreatedAt(first.createdAt)
     ));
+}
+
+function getHistoryThoughts() {
+  if (!auth) return getLocalHistoryMatches();
+
+  return historyThoughtIds
+    .map(getThoughtById)
+    .filter(Boolean);
+}
+
+async function loadHistoryPage({ reset = false } = {}) {
+  if (!auth) {
+    renderHistory();
+    return true;
+  }
+
+  if (historyLoading && !reset) return false;
+
+  const requestId = ++historyRequestId;
+  historyLoading = true;
+  renderHistory();
+
+  try {
+    const page = await requestThoughtListPage({
+      limit: HISTORY_PAGE_SIZE,
+      cursor: reset ? null : historyNextCursor,
+      query: historySearch.value,
+    });
+
+    if (requestId !== historyRequestId) return false;
+
+    const merged = mergeServerThoughts(page.results);
+    if (reset) historyThoughtIds = [];
+
+    const knownIds = new Set(historyThoughtIds);
+    merged.forEach((thought) => {
+      if (!knownIds.has(thought.id)) {
+        historyThoughtIds.push(thought.id);
+        knownIds.add(thought.id);
+      }
+    });
+
+    historyNextCursor = page.nextCursor;
+    historyHasMore = page.hasMore;
+    renderHistory();
+    return true;
+  } catch (error) {
+    if (requestId === historyRequestId) {
+      announce(`Could not load history: ${error.message}`);
+    }
+    return false;
+  } finally {
+    if (requestId === historyRequestId) {
+      historyLoading = false;
+      renderHistoryLoadMore();
+      renderHistory();
+    }
+  }
+}
+
+function scheduleHistorySearch() {
+  window.clearTimeout(historySearchTimer);
+  historySearchTimer = window.setTimeout(() => {
+    void loadHistoryPage({ reset: true });
+  }, PANEL_SEARCH_DEBOUNCE_MS);
+}
+
+function renderHistory() {
+  const matchingThoughts = getHistoryThoughts();
 
   historyList.replaceChildren();
   if (!matchingThoughts.length) {
     const empty = document.createElement('p');
     empty.className = 'history-empty';
-    empty.textContent = thoughts.length ? 'No matching thoughts.' : 'No thoughts yet.';
+    if (auth && historyLoading) {
+      empty.textContent = 'Loading thoughts…';
+    } else if (auth || thoughts.length) {
+      empty.textContent = 'No matching thoughts.';
+    } else {
+      empty.textContent = 'No thoughts yet.';
+    }
     historyList.append(empty);
+    renderHistoryLoadMore();
     return;
   }
 
@@ -4752,6 +5064,7 @@ function renderHistory() {
     section.append(list);
     historyList.append(section);
   });
+  renderHistoryLoadMore();
 }
 
 function getAnchoredThoughts() {
@@ -4830,10 +5143,14 @@ function openAnchors() {
 function openHistory() {
   knowledgeKindPicker.close();
   historySearch.value = '';
+  historyThoughtIds = [];
+  historyNextCursor = null;
+  historyHasMore = false;
   renderHistory();
   updateManualRefreshControls();
   historyDialog.showModal();
   historySearch.focus();
+  if (auth) void loadHistoryPage({ reset: true });
 }
 
 function renderSpacesOverview() {
@@ -5265,6 +5582,7 @@ async function loadCurrentIdentity() {
 
 async function activateAuthenticatedAccount() {
   clearSpatialNavigationHistory();
+  resetPaginatedThoughtState();
   sessionValidated = true;
   serverStateReady = false;
   legacyOutboxQuarantined = quarantineLegacyOutbox(auth.id);
@@ -5323,6 +5641,7 @@ async function restoreTokenSession() {
 
 function clearAuthenticatedState(message) {
   clearSpatialNavigationHistory();
+  resetPaginatedThoughtState();
   knowledgeKindPicker.close();
   saveThoughts();
   window.clearTimeout(outboxRetryTimer);
@@ -5526,7 +5845,20 @@ connectionSearchClose.addEventListener('click', () => closeConnectionSearch());
 setupPanelRefreshButton(connectionSearchRefresh);
 connectionSearchInput.addEventListener('input', () => {
   connectionSearchActiveIndex = 0;
+  if (auth) {
+    connectionSearchThoughtIds = [];
+    connectionSearchNextCursor = null;
+    connectionSearchHasMore = false;
+    connectionSearchLoading = false;
+    connectionSearchRequestId += 1;
+    renderConnectionSearchResults();
+    scheduleConnectionSearch();
+    return;
+  }
   renderConnectionSearchResults();
+});
+connectionSearchLoadMore.addEventListener('click', () => {
+  void loadConnectionSearchPage();
 });
 connectionSearchInput.addEventListener('keydown', (event) => {
   const matches = getConnectionSearchMatches();
@@ -5569,7 +5901,23 @@ connectionSearchInput.addEventListener('keydown', (event) => {
 historyClose.addEventListener('click', () => historyDialog.close());
 setupPanelRefreshButton(historyRefresh);
 composerRelationClear.addEventListener('click', clearComposerRelation);
-historySearch.addEventListener('input', renderHistory);
+historySearch.addEventListener('input', () => {
+  if (auth) {
+    historyThoughtIds = [];
+    historyNextCursor = null;
+    historyHasMore = false;
+    historyLoading = false;
+    historyRequestId += 1;
+    renderHistory();
+    scheduleHistorySearch();
+    return;
+  }
+
+  renderHistory();
+});
+historyLoadMore.addEventListener('click', () => {
+  void loadHistoryPage();
+});
 historyDialog.addEventListener('click', (event) => {
   if (event.target === historyDialog) historyDialog.close();
 });
