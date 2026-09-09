@@ -2538,9 +2538,11 @@ function getConnectionSearchMatches() {
 function renderConnectionSearchLoadMore() {
   if (!connectionSearchLoadMore) return;
 
+  const hasLoadedResults = connectionSearchThoughtIds.length > 0;
   connectionSearchLoadMore.hidden = (
     !auth
     || !connectionEditor
+    || (connectionSearchLoading && !hasLoadedResults)
     || (!connectionSearchHasMore && !connectionSearchLoading)
   );
   connectionSearchLoadMore.disabled = connectionSearchLoading;
@@ -2616,16 +2618,62 @@ function closeConnectionSearch({ restoreFocus = true } = {}) {
   }
 }
 
+function renderPanelSkeletonRows(container, {
+  variant = 'history',
+  rows = 5,
+} = {}) {
+  const skeleton = document.createElement('div');
+  skeleton.className = `panel-skeleton panel-skeleton--${variant}`;
+  skeleton.setAttribute('aria-hidden', 'true');
+
+  for (let index = 0; index < rows; index += 1) {
+    const row = document.createElement('div');
+    const icon = document.createElement('span');
+    const content = document.createElement('span');
+    const title = document.createElement('span');
+    const detail = document.createElement('span');
+
+    row.className = 'panel-skeleton-row';
+    icon.className = 'panel-skeleton-block panel-skeleton-icon';
+    content.className = 'panel-skeleton-content';
+    title.className = 'panel-skeleton-block panel-skeleton-title';
+    detail.className = 'panel-skeleton-block panel-skeleton-detail';
+
+    content.append(title, detail);
+    row.append(icon, content);
+
+    if (variant === 'connection-search') {
+      const action = document.createElement('span');
+      action.className = 'panel-skeleton-block panel-skeleton-action';
+      row.append(action);
+    }
+
+    skeleton.append(row);
+  }
+
+  container.append(skeleton);
+}
+
 function renderConnectionSearchResults() {
   const matches = getConnectionSearchMatches();
+  const isInitialLoading = auth && connectionSearchLoading && !matches.length;
+
   connectionSearchResults.replaceChildren();
+  connectionSearchResults.setAttribute('aria-busy', String(Boolean(auth && connectionSearchLoading)));
+
+  if (isInitialLoading) {
+    renderPanelSkeletonRows(connectionSearchResults, {
+      variant: 'connection-search',
+      rows: 5,
+    });
+    renderConnectionSearchLoadMore();
+    return;
+  }
 
   if (!matches.length) {
     const empty = document.createElement('p');
     empty.className = 'connection-search-empty';
-    empty.textContent = auth && connectionSearchLoading
-      ? 'Loading thoughts…'
-      : 'No matching thoughts.';
+    empty.textContent = 'No matching thoughts.';
     connectionSearchResults.append(empty);
     renderConnectionSearchLoadMore();
     return;
@@ -4946,7 +4994,12 @@ async function focusThoughtFromAnchors(thought) {
 function renderHistoryLoadMore() {
   if (!historyLoadMore) return;
 
-  historyLoadMore.hidden = !auth || (!historyHasMore && !historyLoading);
+  const hasLoadedResults = historyThoughtIds.length > 0;
+  historyLoadMore.hidden = (
+    !auth
+    || (historyLoading && !hasLoadedResults)
+    || (!historyHasMore && !historyLoading)
+  );
   historyLoadMore.disabled = historyLoading;
   historyLoadMore.textContent = historyLoading ? 'Loading…' : 'Load more';
 }
@@ -5028,14 +5081,24 @@ function scheduleHistorySearch() {
 
 function renderHistory() {
   const matchingThoughts = getHistoryThoughts();
+  const isInitialLoading = auth && historyLoading && !matchingThoughts.length;
 
   historyList.replaceChildren();
+  historyList.setAttribute('aria-busy', String(Boolean(auth && historyLoading)));
+
+  if (isInitialLoading) {
+    renderPanelSkeletonRows(historyList, {
+      variant: 'history',
+      rows: 6,
+    });
+    renderHistoryLoadMore();
+    return;
+  }
+
   if (!matchingThoughts.length) {
     const empty = document.createElement('p');
     empty.className = 'history-empty';
-    if (auth && historyLoading) {
-      empty.textContent = 'Loading thoughts…';
-    } else if (auth || thoughts.length) {
+    if (auth || thoughts.length) {
       empty.textContent = 'No matching thoughts.';
     } else {
       empty.textContent = 'No thoughts yet.';
