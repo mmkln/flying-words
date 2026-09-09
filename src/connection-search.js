@@ -1,6 +1,7 @@
-function normalized(value) {
-  return String(value || '').trim().toLocaleLowerCase();
-}
+import {
+  matchesThoughtSearch,
+  normalizeSearchText,
+} from './thought-search.js';
 
 function createdAtTimestamp(thought) {
   const timestamp = new Date(thought.createdAt).getTime();
@@ -16,16 +17,14 @@ export function findConnectionSearchResults(
   thoughts,
   { sourceId, query = '', limit = 60 } = {},
 ) {
-  const normalizedQuery = normalized(query);
+  const normalizedQuery = normalizeSearchText(query);
 
   return thoughts
     .filter((thought) => thought.id !== sourceId)
-    .filter((thought) => (
-      !normalizedQuery || normalized(thought.text).includes(normalizedQuery)
-    ))
+    .filter((thought) => matchesThoughtSearch(thought.text, query))
     .sort((first, second) => {
-      const firstStartsWithQuery = normalized(first.text).startsWith(normalizedQuery);
-      const secondStartsWithQuery = normalized(second.text).startsWith(normalizedQuery);
+      const firstStartsWithQuery = normalizeSearchText(first.text).startsWith(normalizedQuery);
+      const secondStartsWithQuery = normalizeSearchText(second.text).startsWith(normalizedQuery);
 
       if (firstStartsWithQuery !== secondStartsWithQuery) {
         return firstStartsWithQuery ? -1 : 1;

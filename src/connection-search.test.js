@@ -38,3 +38,14 @@ test('limits results after ranking them', () => {
 
   assert.equal(results.length, 60);
 });
+
+test('matches all words without depending on their order', () => {
+  const results = findConnectionSearchResults([
+    thought('match', 'Економіка і фінанси', '2026-08-01T00:00:00Z'),
+    thought('partial', 'Тільки фінанси', '2026-08-02T00:00:00Z'),
+  ], {
+    query: 'ФІНАНСИ економіка',
+  });
+
+  assert.deepEqual(results.map(({ id }) => id), ['match']);
+});

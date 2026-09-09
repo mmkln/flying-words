@@ -28,6 +28,7 @@ import {
 } from './connections.js';
 import { createConnectionRenderer } from './connection-renderer.js';
 import { findConnectionSearchResults } from './connection-search.js';
+import { matchesThoughtSearch } from './thought-search.js';
 import { getSpatialLinkSuggestions } from './spatial-link-suggestions.js';
 import { createSpatialConnectionsList } from './spatial-connections-list.js';
 import { createSpatialNavigationHistory } from './spatial-navigation-history.js';
@@ -5005,10 +5006,10 @@ function renderHistoryLoadMore() {
 }
 
 function getLocalHistoryMatches() {
-  const query = historySearch.value.trim().toLocaleLowerCase();
+  const query = historySearch.value;
 
   return [...thoughts]
-    .filter((thought) => thought.text.toLocaleLowerCase().includes(query))
+    .filter((thought) => matchesThoughtSearch(thought.text, query))
     .sort((first, second) => (
       validCreatedAt(second.createdAt) - validCreatedAt(first.createdAt)
     ));
