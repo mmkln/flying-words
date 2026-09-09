@@ -561,6 +561,17 @@ button { -webkit-tap-highlight-color: transparent; }
 
 .spatial-connection-group + .spatial-connection-group { margin-top: 2px; }
 
+.spatial-connection-group[data-direction='incoming']
++ .spatial-connection-group[data-direction='outgoing'] {
+  margin-top: 7px;
+  padding-top: 8px;
+  border-top: 1px solid color-mix(
+    in srgb,
+    var(--border-subtle) 78%,
+    transparent
+  );
+}
+
 .spatial-connection-row {
   display: grid;
   grid-template-columns: 22px minmax(0, 1fr) 18px;

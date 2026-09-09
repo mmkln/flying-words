@@ -98,6 +98,7 @@ export function createSpatialConnectionsList({
 
       const groupElement = document.createElement('div');
       groupElement.className = 'spatial-connection-group';
+      groupElement.dataset.direction = group.direction;
 
       groupItems.forEach((item) => {
         groupElement.append(createConnectionRow(item, group, disabled));
