@@ -5433,24 +5433,25 @@ function switchSpace(spaceId) {
     return;
   }
 
-  thoughts.forEach((thought) => {
-    if (!isThoughtAvailableInActiveSpace(thought)) {
-      thought.element.hidden = true;
-      return;
-    }
+  const canvasActive = isCanvasSpace(activeSpaceId);
+  const flowActive = isFlowSpace(activeSpaceId);
 
-    thought.element.classList.toggle('is-canvas-card', isCanvasSpace(activeSpaceId));
-    measureThought(thought);
-    if (isCanvasSpace(activeSpaceId)) {
-      applyCanvasPlacement(thought);
-    } else if (isFlowSpace(activeSpaceId) && thought.pinned) {
-      applyPinnedLayout(thought);
-      constrainThought(thought);
-    }
+  thoughts.forEach((thought) => {
+    thought.element.classList.toggle('is-canvas-card', canvasActive);
   });
 
   initializeThoughtVisibility();
-  getActiveThoughts().forEach(renderThought);
+  getActiveThoughts().forEach((thought) => {
+    measureThought(thought);
+    if (canvasActive) {
+      applyCanvasPlacement(thought);
+    } else if (flowActive && thought.pinned) {
+      applyPinnedLayout(thought);
+      constrainThought(thought);
+    }
+    renderThought(thought);
+  });
+
   rebuildConnectionLayer();
   updateUi();
   closeSpacesOverview();
