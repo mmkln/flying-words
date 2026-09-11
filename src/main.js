@@ -28,6 +28,8 @@ import {
 } from './connections.js';
 import { createConnectionRenderer } from './connection-renderer.js';
 import { findConnectionSearchResults } from './connection-search.js';
+import { createConnectionMapDraft } from './connection-map-draft.js';
+import { createConnectionMapView } from './connection-map-view.js';
 import { matchesThoughtSearch } from './thought-search.js';
 import { getSpatialLinkSuggestions } from './spatial-link-suggestions.js';
 import { createSpatialConnectionsList } from './spatial-connections-list.js';
@@ -191,12 +193,14 @@ const spatialInspectorAddRelated = document.querySelector('#spatial-inspector-ad
 const spatialInspectorMore = document.querySelector('#spatial-inspector-more');
 const spatialInspectorMenu = document.querySelector('#spatial-inspector-menu');
 const spatialInspectorAnchor = document.querySelector('#spatial-inspector-anchor');
+const spatialInspectorOpenMap = document.querySelector('#spatial-inspector-open-map');
 const spatialInspectorCopyId = document.querySelector('#spatial-inspector-copy-id');
 const spatialInspectorDelete = document.querySelector('#spatial-inspector-delete');
 const deleteThoughtDialog = document.querySelector('#delete-thought-dialog');
 const deleteThoughtMessage = document.querySelector('#delete-thought-message');
 const deleteThoughtCancel = document.querySelector('#delete-thought-cancel');
 const deleteThoughtConfirm = document.querySelector('#delete-thought-confirm');
+const connectionMapDialog = document.querySelector('#connection-map-dialog');
 const connectionLayer = document.querySelector('#connection-layer');
 const form = document.querySelector('#thought-form');
 const input = document.querySelector('#thought-input');
@@ -319,6 +323,7 @@ let syncCapabilitiesPromise = null;
 let syncCompatibilityAnnounced = false;
 let magnetEditor = null;
 let connectionEditor = null;
+let connectionMapSession = null;
 let connectionSearchActiveIndex = 0;
 let composerRelationTargetId = null;
 let composerKnowledgeKind = KnowledgeKind.THOUGHT;
@@ -354,6 +359,16 @@ const spatialConnectionsList = createSpatialConnectionsList({
   onNavigate(thoughtId) {
     void navigateToSpatialThought(thoughtId, { focus: true });
   },
+});
+
+const connectionMapView = createConnectionMapView({
+  dialog: connectionMapDialog,
+  onSearchSelect: selectConnectionMapSearchThought,
+  onConnectionAction: handleConnectionMapAction,
+  onFinishConnectionEditing: finishConnectionMapEditing,
+  onQueryChange: changeConnectionMapQuery,
+  onCommit: commitConnectionMap,
+  onCancel: closeConnectionMap,
 });
 
 const canvasMinimap = createCanvasMinimap({
@@ -1478,6 +1493,7 @@ function renderSpatialInspector() {
   const actionsDisabled = editingConnections || Boolean(magnetEditor);
   spatialInspectorMore.disabled = actionsDisabled;
   spatialInspectorAnchor.disabled = actionsDisabled;
+  spatialInspectorOpenMap.disabled = actionsDisabled;
   spatialInspectorAddRelated.disabled = actionsDisabled;
   spatialInspectorConnect.disabled = editingConnections;
   spatialInspectorEdit.disabled = editingConnections;
@@ -1489,6 +1505,224 @@ function renderSpatialInspector() {
   spatialInspectorAnchor.title = anchored ? 'Remove from Anchors' : 'Add to Anchors';
   spatialInspectorAnchor.setAttribute('aria-label', spatialInspectorAnchor.title);
   spatialInspectorAnchor.setAttribute('aria-pressed', String(anchored));
+}
+
+function getConnectionMapNodeIds(session) {
+  return [...session.visibleIds];
+}
+
+function getConnectionMapEdges(session) {
+  return session.draft.getEdges(session.visibleIds);
+}
+
+function getConnectionMapInitialPositions(session) {
+  const nodeIds = getConnectionMapNodeIds(session);
+  const rootX = -boardGeometry.cardWidth / 2;
+  const rootY = -boardGeometry.cardHeight / 2;
+  const neighbours = nodeIds.filter((id) => id !== session.rootId);
+  const positions = [{ id: session.rootId, x: rootX, y: rootY }];
+  let offset = 0;
+
+  for (let ring = 1; offset < neighbours.length; ring += 1) {
+    const capacity = ring * 6;
+    const ringIds = neighbours.slice(offset, offset + capacity);
+    const radius = ring * (
+      boardGeometry.cardWidth + boardGeometry.gap - 4
+    );
+
+    ringIds.forEach((id, index) => {
+      const angle = ringIds.length === 1
+        ? 0
+        : index / ringIds.length * Math.PI * 2;
+      positions.push({
+        id,
+        x: Math.round(rootX + Math.cos(angle) * radius),
+        y: Math.round(rootY + Math.sin(angle) * radius),
+      });
+    });
+    offset += ringIds.length;
+  }
+
+  const cards = positions.map(({ id, x, y }) => ({
+    id,
+    x,
+    y,
+    width: boardGeometry.cardWidth,
+    height: boardGeometry.cardHeight,
+    fixed: id === session.rootId,
+  }));
+
+  return calculateBoardGraphLayout({
+    cards,
+    connections: getConnectionMapEdges(session),
+    geometry: boardGeometry,
+    layoutGap: boardGeometry.gap,
+    density: 0.7,
+  });
+}
+
+function renderConnectionMap() {
+  const session = connectionMapSession;
+  if (!session) return;
+
+  const root = getThoughtById(session.rootId);
+  if (!root) {
+    closeConnectionMap();
+    return;
+  }
+
+  const selectedTargetIds = new Set(
+    session.editor
+      ? session.draft.getOutgoingTargetIds(session.editor.sourceId)
+      : [],
+  );
+  const results = session.query.trim()
+    ? findConnectionSearchResults(thoughts, {
+        sourceId: session.rootId,
+        query: session.query,
+        limit: 20,
+      })
+        .filter((thought) => thought.id !== session.editor?.sourceId)
+        .map((thought) => ({
+          thought,
+          selected: selectedTargetIds.has(thought.id),
+        }))
+    : [];
+
+  const nodes = getConnectionMapNodeIds(session)
+    .map(getThoughtById)
+    .filter(Boolean)
+    .map((thought) => ({
+      thought,
+      root: thought.id === session.rootId,
+      editing: Boolean(session.editor),
+      connectionSource: thought.id === session.editor?.sourceId,
+      connectionSelected: selectedTargetIds.has(thought.id),
+    }));
+
+  const editorSource = session.editor
+    ? getThoughtById(session.editor.sourceId)
+    : null;
+
+  connectionMapView.render({
+    nodes,
+    edges: getConnectionMapEdges(session),
+    results,
+    editor: editorSource ? {
+      sourceText: editorSource.text,
+      selectedCount: selectedTargetIds.size,
+    } : null,
+    dirty: session.draft.getChanges().length > 0,
+    query: session.query,
+  });
+}
+
+function openConnectionMap(rootId) {
+  if (!isSpatialSpace(activeSpaceId)) return;
+  if (connectionEditor || magnetEditor || thoughtEditor.isOpen()) return;
+  if (blockEditsDuringAccountSync()) return;
+
+  const root = getThoughtById(rootId);
+  if (!root) return;
+
+  closeSpatialInspectorMenu();
+  const draft = createConnectionMapDraft(thoughts, rootId);
+  connectionMapSession = {
+    rootId,
+    visibleIds: new Set(draft.getConnectedComponentIds(rootId)),
+    editor: null,
+    query: '',
+    draft,
+  };
+  spatialView?.deactivate();
+  connectionMapView.open({
+    nextRootId: rootId,
+    initialPositions: getConnectionMapInitialPositions(connectionMapSession),
+  });
+  renderConnectionMap();
+  announce('Connection map opened. Select a thought to edit its direction.');
+}
+
+function closeConnectionMap() {
+  if (!connectionMapSession) return;
+
+  connectionMapSession = null;
+  connectionMapView.close();
+  if (isSpatialSpace(activeSpaceId)) {
+    spatialView?.activate();
+    spatialView?.setSelectedThought(selectedThoughtId);
+    renderSpatialInspector();
+  }
+}
+
+function selectConnectionMapSearchThought(thoughtId) {
+  if (
+    !connectionMapSession
+    || !getThoughtById(thoughtId)
+  ) {
+    return;
+  }
+
+  connectionMapSession.visibleIds.add(thoughtId);
+  connectionMapSession.query = '';
+  if (
+    connectionMapSession.editor
+    && thoughtId !== connectionMapSession.editor.sourceId
+  ) {
+    toggleConnectionMapTarget(thoughtId);
+    return;
+  }
+  renderConnectionMap();
+  connectionMapView.revealThought(thoughtId);
+}
+
+function toggleConnectionMapTarget(thoughtId) {
+  const session = connectionMapSession;
+  const sourceId = session?.editor?.sourceId;
+  if (!sourceId || thoughtId === sourceId) return;
+
+  const selectedTargetIds = new Set(session.draft.getOutgoingTargetIds(sourceId));
+  if (selectedTargetIds.has(thoughtId)) selectedTargetIds.delete(thoughtId);
+  else selectedTargetIds.add(thoughtId);
+
+  if (!session.draft.setOutgoingTargetIds(sourceId, selectedTargetIds)) {
+    announce(`A thought can have up to ${MAX_CONNECTIONS_PER_THOUGHT} outgoing connections.`);
+    return;
+  }
+
+  renderConnectionMap();
+  connectionMapView.revealThought(thoughtId);
+}
+
+function handleConnectionMapAction(thoughtId) {
+  const session = connectionMapSession;
+  if (!session || !session.visibleIds.has(thoughtId)) return;
+
+  if (!session.editor) {
+    session.editor = { sourceId: thoughtId };
+    renderConnectionMap();
+    announce('Choose connection targets on the temporary Board.');
+    return;
+  }
+
+  if (session.editor.sourceId === thoughtId) {
+    finishConnectionMapEditing();
+    return;
+  }
+
+  toggleConnectionMapTarget(thoughtId);
+}
+
+function finishConnectionMapEditing() {
+  if (!connectionMapSession?.editor) return;
+  connectionMapSession.editor = null;
+  renderConnectionMap();
+}
+
+function changeConnectionMapQuery(query) {
+  if (!connectionMapSession) return;
+  connectionMapSession.query = query;
+  renderConnectionMap();
 }
 
 function toggleSpatialPositionPin() {
@@ -2806,6 +3040,36 @@ function handleConnectionButton(thought) {
   toggleConnectionCandidate(thought);
 }
 
+function persistConnectionChanges(changedThoughts) {
+  if (!changedThoughts.length) return;
+
+  rebuildConnectionLayer();
+  saveThoughts();
+  if (isCloudMode()) {
+    changedThoughts.forEach((thought) => {
+      enqueueThoughtMetaPatch(thought, ['connections']);
+    });
+  }
+}
+
+function commitConnectionMap() {
+  const session = connectionMapSession;
+  if (!session) return;
+
+  const changedThoughts = [];
+  session.draft.getChanges().forEach(({ sourceId, targetIds }) => {
+    const source = getThoughtById(sourceId);
+    if (!source) return;
+
+    const result = reconcileConnections(source, targetIds);
+    if (result.changed) changedThoughts.push(source);
+  });
+
+  persistConnectionChanges(changedThoughts);
+  closeConnectionMap();
+  announce(changedThoughts.length ? 'Connections updated.' : 'No connection changes.');
+}
+
 function commitConnectionEditor() {
   if (!connectionEditor) return;
   if (!getSpaceCapabilities(activeSpaceId).connections) {
@@ -2823,12 +3087,7 @@ function commitConnectionEditor() {
   const result = reconcileConnections(source, editor.selectedTargetIds);
   closeConnectionEditor();
 
-  if (result.changed) {
-    rebuildConnectionLayer();
-    if (isSpatialSpace(activeSpaceId)) refreshSpatialGraph();
-    saveThoughts();
-    if (isCloudMode()) enqueueThoughtMetaPatch(source, ['connections']);
-  }
+  persistConnectionChanges(result.changed ? [source] : []);
 
   announce(`${result.count} thoughts connected.`);
 }
@@ -5874,6 +6133,10 @@ spatialInspectorAnchor.addEventListener('click', () => {
 
   toggleThoughtAnchor(thought);
 });
+spatialInspectorOpenMap.addEventListener('click', () => {
+  const thought = selectedThoughtId ? getThoughtById(selectedThoughtId) : null;
+  if (thought) openConnectionMap(thought.id);
+});
 spatialInspectorCopyId.addEventListener('click', () => void copySelectedThoughtId());
 spatialInspectorDelete.addEventListener('click', openSpatialDeleteConfirmation);
 deleteThoughtCancel.addEventListener('click', () => {
@@ -6154,6 +6417,8 @@ window.addEventListener('keydown', (event) => {
     'input, textarea, [contenteditable="true"]',
   );
 
+  if (connectionMapSession) return;
+
   if (isConnectionSearchOpen() && event.key === 'Escape') {
     event.preventDefault();
     closeConnectionSearch();
@@ -6231,7 +6496,7 @@ window.addEventListener('keydown', (event) => {
 document.addEventListener('pointerdown', (event) => {
   if (!event.target.closest('#spatial-layout-picker')) closeSpatialLayoutMenu();
   if (!event.target.closest(
-    '.thought-card, .spatial-toolbar, .spatial-orientation, .spatial-inspector-stack, .thought-focus-dialog, .selection-toolbar, .connection-search-panel',
+    '.thought-card, .spatial-toolbar, .spatial-orientation, .spatial-inspector-stack, .thought-focus-dialog, .connection-map-dialog, .selection-toolbar, .connection-search-panel',
   )) {
     clearThoughtSelection();
   }

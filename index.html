@@ -336,6 +336,11 @@
               hidden
             >
               <button
+                id="spatial-inspector-open-map"
+                type="button"
+                role="menuitem"
+              >Open connections in 2D</button>
+              <button
                 id="spatial-inspector-copy-id"
                 type="button"
                 role="menuitem"
@@ -392,6 +397,64 @@
             <button id="delete-thought-cancel" type="button">Cancel</button>
             <button id="delete-thought-confirm" type="button">Delete</button>
           </footer>
+        </section>
+      </dialog>
+
+      <dialog
+        class="connection-map-dialog"
+        id="connection-map-dialog"
+        aria-labelledby="connection-map-title"
+      >
+        <section class="connection-map-shell">
+          <header class="connection-map-header">
+            <button id="connection-map-cancel" type="button">Cancel</button>
+            <h2 id="connection-map-title">Connections</h2>
+            <button id="connection-map-done" type="button">Done</button>
+          </header>
+
+          <div class="connection-map-stage">
+            <div class="connection-map-search-wrap">
+              <label class="connection-map-search" for="connection-map-search">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true">
+                  <circle cx="11" cy="11" r="7"></circle>
+                  <path d="m16 16 4 4"></path>
+                </svg>
+                <span class="sr-only">Find thought</span>
+                <input
+                  id="connection-map-search"
+                  type="search"
+                  placeholder="Find a thought"
+                  autocomplete="off"
+                />
+              </label>
+              <div class="connection-map-results" id="connection-map-results" hidden></div>
+            </div>
+
+            <div class="connection-map-viewport" id="connection-map-viewport">
+              <div class="connection-map-world" id="connection-map-world">
+                <svg class="connection-map-edges" id="connection-map-edges" aria-hidden="true">
+                  <defs>
+                    <marker id="connection-map-arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+                      <path d="M 0 0 L 10 5 L 0 10 z"></path>
+                    </marker>
+                  </defs>
+                </svg>
+                <div class="connection-map-nodes" id="connection-map-nodes"></div>
+              </div>
+            </div>
+
+            <div class="connection-map-selection" id="connection-map-selection" hidden>
+              <button id="connection-map-selection-finish" type="button">Finish</button>
+              <span id="connection-map-selection-label"></span>
+            </div>
+
+            <div class="connection-map-controls" role="group" aria-label="Connection map view">
+              <button id="connection-map-fit" type="button">Fit</button>
+              <button id="connection-map-zoom-out" type="button" aria-label="Zoom out">−</button>
+              <button id="connection-map-zoom-reset" type="button" aria-label="Reset zoom">100%</button>
+              <button id="connection-map-zoom-in" type="button" aria-label="Zoom in">+</button>
+            </div>
+          </div>
         </section>
       </dialog>
 

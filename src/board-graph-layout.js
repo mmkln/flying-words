@@ -143,7 +143,13 @@ function linkForForce(link) {
   };
 }
 
-function buildStructuralTargets(component, nodes, semanticLinks, geometry) {
+function buildStructuralTargets(
+  component,
+  nodes,
+  semanticLinks,
+  geometry,
+  density,
+) {
   const memberIds = new Set(component.memberIds);
   const componentLinks = semanticLinks.filter(({ sourceId, targetId }) => (
     memberIds.has(sourceId) && memberIds.has(targetId)
@@ -217,9 +223,14 @@ function buildStructuralTargets(component, nodes, semanticLinks, geometry) {
     ids.push(id);
     idsByLevel.set(level, ids);
   });
-  const ringStep = Math.max(
+  const naturalRingStep = Math.max(
     geometry.cardWidth + geometry.gap + 160,
     geometry.cardHeight + geometry.gap + 220,
+  );
+  const ringStep = Math.max(
+    geometry.cardWidth + geometry.gap,
+    geometry.cardHeight + geometry.gap,
+    naturalRingStep * density,
   );
   const targets = new Map();
 
@@ -261,7 +272,14 @@ function componentBounds(nodes) {
   };
 }
 
-function simulateComponent(component, cardsById, semanticLinks, magneticLinks, geometry) {
+function simulateComponent(
+  component,
+  cardsById,
+  semanticLinks,
+  magneticLinks,
+  geometry,
+  density,
+) {
   const memberIds = new Set(component.memberIds);
   const sourceCards = component.memberIds.map((id) => cardsById.get(id));
   const currentCentre = {
@@ -310,17 +328,25 @@ function simulateComponent(component, cardsById, semanticLinks, magneticLinks, g
     nodes,
     semanticLinks,
     geometry,
+    density,
   );
   const connectionForce = forceLink(componentSemanticLinks)
     .id((node) => node.id)
-    .distance((link) => (
-      geometry.cardWidth + (CONNECTION_DISTANCE_OFFSET[link.spacing] || CONNECTION_DISTANCE_OFFSET.normal)
+    .distance((link) => Math.max(
+      geometry.cardWidth + geometry.gap,
+      (
+        geometry.cardWidth
+        + (CONNECTION_DISTANCE_OFFSET[link.spacing] || CONNECTION_DISTANCE_OFFSET.normal)
+      ) * density,
     ))
     .strength(0.76)
     .iterations(2);
   const magnetForce = forceLink(componentMagneticLinks)
     .id((node) => node.id)
-    .distance(geometry.cardWidth + MAGNET_DISTANCE_OFFSET)
+    .distance(Math.max(
+      geometry.cardWidth + geometry.gap,
+      (geometry.cardWidth + MAGNET_DISTANCE_OFFSET) * density,
+    ))
     .strength(0.34)
     .iterations(1);
   const isolatedCloud = component.isolatedCloud && component.memberIds.length > 1;
@@ -677,6 +703,8 @@ export function calculateBoardGraphLayout({
   connections = [],
   magnetRelations = [],
   geometry,
+  layoutGap = AUTO_LAYOUT_GAP,
+  density = 1,
 } = {}) {
   if (!cards.length) return [];
 
@@ -687,8 +715,13 @@ export function calculateBoardGraphLayout({
   };
   const layoutGeometry = {
     ...resolvedGeometry,
-    gap: AUTO_LAYOUT_GAP,
+    gap: Number.isFinite(layoutGap) && layoutGap >= 0
+      ? layoutGap
+      : AUTO_LAYOUT_GAP,
   };
+  const resolvedDensity = Number.isFinite(density)
+    ? Math.min(1, Math.max(0.55, density))
+    : 1;
   const normalizedCards = cards
     .filter((card) => (
       typeof card?.id === 'string'
@@ -718,6 +751,7 @@ export function calculateBoardGraphLayout({
     graph.semanticLinks,
     graph.magneticLinks,
     layoutGeometry,
+    resolvedDensity,
   ));
   const nodes = packComponents(simulated, layoutGeometry);
   const originalCentre = currentBoardCentre(normalizedCards);

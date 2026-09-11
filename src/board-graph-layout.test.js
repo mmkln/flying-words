@@ -159,3 +159,41 @@ test('keeps a large dense graph collision-free', () => {
     }
   }
 });
+
+test('supports a compact collision-free layout without changing Board defaults', () => {
+  const cards = [
+    { ...card('root', -140, -48), fixed: true },
+    card('child', 160, -48),
+    card('grandchild', 460, -48),
+  ];
+  const connections = [
+    { sourceId: 'root', targetId: 'child', spacing: 'normal' },
+    { sourceId: 'child', targetId: 'grandchild', spacing: 'normal' },
+  ];
+  const regular = calculateBoardGraphLayout({ cards, connections, geometry });
+  const compact = calculateBoardGraphLayout({
+    cards,
+    connections,
+    geometry,
+    layoutGap: geometry.gap,
+    density: 0.7,
+  });
+  const span = (positions) => (
+    Math.max(...positions.map(({ x }) => x))
+    - Math.min(...positions.map(({ x }) => x))
+  );
+
+  assert.ok(span(compact) < span(regular));
+  for (let firstIndex = 0; firstIndex < compact.length; firstIndex += 1) {
+    for (let secondIndex = firstIndex + 1; secondIndex < compact.length; secondIndex += 1) {
+      assert.equal(
+        rectanglesOverlap(
+          { ...compact[firstIndex], width: geometry.cardWidth, height: geometry.cardHeight },
+          { ...compact[secondIndex], width: geometry.cardWidth, height: geometry.cardHeight },
+          geometry.gap,
+        ),
+        false,
+      );
+    }
+  }
+});
