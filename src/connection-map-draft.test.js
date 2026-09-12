@@ -115,19 +115,96 @@ test('returns only edges whose endpoints are present on the temporary Board', ()
   }]);
 });
 
-test('finds the complete undirected component around the selected thought', () => {
+test('limits the initial undirected neighbourhood by depth', () => {
   const root = connect(thought('root'), ['child']);
   const child = connect(thought('child'), ['grandchild']);
-  const grandchild = thought('grandchild');
+  const grandchild = connect(thought('grandchild'), ['great-grandchild']);
+  const greatGrandchild = thought('great-grandchild');
   const isolated = thought('isolated');
   const draft = createConnectionMapDraft(
-    [root, child, grandchild, isolated],
+    [root, child, grandchild, greatGrandchild, isolated],
     root.id,
   );
 
-  assert.deepEqual(draft.getConnectedComponentIds(), [
+  assert.deepEqual(draft.getNeighbourhoodIds(root.id, 2), [
     root.id,
     child.id,
     grandchild.id,
   ]);
+});
+
+test('traverses incoming connections when building a neighbourhood', () => {
+  const root = thought('root');
+  const parent = connect(thought('parent'), ['root']);
+  const grandparent = connect(thought('grandparent'), ['parent']);
+  const draft = createConnectionMapDraft([root, parent, grandparent], root.id);
+
+  assert.deepEqual(draft.getNeighbourhoodIds(root.id, 2), [
+    root.id,
+    parent.id,
+    grandparent.id,
+  ]);
+});
+
+test('returns only direct neighbours hidden from the temporary Board', () => {
+  const root = connect(thought('root'), ['child']);
+  const child = connect(thought('child'), ['grandchild', 'shared']);
+  const grandchild = thought('grandchild');
+  const shared = connect(thought('shared'), ['root']);
+  const draft = createConnectionMapDraft(
+    [root, child, grandchild, shared],
+    root.id,
+  );
+  const visibleIds = new Set(['root', 'child', 'shared']);
+
+  assert.deepEqual(draft.getHiddenNeighbourIds('child', visibleIds), [
+    grandchild.id,
+  ]);
+  assert.deepEqual(draft.getHiddenNeighbourIds('root', visibleIds), []);
+});
+
+test('does not duplicate nodes reached through cycles or shared branches', () => {
+  const root = connect(thought('root'), ['left', 'right']);
+  const left = connect(thought('left'), ['shared']);
+  const right = connect(thought('right'), ['shared']);
+  const shared = connect(thought('shared'), ['root']);
+  const draft = createConnectionMapDraft([root, left, right, shared], root.id);
+
+  assert.deepEqual(draft.getNeighbourhoodIds(root.id, 2), [
+    root.id,
+    left.id,
+    right.id,
+    shared.id,
+  ]);
+});
+
+test('registers a new thought and connects it without mutating source data', () => {
+  const root = thought('root');
+  const draft = createConnectionMapDraft([root], root.id);
+
+  assert.equal(draft.registerThought('new-thought'), true);
+  assert.equal(draft.registerThought('new-thought'), false);
+  assert.equal(draft.setOutgoingTargetIds(root.id, ['new-thought']), true);
+  assert.deepEqual(draft.getOutgoingTargetIds(root.id), ['new-thought']);
+  assert.deepEqual(draft.getNeighbourhoodIds(root.id, 1), [
+    root.id,
+    'new-thought',
+  ]);
+  assert.deepEqual(draft.getChanges(), [{
+    sourceId: root.id,
+    targetIds: ['new-thought'],
+  }]);
+  assert.deepEqual(root.meta, {});
+});
+
+test('allows a registered thought to become a connection source', () => {
+  const root = thought('root');
+  const draft = createConnectionMapDraft([root], root.id);
+
+  draft.registerThought('new-thought');
+  assert.equal(draft.setOutgoingTargetIds('new-thought', [root.id]), true);
+  assert.deepEqual(draft.getChanges(), [{
+    sourceId: 'new-thought',
+    targetIds: [root.id],
+  }]);
 });

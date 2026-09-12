@@ -27,7 +27,8 @@ function setsEqual(first, second) {
 }
 
 export function createConnectionMapDraft(thoughts, rootId) {
-  const knownIds = new Set(thoughts.map(({ id }) => id));
+  const orderedIds = thoughts.map(({ id }) => id);
+  const knownIds = new Set(orderedIds);
   if (!knownIds.has(rootId)) {
     throw new Error('Connection map root must be an existing thought.');
   }
@@ -36,6 +37,16 @@ export function createConnectionMapDraft(thoughts, rootId) {
   const working = new Map(
     [...original].map(([id, targets]) => [id, new Set(targets)]),
   );
+
+  function registerThought(thoughtId) {
+    if (!thoughtId || knownIds.has(thoughtId)) return false;
+
+    knownIds.add(thoughtId);
+    orderedIds.push(thoughtId);
+    original.set(thoughtId, new Set());
+    working.set(thoughtId, new Set());
+    return true;
+  }
 
   function hasEdge(sourceId, targetId) {
     return working.get(sourceId)?.has(targetId) === true;
@@ -107,15 +118,12 @@ export function createConnectionMapDraft(thoughts, rootId) {
   }
 
   function getConnectedIds() {
-    return thoughts
-      .map(({ id }) => id)
+    return orderedIds
       .filter((id) => id !== rootId)
       .filter((id) => getRelation(id) !== ConnectionRelation.NONE);
   }
 
-  function getConnectedComponentIds(startId = rootId) {
-    if (!knownIds.has(startId)) return [];
-
+  function buildNeighbourMap() {
     const neighbours = new Map([...knownIds].map((id) => [id, new Set()]));
     working.forEach((targetIds, sourceId) => {
       targetIds.forEach((targetId) => {
@@ -125,18 +133,44 @@ export function createConnectionMapDraft(thoughts, rootId) {
       });
     });
 
-    const visited = new Set();
+    return neighbours;
+  }
+
+  function getNeighbourhoodIds(startId = rootId, maxDepth = 2) {
+    if (!knownIds.has(startId)) return [];
+
+    const depthLimit = Number.isFinite(maxDepth)
+      ? Math.max(0, Math.floor(maxDepth))
+      : 0;
+    const neighbours = buildNeighbourMap();
+    const depths = new Map([[startId, 0]]);
     const queue = [startId];
+
     for (let index = 0; index < queue.length; index += 1) {
       const thoughtId = queue[index];
-      if (visited.has(thoughtId)) continue;
-      visited.add(thoughtId);
+      const depth = depths.get(thoughtId);
+      if (depth >= depthLimit) continue;
+
       neighbours.get(thoughtId)?.forEach((neighbourId) => {
-        if (!visited.has(neighbourId)) queue.push(neighbourId);
+        if (depths.has(neighbourId)) return;
+        depths.set(neighbourId, depth + 1);
+        queue.push(neighbourId);
       });
     }
 
-    return thoughts.map(({ id }) => id).filter((id) => visited.has(id));
+    return orderedIds.filter((id) => depths.has(id));
+  }
+
+  function getHiddenNeighbourIds(thoughtId, visibleIds) {
+    if (!knownIds.has(thoughtId)) return [];
+
+    const visible = visibleIds instanceof Set
+      ? visibleIds
+      : new Set(visibleIds);
+    const neighbours = buildNeighbourMap().get(thoughtId) || new Set();
+
+    return orderedIds
+      .filter((id) => neighbours.has(id) && !visible.has(id));
   }
 
   function getOutgoingTargetIds(sourceId) {
@@ -192,10 +226,12 @@ export function createConnectionMapDraft(thoughts, rootId) {
 
   return {
     rootId,
+    registerThought,
     getRelation,
     setRelation,
     getConnectedIds,
-    getConnectedComponentIds,
+    getNeighbourhoodIds,
+    getHiddenNeighbourIds,
     getOutgoingTargetIds,
     setOutgoingTargetIds,
     getEdges,

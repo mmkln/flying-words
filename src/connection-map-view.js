@@ -1,6 +1,10 @@
-import { createKnowledgeKindIcon } from './knowledge-kind-picker.js';
+import {
+  createKnowledgeKindIcon,
+  renderKnowledgeKindTrigger,
+} from './knowledge-kind-picker.js';
 import { getThoughtKnowledgeKind } from './knowledge-kinds.js';
 import { zoomBoardCameraAtClientPoint } from './board-coordinate-space.js';
+import { getConnectionPathData } from './connection-map-edge-geometry.js';
 
 const SVG_NAMESPACE = 'http://www.w3.org/2000/svg';
 const CARD_WIDTH = 280;
@@ -24,22 +28,7 @@ function rectanglesOverlap(first, second, gap = 0) {
   );
 }
 
-function getCardEndpoint(from, to) {
-  const dx = to.x - from.x;
-  const dy = to.y - from.y;
-  if (!dx && !dy) return { ...from };
-
-  const scale = 1 / Math.max(
-    Math.abs(dx) / Math.max(1, from.width / 2),
-    Math.abs(dy) / Math.max(1, from.height / 2),
-  );
-  return {
-    x: from.x + dx * scale,
-    y: from.y + dy * scale,
-  };
-}
-
-function createThoughtCard(node, onConnectionAction) {
+function createThoughtCard(node, onConnectionAction, onExpandBranch) {
   const { thought, root } = node;
   const element = document.createElement('article');
   const icon = document.createElement('span');
@@ -83,6 +72,24 @@ function createThoughtCard(node, onConnectionAction) {
 
   element.append(icon, text, connectButton);
 
+  if (node.hiddenConnectionCount > 0) {
+    const expandButton = document.createElement('button');
+    const hiddenLabel = node.hiddenConnectionCount === 1
+      ? 'connected thought'
+      : 'connected thoughts';
+
+    expandButton.type = 'button';
+    expandButton.className = 'connection-map-card-expand';
+    expandButton.textContent = `+${node.hiddenConnectionCount}`;
+    expandButton.title = `Show ${node.hiddenConnectionCount} more ${hiddenLabel}`;
+    expandButton.setAttribute('aria-label', expandButton.title);
+    expandButton.addEventListener('click', (event) => {
+      event.stopPropagation();
+      onExpandBranch(thought.id);
+    });
+    element.append(expandButton);
+  }
+
   return element;
 }
 
@@ -109,10 +116,42 @@ function createSearchResult({ thought, selected }, onSelect) {
   return button;
 }
 
+function createThoughtProposal(
+  { text, kind },
+  onCreateThought,
+  onCreateKind,
+) {
+  const row = document.createElement('div');
+  const kindButton = document.createElement('button');
+  const createButton = document.createElement('button');
+
+  row.className = 'connection-map-create-result';
+  row.dataset.knowledgeKind = kind;
+
+  kindButton.type = 'button';
+  kindButton.className = 'connection-map-create-kind';
+  kindButton.setAttribute('aria-haspopup', 'listbox');
+  kindButton.setAttribute('aria-expanded', 'false');
+  renderKnowledgeKindTrigger(kindButton, kind);
+  kindButton.addEventListener('click', () => onCreateKind(kindButton));
+
+  createButton.type = 'button';
+  createButton.className = 'connection-map-create-action';
+  createButton.textContent = `Create “${text}”`;
+  createButton.title = createButton.textContent;
+  createButton.addEventListener('click', () => onCreateThought(text));
+
+  row.append(kindButton, createButton);
+  return row;
+}
+
 export function createConnectionMapView({
   dialog,
   onSearchSelect,
+  onCreateThought,
+  onCreateKind,
   onConnectionAction,
+  onExpandBranch,
   onFinishConnectionEditing,
   onQueryChange,
   onCommit,
@@ -180,16 +219,7 @@ export function createConnectionMapView({
       const target = getNodeRect(edge.targetId);
       if (!source || !target) return;
 
-      const start = getCardEndpoint(source.center, target.center);
-      const end = getCardEndpoint(target.center, source.center);
-      const dx = end.x - start.x;
-      const dy = end.y - start.y;
-      const pathData = [
-        `M ${start.x} ${start.y}`,
-        `C ${start.x + dx * 0.36} ${start.y + dy * 0.08},`,
-        `${end.x - dx * 0.36} ${end.y - dy * 0.08},`,
-        `${end.x} ${end.y}`,
-      ].join(' ');
+      const pathData = getConnectionPathData(source.center, target.center);
       const hitArea = document.createElementNS(SVG_NAMESPACE, 'path');
       const connection = document.createElementNS(SVG_NAMESPACE, 'path');
 
@@ -210,26 +240,76 @@ export function createConnectionMapView({
     edgeFrame = requestAnimationFrame(drawEdges);
   }
 
-  function placeMissingNode(thoughtId) {
-    const occupied = [...positions.values()].map((position) => ({ ...position }));
-    const root = positions.get(rootId) || { x: -CARD_WIDTH / 2, y: -CARD_HEIGHT / 2 };
+  function isPositionInsideViewport(position, padding = 24) {
+    const bounds = viewport.getBoundingClientRect();
+    if (!bounds.width || !bounds.height) return true;
 
-    for (let index = 1; index < 500; index += 1) {
-      const angle = index * Math.PI * (3 - Math.sqrt(5));
-      const radius = (CARD_WIDTH + CARD_GAP) * Math.sqrt(index);
-      const candidate = {
-        x: Math.round(root.x + Math.cos(angle) * radius),
-        y: Math.round(root.y + Math.sin(angle) * radius * 0.62),
-      };
-      if (occupied.every((position) => !rectanglesOverlap(candidate, position, CARD_GAP))) {
-        positions.set(thoughtId, candidate);
-        return;
+    const left = (padding - camera.x) / camera.scale;
+    const top = (padding - camera.y) / camera.scale;
+    const right = (bounds.width - padding - camera.x) / camera.scale - CARD_WIDTH;
+    const bottom = (bounds.height - padding - camera.y) / camera.scale - CARD_HEIGHT;
+
+    return (
+      position.x >= left
+      && position.x <= right
+      && position.y >= top
+      && position.y <= bottom
+    );
+  }
+
+  function placeMissingNode(thoughtId, anchorId = rootId) {
+    const occupied = [...positions.values()].map((position) => ({ ...position }));
+    const anchor = positions.get(anchorId)
+      || positions.get(rootId)
+      || { x: -CARD_WIDTH / 2, y: -CARD_HEIGHT / 2 };
+    let firstOpenPosition = null;
+
+    const stepX = CARD_WIDTH + CARD_GAP;
+    const stepY = CARD_HEIGHT + CARD_GAP;
+    const maxRings = Math.max(12, occupied.length + 2);
+
+    for (let ring = 1; ring <= maxRings; ring += 1) {
+      const offsets = [];
+      for (let row = -ring; row <= ring; row += 1) {
+        offsets.push({ column: ring, row });
+      }
+      for (let column = ring - 1; column >= -ring; column -= 1) {
+        offsets.push({ column, row: ring });
+      }
+      for (let row = ring - 1; row >= -ring; row -= 1) {
+        offsets.push({ column: -ring, row });
+      }
+      for (let column = -ring + 1; column < ring; column += 1) {
+        offsets.push({ column, row: -ring });
+      }
+
+      for (const offset of offsets) {
+        const candidate = {
+          x: anchor.x + offset.column * stepX,
+          y: anchor.y + offset.row * stepY,
+        };
+        if (!occupied.every(
+          (position) => !rectanglesOverlap(candidate, position, CARD_GAP),
+        )) {
+          continue;
+        }
+
+        if (!firstOpenPosition) firstOpenPosition = candidate;
+        if (isPositionInsideViewport(candidate)) {
+          positions.set(thoughtId, candidate);
+          return;
+        }
       }
     }
 
+    if (firstOpenPosition) {
+      positions.set(thoughtId, firstOpenPosition);
+      return;
+    }
+
     positions.set(thoughtId, {
-      x: root.x + occupied.length * (CARD_WIDTH + CARD_GAP),
-      y: root.y,
+      x: anchor.x + occupied.length * (CARD_WIDTH + CARD_GAP),
+      y: anchor.y,
     });
   }
 
@@ -349,6 +429,12 @@ export function createConnectionMapView({
   doneButton.addEventListener('click', onCommit);
   selectionFinish.addEventListener('click', onFinishConnectionEditing);
   searchInput.addEventListener('input', () => onQueryChange(searchInput.value));
+  searchInput.addEventListener('keydown', (event) => {
+    if (event.key !== 'Enter' || event.isComposing || !searchInput.value.trim()) return;
+
+    event.preventDefault();
+    onCreateThought(searchInput.value);
+  });
   dialog.addEventListener('cancel', (event) => {
     event.preventDefault();
     onCancel();
@@ -421,6 +507,7 @@ export function createConnectionMapView({
     nodes,
     edges,
     results,
+    createProposal,
     editor,
     dirty,
     query,
@@ -431,14 +518,20 @@ export function createConnectionMapView({
     [...positions.keys()].forEach((thoughtId) => {
       if (!activeIds.has(thoughtId)) positions.delete(thoughtId);
     });
-    nodes.forEach(({ thought }) => {
-      if (!positions.has(thought.id)) placeMissingNode(thought.id);
+    nodes.forEach((node) => {
+      if (!positions.has(node.thought.id)) {
+        placeMissingNode(node.thought.id, node.spawnAnchorId || rootId);
+      }
     });
 
     nodeElements.clear();
     const fragment = document.createDocumentFragment();
     nodes.forEach((node) => {
-      const element = createThoughtCard(node, onConnectionAction);
+      const element = createThoughtCard(
+        node,
+        onConnectionAction,
+        onExpandBranch,
+      );
       const position = positions.get(node.thought.id);
       element.style.transform = `translate3d(${position.x}px, ${position.y}px, 0)`;
       attachCardDrag(element, node.thought.id);
@@ -452,16 +545,24 @@ export function createConnectionMapView({
 
     selectionToolbar.hidden = !editor;
     selectionLabel.textContent = editor
-      ? `Choose targets for “${editor.sourceText}” · ${editor.selectedCount} selected`
+      ? `Connecting “${editor.sourceText}” · ${editor.selectedCount} selected`
       : '';
+    selectionLabel.title = editor ? editor.sourceText : '';
 
     const resultFragment = document.createDocumentFragment();
     results.forEach((result) => {
       resultFragment.append(createSearchResult(result, onSearchSelect));
     });
+    if (createProposal) {
+      resultFragment.append(createThoughtProposal(
+        createProposal,
+        onCreateThought,
+        onCreateKind,
+      ));
+    }
     searchResults.replaceChildren(resultFragment);
-    searchResults.hidden = results.length === 0;
-    doneButton.disabled = !dirty;
+    searchResults.hidden = results.length === 0 && !createProposal;
+    doneButton.disabled = Boolean(editor) || !dirty;
   }
 
   return { open, close, render, fitAll, revealThought };

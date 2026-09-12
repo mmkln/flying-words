@@ -129,6 +129,7 @@ const THOUGHT_TEXT_WARNING_THRESHOLD = 1700;
 const INITIAL_THOUGHT_PAGE_SIZE = 1000;
 const HISTORY_PAGE_SIZE = 50;
 const CONNECTION_SEARCH_PAGE_SIZE = 30;
+const CONNECTION_MAP_INITIAL_DEPTH = 2;
 const PANEL_SEARCH_DEBOUNCE_MS = 250;
 const RESERVED_BOTTOM_SPACE = 0;
 const MIN_VISIBLE_THOUGHTS = 4;
@@ -364,7 +365,10 @@ const spatialConnectionsList = createSpatialConnectionsList({
 const connectionMapView = createConnectionMapView({
   dialog: connectionMapDialog,
   onSearchSelect: selectConnectionMapSearchThought,
+  onCreateThought: createPendingConnectionMapThought,
+  onCreateKind: openConnectionMapCreateKindPicker,
   onConnectionAction: handleConnectionMapAction,
+  onExpandBranch: expandConnectionMapBranch,
   onFinishConnectionEditing: finishConnectionMapEditing,
   onQueryChange: changeConnectionMapQuery,
   onCommit: commitConnectionMap,
@@ -1511,6 +1515,25 @@ function getConnectionMapNodeIds(session) {
   return [...session.visibleIds];
 }
 
+function getConnectionMapThoughtById(session, thoughtId) {
+  return session.pendingThoughts.get(thoughtId) || getThoughtById(thoughtId);
+}
+
+function getConnectionMapThoughts(session) {
+  return [...thoughts, ...session.pendingThoughts.values()];
+}
+
+function hasExactThoughtText(source, text) {
+  const candidate = text.trim();
+  if (!candidate) return false;
+
+  return source.some((thought) => thought.text.trim().localeCompare(
+    candidate,
+    undefined,
+    { sensitivity: 'accent' },
+  ) === 0);
+}
+
 function getConnectionMapEdges(session) {
   return session.draft.getEdges(session.visibleIds);
 }
@@ -1565,11 +1588,14 @@ function renderConnectionMap() {
   const session = connectionMapSession;
   if (!session) return;
 
-  const root = getThoughtById(session.rootId);
+  const root = getConnectionMapThoughtById(session, session.rootId);
   if (!root) {
     closeConnectionMap();
     return;
   }
+
+  const mapThoughts = getConnectionMapThoughts(session);
+  const createText = session.query.trim();
 
   const selectedTargetIds = new Set(
     session.editor
@@ -1577,7 +1603,7 @@ function renderConnectionMap() {
       : [],
   );
   const results = session.query.trim()
-    ? findConnectionSearchResults(thoughts, {
+    ? findConnectionSearchResults(mapThoughts, {
         sourceId: session.rootId,
         query: session.query,
         limit: 20,
@@ -1590,7 +1616,7 @@ function renderConnectionMap() {
     : [];
 
   const nodes = getConnectionMapNodeIds(session)
-    .map(getThoughtById)
+    .map((thoughtId) => getConnectionMapThoughtById(session, thoughtId))
     .filter(Boolean)
     .map((thought) => ({
       thought,
@@ -1598,21 +1624,34 @@ function renderConnectionMap() {
       editing: Boolean(session.editor),
       connectionSource: thought.id === session.editor?.sourceId,
       connectionSelected: selectedTargetIds.has(thought.id),
+      hiddenConnectionCount: session.draft.getHiddenNeighbourIds(
+        thought.id,
+        session.visibleIds,
+      ).length,
+      spawnAnchorId: session.spawnAnchorById.get(thought.id) || null,
     }));
 
   const editorSource = session.editor
-    ? getThoughtById(session.editor.sourceId)
+    ? getConnectionMapThoughtById(session, session.editor.sourceId)
     : null;
 
   connectionMapView.render({
     nodes,
     edges: getConnectionMapEdges(session),
     results,
+    createProposal: (
+      createText && !hasExactThoughtText(mapThoughts, createText)
+        ? { text: createText, kind: session.createKind }
+        : null
+    ),
     editor: editorSource ? {
       sourceText: editorSource.text,
       selectedCount: selectedTargetIds.size,
     } : null,
-    dirty: session.draft.getChanges().length > 0,
+    dirty: (
+      session.pendingThoughts.size > 0
+      || session.draft.getChanges().length > 0
+    ),
     query: session.query,
   });
 }
@@ -1629,7 +1668,12 @@ function openConnectionMap(rootId) {
   const draft = createConnectionMapDraft(thoughts, rootId);
   connectionMapSession = {
     rootId,
-    visibleIds: new Set(draft.getConnectedComponentIds(rootId)),
+    visibleIds: new Set(
+      draft.getNeighbourhoodIds(rootId, CONNECTION_MAP_INITIAL_DEPTH),
+    ),
+    spawnAnchorById: new Map(),
+    pendingThoughts: new Map(),
+    createKind: KnowledgeKind.THOUGHT,
     editor: null,
     query: '',
     draft,
@@ -1646,6 +1690,9 @@ function openConnectionMap(rootId) {
 function closeConnectionMap() {
   if (!connectionMapSession) return;
 
+  if (knowledgeKindEditor?.mode === 'connection-map-create') {
+    knowledgeKindPicker.close();
+  }
   connectionMapSession = null;
   connectionMapView.close();
   if (isSpatialSpace(activeSpaceId)) {
@@ -1655,21 +1702,38 @@ function closeConnectionMap() {
   }
 }
 
-function selectConnectionMapSearchThought(thoughtId) {
-  if (
-    !connectionMapSession
-    || !getThoughtById(thoughtId)
-  ) {
-    return;
-  }
+function expandConnectionMapBranch(sourceId) {
+  const session = connectionMapSession;
+  if (!session || !session.visibleIds.has(sourceId)) return;
 
-  connectionMapSession.visibleIds.add(thoughtId);
-  connectionMapSession.query = '';
+  const hiddenIds = session.draft.getHiddenNeighbourIds(
+    sourceId,
+    session.visibleIds,
+  );
+  if (!hiddenIds.length) return;
+
+  hiddenIds.forEach((thoughtId) => {
+    session.visibleIds.add(thoughtId);
+    session.spawnAnchorById.set(thoughtId, sourceId);
+  });
+  renderConnectionMap();
+  announce(`${hiddenIds.length} connected ${hiddenIds.length === 1 ? 'thought' : 'thoughts'} revealed.`);
+}
+
+function selectConnectionMapSearchThought(thoughtId) {
+  const session = connectionMapSession;
+  if (!session || !getConnectionMapThoughtById(session, thoughtId)) return;
+
+  const wasVisible = session.visibleIds.has(thoughtId);
+  session.visibleIds.add(thoughtId);
+  if (!wasVisible) session.spawnAnchorById.set(thoughtId, session.rootId);
+  session.query = '';
   if (
-    connectionMapSession.editor
-    && thoughtId !== connectionMapSession.editor.sourceId
+    session.editor
+    && thoughtId !== session.editor.sourceId
   ) {
-    toggleConnectionMapTarget(thoughtId);
+    const changed = toggleConnectionMapTarget(thoughtId);
+    if (changed) connectionMapView.revealThought(thoughtId);
     return;
   }
   renderConnectionMap();
@@ -1679,7 +1743,7 @@ function selectConnectionMapSearchThought(thoughtId) {
 function toggleConnectionMapTarget(thoughtId) {
   const session = connectionMapSession;
   const sourceId = session?.editor?.sourceId;
-  if (!sourceId || thoughtId === sourceId) return;
+  if (!sourceId || thoughtId === sourceId) return false;
 
   const selectedTargetIds = new Set(session.draft.getOutgoingTargetIds(sourceId));
   if (selectedTargetIds.has(thoughtId)) selectedTargetIds.delete(thoughtId);
@@ -1687,11 +1751,11 @@ function toggleConnectionMapTarget(thoughtId) {
 
   if (!session.draft.setOutgoingTargetIds(sourceId, selectedTargetIds)) {
     announce(`A thought can have up to ${MAX_CONNECTIONS_PER_THOUGHT} outgoing connections.`);
-    return;
+    return false;
   }
 
   renderConnectionMap();
-  connectionMapView.revealThought(thoughtId);
+  return true;
 }
 
 function handleConnectionMapAction(thoughtId) {
@@ -1723,6 +1787,88 @@ function changeConnectionMapQuery(query) {
   if (!connectionMapSession) return;
   connectionMapSession.query = query;
   renderConnectionMap();
+}
+
+function openConnectionMapCreateKindPicker(trigger) {
+  const session = connectionMapSession;
+  if (!session) return;
+
+  if (knowledgeKindPicker.isOpenFor(trigger)) {
+    knowledgeKindPicker.close({ restoreFocus: true });
+    return;
+  }
+
+  knowledgeKindPicker.close();
+  knowledgeKindEditor = { mode: 'connection-map-create' };
+  knowledgeKindPicker.openFor({
+    trigger,
+    value: session.createKind,
+    onSelect(kind) {
+      if (!connectionMapSession) return;
+      connectionMapSession.createKind = kind;
+      renderConnectionMap();
+      announce(`New knowledge type: ${getKnowledgeKindLabel(kind)}.`);
+    },
+  });
+}
+
+function createPendingConnectionMapThought(rawText) {
+  const session = connectionMapSession;
+  const text = rawText.trim();
+  if (!session || !text) return false;
+
+  if (text.length > MAX_THOUGHT_TEXT_LENGTH) {
+    announce(`A thought can contain up to ${MAX_THOUGHT_TEXT_LENGTH} characters.`);
+    return false;
+  }
+  if (blockEditsDuringAccountSync()) return false;
+  if (thoughts.length + session.pendingThoughts.size >= MAX_THOUGHTS) {
+    announce(`You can keep up to ${MAX_THOUGHTS} thoughts.`);
+    return false;
+  }
+  if (hasExactThoughtText(getConnectionMapThoughts(session), text)) {
+    announce('A thought with this text already exists.');
+    return false;
+  }
+
+  const sourceId = session.editor?.sourceId || null;
+  const sourceTargetIds = sourceId
+    ? new Set(session.draft.getOutgoingTargetIds(sourceId))
+    : null;
+  if (
+    sourceTargetIds
+    && sourceTargetIds.size >= MAX_CONNECTIONS_PER_THOUGHT
+  ) {
+    announce(`A thought can have up to ${MAX_CONNECTIONS_PER_THOUGHT} outgoing connections.`);
+    return false;
+  }
+
+  const thought = {
+    id: crypto.randomUUID(),
+    text,
+    color: 'purple',
+    pinned: false,
+    revision: 0,
+    createdAt: Date.now(),
+    meta: {
+      knowledge: createKnowledgeMeta(session.createKind),
+    },
+  };
+
+  if (!session.draft.registerThought(thought.id)) return false;
+  session.pendingThoughts.set(thought.id, thought);
+  session.visibleIds.add(thought.id);
+  session.spawnAnchorById.set(thought.id, sourceId || session.rootId);
+
+  if (sourceTargetIds) {
+    sourceTargetIds.add(thought.id);
+    session.draft.setOutgoingTargetIds(sourceId, sourceTargetIds);
+  }
+
+  session.query = '';
+  renderConnectionMap();
+  announce('New thought added to the draft.');
+  return true;
 }
 
 function toggleSpatialPositionPin() {
@@ -3056,18 +3202,53 @@ function commitConnectionMap() {
   const session = connectionMapSession;
   if (!session) return;
 
-  const changedThoughts = [];
+  if (knowledgeKindEditor?.mode === 'connection-map-create') {
+    knowledgeKindPicker.close();
+  }
+
+  const createdThoughts = [...session.pendingThoughts.values()].map((record) => {
+    const thought = makeThought(record.text, record, { deferReveal: true });
+    thought.element.hidden = true;
+    thoughts.push(thought);
+    return thought;
+  });
+  const createdIds = new Set(createdThoughts.map(({ id }) => id));
+  const changedExistingThoughts = [];
+
   session.draft.getChanges().forEach(({ sourceId, targetIds }) => {
     const source = getThoughtById(sourceId);
     if (!source) return;
 
     const result = reconcileConnections(source, targetIds);
-    if (result.changed) changedThoughts.push(source);
+    if (result.changed && !createdIds.has(sourceId)) {
+      changedExistingThoughts.push(source);
+    }
   });
 
-  persistConnectionChanges(changedThoughts);
+  const changed = (
+    createdThoughts.length > 0
+    || changedExistingThoughts.length > 0
+  );
+
+  if (changed) {
+    if (createdThoughts.length) rebuildMagnetComponents();
+    rebuildConnectionLayer();
+    updateUi();
+    saveThoughts();
+
+    if (isCloudMode()) {
+      createdThoughts.forEach(enqueueThoughtCreate);
+      changedExistingThoughts.forEach((thought) => {
+        enqueueThoughtMetaPatch(thought, ['connections']);
+      });
+    }
+  }
+
   closeConnectionMap();
-  announce(changedThoughts.length ? 'Connections updated.' : 'No connection changes.');
+  if (createdThoughts.length && isSpatialSpace(activeSpaceId)) {
+    refreshSpatialGraph();
+  }
+  announce(changed ? 'Connections updated.' : 'No changes.');
 }
 
 function commitConnectionEditor() {
