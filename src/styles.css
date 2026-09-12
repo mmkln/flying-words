@@ -398,6 +398,20 @@ button { -webkit-tap-highlight-color: transparent; }
   pointer-events: none;
 }
 
+.thought-inspector-stack[hidden] { display: none; }
+
+#thought-inspector-stack[data-mode='board'] .spatial-only {
+  display: none;
+}
+
+.thought-inspector-stack[data-mode='board'] .spatial-inspector {
+  max-height: min(52dvh, 480px);
+}
+
+.thought-inspector-stack[data-mode='board'] .spatial-inspector-header {
+  grid-template-columns: 24px 1fr 28px 28px 28px;
+}
+
 .spatial-inspector {
   position: relative;
   display: grid;
@@ -3237,6 +3251,16 @@ kbd {
 
 .selection-toolbar-button { color: var(--text-secondary); }
 .selection-toolbar-button:hover { background: var(--surface-tint); }
+
+.selection-toolbar-button.selection-toolbar-done {
+  color: #fff;
+  background: var(--accent);
+}
+
+.selection-toolbar-button.selection-toolbar-done:hover {
+  color: #fff;
+  background: var(--accent-hover);
+}
 
 .anchor-btn,
 .pin-btn { color: var(--text-tertiary); }

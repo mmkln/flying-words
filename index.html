@@ -243,14 +243,21 @@
             </div>
             <p>Drag a node · Drag the background to rotate · Scroll to zoom</p>
           </div>
+        </div>
 
-          <div class="spatial-inspector-stack">
+          <div
+            class="thought-inspector-stack spatial-inspector-stack"
+            id="thought-inspector-stack"
+            data-mode="spatial"
+            hidden
+          >
           <aside class="spatial-inspector" id="spatial-inspector" aria-label="Selected thought" hidden>
             <header class="spatial-inspector-header">
               <span class="spatial-inspector-kind" id="spatial-inspector-kind" aria-hidden="true"></span>
               <span class="spatial-inspector-kind-label" id="spatial-inspector-kind-label"></span>
               <button
                 id="spatial-inspector-add-related"
+                class="spatial-only"
                 type="button"
                 aria-label="Add related thought"
                 title="Add related thought"
@@ -281,7 +288,7 @@
             </header>
             <div class="spatial-inspector-body">
               <p id="spatial-inspector-text"></p>
-              <div class="spatial-inspector-navigation">
+              <div class="spatial-inspector-navigation spatial-only">
                 <button
                   id="spatial-back"
                   class="spatial-inspector-back"
@@ -315,7 +322,7 @@
                 </button>
               </div>
               <section
-                class="spatial-inspector-suggestions"
+                class="spatial-inspector-suggestions spatial-only"
                 id="spatial-inspector-suggestions"
                 aria-label="Suggested links"
                 hidden
@@ -327,7 +334,7 @@
             <footer>
               <button id="spatial-inspector-edit" type="button">Edit</button>
               <button id="spatial-inspector-connect" type="button">Connect</button>
-              <button id="spatial-inspector-pin" type="button">Pin position</button>
+              <button id="spatial-inspector-pin" class="spatial-only" type="button">Pin position</button>
             </footer>
             <div
               class="spatial-inspector-menu"
@@ -337,6 +344,7 @@
             >
               <button
                 id="spatial-inspector-open-map"
+                class="spatial-only"
                 type="button"
                 role="menuitem"
               >Open connections in 2D</button>
@@ -354,7 +362,7 @@
             </div>
           </aside>
           <aside
-            class="spatial-connections-island"
+            class="spatial-connections-island spatial-only"
             id="spatial-inspector-connections"
             aria-labelledby="spatial-inspector-connections-title"
             hidden
@@ -375,7 +383,6 @@
             <div class="spatial-connections-list" id="spatial-inspector-connection-list"></div>
           </aside>
           </div>
-        </div>
         <div class="empty-state" id="empty-state">
           <span class="empty-orbit orbit-one" aria-hidden="true"></span>
           <span class="empty-orbit orbit-two" aria-hidden="true"></span>

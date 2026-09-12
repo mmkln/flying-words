@@ -176,6 +176,7 @@ const spatialLayoutButton = document.querySelector('#spatial-layout');
 const spatialLayoutMenu = document.querySelector('#spatial-layout-menu');
 const spatialLayoutOptions = [...spatialLayoutMenu.querySelectorAll('[data-spatial-layout]')];
 const spatialResetButton = document.querySelector('#spatial-reset');
+const thoughtInspectorStack = document.querySelector('#thought-inspector-stack');
 const spatialInspector = document.querySelector('#spatial-inspector');
 const spatialInspectorKind = document.querySelector('#spatial-inspector-kind');
 const spatialInspectorKindLabel = document.querySelector('#spatial-inspector-kind-label');
@@ -649,7 +650,7 @@ async function ensureSpatialView() {
             thought.meta = withSpatialPlacement(thought.meta, activeSpaceId, position);
             saveThoughts();
             if (isCloudMode()) enqueueThoughtMetaPatch(thought, ['spatial']);
-            renderSpatialInspector();
+            renderThoughtInspector();
           },
           onDismissRequest() {
             if (connectionEditor) {
@@ -685,7 +686,7 @@ function refreshSpatialGraph({ fitAfterLayout = false, transition = null } = {})
     { transition },
   );
   spatialView.setSelectedThought(selectedThoughtId);
-  renderSpatialInspector();
+  renderThoughtInspector();
 }
 
 async function activateSpatialView() {
@@ -696,12 +697,13 @@ async function activateSpatialView() {
   view.setGraph(buildSpatialGraph());
   view.setSelectedThought(selectedThoughtId);
   view.activate();
-  renderSpatialInspector();
+  renderThoughtInspector();
 }
 
 function deactivateSpatialView() {
   ++spatialNavigationRequestId;
   spatialView?.deactivate();
+  thoughtInspectorStack.hidden = true;
   spatialInspector.hidden = true;
   spatialWorld.hidden = true;
   canvasWorld.hidden = false;
@@ -758,7 +760,9 @@ const thoughtEditor = createThoughtEditor({
   onClose({ thoughtId, restoreFocus }) {
     // Saving can refresh the graph while the editor is still open.
     // Re-enable navigation after the modal session has actually closed.
-    if (isSpatialSpace(activeSpaceId)) renderSpatialInspector();
+    if (isCanvasSpace(activeSpaceId) || isSpatialSpace(activeSpaceId)) {
+      renderThoughtInspector();
+    }
     if (!restoreFocus) return;
     if (isSpatialSpace(activeSpaceId)) {
       spatialInspectorEdit.focus({ preventScroll: true });
@@ -1471,12 +1475,19 @@ function renderSpatialLinkSuggestions(thought, connectionIndex) {
   spatialInspectorSuggestions.hidden = false;
 }
 
-function renderSpatialInspector() {
+function renderThoughtInspector() {
   const thought = selectedThoughtId ? getThoughtById(selectedThoughtId) : null;
-  const visible = Boolean(thought && isSpatialSpace(activeSpaceId));
+  const boardMode = isCanvasSpace(activeSpaceId);
+  const spatialMode = isSpatialSpace(activeSpaceId);
+  const visible = Boolean(
+    thought
+    && isThoughtAvailableInActiveSpace(thought)
+    && viewMode !== 'spaces'
+    && (boardMode || spatialMode),
+  );
+
+  thoughtInspectorStack.hidden = !visible;
   spatialInspector.hidden = !visible;
-  spatialFocusButton.disabled = !canFocusSelectedSpatialThought();
-  spatialBackButton.disabled = !canNavigateSpatialBack();
   if (!visible) {
     spatialConnectionsList.clear();
     spatialInspectorSuggestions.hidden = true;
@@ -1484,14 +1495,13 @@ function renderSpatialInspector() {
     return;
   }
 
-  const connectionIndex = buildConnectionIndex(thoughts);
+  thoughtInspectorStack.dataset.mode = spatialMode ? 'spatial' : 'board';
+
   const kind = getThoughtKnowledgeKind(thought);
   renderKnowledgeKindTrigger(spatialInspectorKind, kind);
   spatialInspectorKindLabel.textContent = getKnowledgeKindLabel(kind);
   spatialInspectorText.textContent = thought.text;
-  renderSpatialConnections(thought, connectionIndex);
-  renderSpatialLinkSuggestions(thought, connectionIndex);
-  const pinned = getSpatialPlacement(thought, activeSpaceId)?.pinned === true;
+
   const anchored = hasAnchor(thought);
   const editingConnections = Boolean(connectionEditor);
   const actionsDisabled = editingConnections || Boolean(magnetEditor);
@@ -1503,12 +1513,27 @@ function renderSpatialInspector() {
   spatialInspectorEdit.disabled = editingConnections;
   spatialInspectorPin.disabled = editingConnections;
   if (actionsDisabled) closeSpatialInspectorMenu();
-  spatialInspectorPin.textContent = pinned ? 'Unpin position' : 'Pin position';
-  spatialInspectorPin.setAttribute('aria-pressed', String(pinned));
+
   spatialInspectorAnchor.classList.toggle('is-active', anchored);
   spatialInspectorAnchor.title = anchored ? 'Remove from Anchors' : 'Add to Anchors';
   spatialInspectorAnchor.setAttribute('aria-label', spatialInspectorAnchor.title);
   spatialInspectorAnchor.setAttribute('aria-pressed', String(anchored));
+
+  if (!spatialMode) {
+    spatialConnectionsList.clear();
+    spatialInspectorSuggestions.hidden = true;
+    return;
+  }
+
+  const connectionIndex = buildConnectionIndex(thoughts);
+  renderSpatialConnections(thought, connectionIndex);
+  renderSpatialLinkSuggestions(thought, connectionIndex);
+  spatialFocusButton.disabled = !canFocusSelectedSpatialThought();
+  spatialBackButton.disabled = !canNavigateSpatialBack();
+
+  const pinned = getSpatialPlacement(thought, activeSpaceId)?.pinned === true;
+  spatialInspectorPin.textContent = pinned ? 'Unpin position' : 'Pin position';
+  spatialInspectorPin.setAttribute('aria-pressed', String(pinned));
 }
 
 function getConnectionMapNodeIds(session) {
@@ -1698,7 +1723,7 @@ function closeConnectionMap() {
   if (isSpatialSpace(activeSpaceId)) {
     spatialView?.activate();
     spatialView?.setSelectedThought(selectedThoughtId);
-    renderSpatialInspector();
+    renderThoughtInspector();
   }
 }
 
@@ -1893,7 +1918,7 @@ function toggleSpatialPositionPin() {
 
   saveThoughts();
   if (isCloudMode()) enqueueThoughtMetaPatch(thought, ['spatial']);
-  renderSpatialInspector();
+  renderThoughtInspector();
   announce(pinned ? 'Spatial position released.' : 'Spatial position pinned.');
 }
 
@@ -1903,7 +1928,7 @@ function selectThought(thought) {
     item.element.classList.toggle('is-selected', item.id === selectedThoughtId);
   });
   spatialView?.setSelectedThought(selectedThoughtId);
-  renderSpatialInspector();
+  renderThoughtInspector();
 }
 
 function clearThoughtSelection() {
@@ -1911,7 +1936,7 @@ function clearThoughtSelection() {
   thoughts.forEach((thought) => thought.element.classList.remove('is-selected'));
   spatialView?.setSelectedThought(null);
   closeSpatialInspectorMenu();
-  renderSpatialInspector();
+  renderThoughtInspector();
 }
 
 function getPersistedMagnetParents(thought) {
@@ -2892,7 +2917,7 @@ function openConnectionEditor(source) {
   };
   showThought(source);
   renderConnectionUi();
-  renderSpatialInspector();
+  renderThoughtInspector();
   announce('Choose connected thoughts, then select Done.');
 }
 
@@ -3148,7 +3173,7 @@ function closeConnectionEditor() {
   connectionSearchRequestId += 1;
   connectionEditor = null;
   renderConnectionUi();
-  renderSpatialInspector();
+  renderThoughtInspector();
 }
 
 function toggleConnectionCandidate(thought) {
@@ -4659,7 +4684,7 @@ function rerenderOpenThoughtPanels(snapshot = {}) {
   }
 
   if (anchorsDialog.open) renderAnchors();
-  renderSpatialInspector();
+  renderThoughtInspector();
   updateManualRefreshControls();
 }
 
@@ -4872,7 +4897,9 @@ function toggleThoughtAnchor(thought) {
   saveThoughts();
   if (isCloudMode()) enqueueThoughtMetaPatch(thought, ['navigation']);
   if (anchorsDialog.open) renderAnchors();
-  if (isSpatialSpace(activeSpaceId)) renderSpatialInspector();
+  if (isCanvasSpace(activeSpaceId) || isSpatialSpace(activeSpaceId)) {
+    renderThoughtInspector();
+  }
   announce(anchored ? 'Anchor removed.' : 'Anchor added.');
 }
 
@@ -4940,7 +4967,7 @@ function beginDrag(event, thought) {
 
   const wasSelected = selectedThoughtId === thought.id;
   const startedOnText = Boolean(event.target.closest('.thought-text'));
-  selectThought(thought);
+  if (!isCanvasSpace(activeSpaceId)) selectThought(thought);
   event.preventDefault();
 
   const nextDragOffset = isCanvasSpace(activeSpaceId)
@@ -5047,6 +5074,7 @@ function stopDrag(event, { cancelled = !event } = {}) {
     dragCandidate = null;
 
     if (!draggedThought && !cancelled) {
+      if (isCanvasSpace(activeSpaceId)) selectThought(candidate.thought);
       if (candidate.startedOnText && candidate.wasSelected) {
         startThoughtTextEditing(candidate.thought);
       } else {
@@ -5834,6 +5862,7 @@ function closeSpacesOverview({ restoreFocus = true } = {}) {
   renderCanvasCamera();
   spacesOverview.hidden = true;
   if (isSpatialSpace(activeSpaceId)) void activateSpatialView();
+  else renderThoughtInspector();
   if (restoreFocus) spacesButton.focus();
 }
 
@@ -5921,6 +5950,7 @@ function openSpacesOverview() {
 
   viewMode = 'spaces';
   renderCanvasCamera();
+  renderThoughtInspector();
   renderSpacesOverview();
   spacesOverview.hidden = false;
   spacesGrid
@@ -5947,7 +5977,7 @@ function updateUi() {
   }
   if (historyDialog.open) renderHistory();
   if (anchorsDialog.open) renderAnchors();
-  renderSpatialInspector();
+  renderThoughtInspector();
   updateManualRefreshControls();
   renderBoardArrangeControl();
 }
@@ -6677,7 +6707,7 @@ window.addEventListener('keydown', (event) => {
 document.addEventListener('pointerdown', (event) => {
   if (!event.target.closest('#spatial-layout-picker')) closeSpatialLayoutMenu();
   if (!event.target.closest(
-    '.thought-card, .spatial-toolbar, .spatial-orientation, .spatial-inspector-stack, .thought-focus-dialog, .connection-map-dialog, .selection-toolbar, .connection-search-panel',
+    '.thought-card, .spatial-toolbar, .spatial-orientation, .thought-inspector-stack, .thought-focus-dialog, .connection-map-dialog, .selection-toolbar, .connection-search-panel',
   )) {
     clearThoughtSelection();
   }
