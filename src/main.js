@@ -340,7 +340,7 @@ let themeMode = normalizeThemeMode(document.documentElement.dataset.themeMode);
 let resolvedTheme = resolveTheme(themeMode, systemThemeQuery.matches);
 let spatialLayoutMode = loadSpatialLayoutMode();
 let viewMode = 'canvas';
-let storedActiveSpaceId = localStorage.getItem(ACTIVE_SPACE_STORAGE_KEY);
+let storedActiveSpaceId = sessionStorage.getItem(ACTIVE_SPACE_STORAGE_KEY);
 let activeSpaceId = storedActiveSpaceId;
 if (!isSpaceId(activeSpaceId)) activeSpaceId = DEFAULT_SPACE_ID;
 let canvasCamera = loadCanvasCamera(activeSpaceId);
@@ -3646,7 +3646,7 @@ function applyBoardRecords(records, { preferStored = false } = {}) {
   boards = Array.isArray(records) ? records : [];
   setBoardSpaces(boards);
 
-  const storedSpaceId = localStorage.getItem(ACTIVE_SPACE_STORAGE_KEY);
+  const storedSpaceId = sessionStorage.getItem(ACTIVE_SPACE_STORAGE_KEY);
   let nextSpaceId = (
     preferStored
     && storedSpaceId
@@ -5883,7 +5883,7 @@ function switchSpace(spaceId) {
   saveCanvasCamera();
 
   activeSpaceId = spaceId;
-  localStorage.setItem(ACTIVE_SPACE_STORAGE_KEY, activeSpaceId);
+  sessionStorage.setItem(ACTIVE_SPACE_STORAGE_KEY, activeSpaceId);
   canvasCamera = loadCanvasCamera(activeSpaceId);
   clearCanvasHudTimer();
   canvasHudVisible = isCanvasSpace(activeSpaceId) && !isCanvasAtDefaultScale();
