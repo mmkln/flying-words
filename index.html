@@ -512,12 +512,20 @@
       ></div>
 
       <section class="spaces-overview" id="spaces-overview" aria-label="Spaces" hidden>
+        <button
+          class="spaces-spatial-action"
+          id="spaces-spatial-action"
+          type="button"
+          aria-label="Open Spatial view"
+        >
+          Spatial
+        </button>
         <button class="spaces-close" id="spaces-close" type="button" aria-label="Close spaces">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true">
             <path d="m6 6 12 12M18 6 6 18"></path>
           </svg>
         </button>
-        <div class="spaces-grid" id="spaces-grid"></div>
+        <div class="spaces-content" id="spaces-grid"></div>
       </section>
 
       <p class="announcer sr-only" id="announcer" aria-live="polite"></p>

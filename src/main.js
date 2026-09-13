@@ -235,6 +235,7 @@ const canvasZoomOut = document.querySelector('#canvas-zoom-out');
 const canvasResetZoom = document.querySelector('#canvas-reset-zoom');
 const spacesOverview = document.querySelector('#spaces-overview');
 const spacesClose = document.querySelector('#spaces-close');
+const spacesSpatialAction = document.querySelector('#spaces-spatial-action');
 const spacesGrid = document.querySelector('#spaces-grid');
 const themeButton = document.querySelector('#theme-button');
 const accountMenu = document.querySelector('#account-menu');
@@ -347,6 +348,8 @@ let canvasCamera = loadCanvasCamera(activeSpaceId);
 let boardGeometry = applyBoardGeometryCss(DEFAULT_BOARD_GEOMETRY);
 canvasHudVisible = isCanvasSpace(activeSpaceId) && canvasCamera.scale < MAX_CANVAS_SCALE;
 let boards = [];
+let editingBoardId = null;
+let boardRenameInFlight = false;
 
 const connectionRenderer = createConnectionRenderer({
   layer: connectionLayer,
@@ -3644,6 +3647,9 @@ function applyBoardRecords(records, { preferStored = false } = {}) {
   const previousSpaceId = activeSpaceId;
   const wasBoardActive = isCanvasSpace(previousSpaceId);
   boards = Array.isArray(records) ? records : [];
+  if (editingBoardId && !boards.some((board) => board.id === editingBoardId)) {
+    editingBoardId = null;
+  }
   setBoardSpaces(boards);
 
   const storedSpaceId = sessionStorage.getItem(ACTIVE_SPACE_STORAGE_KEY);
@@ -3708,6 +3714,81 @@ async function createBoard() {
     announce(`${board.title} created.`);
   } catch (error) {
     announce(`Could not create Board: ${error.message}`);
+  }
+}
+
+function focusBoardTitleInput(boardId) {
+  requestAnimationFrame(() => {
+    const input = spacesGrid.querySelector(
+      `[data-board-title-input="${boardId}"]`,
+    );
+    input?.focus();
+    input?.select();
+  });
+}
+
+function startBoardRename(boardId) {
+  if (boardRenameInFlight || !boards.some((board) => board.id === boardId)) return;
+  editingBoardId = boardId;
+  renderSpacesOverview();
+  focusBoardTitleInput(boardId);
+}
+
+function cancelBoardRename({ restoreFocus = true } = {}) {
+  const boardId = editingBoardId;
+  editingBoardId = null;
+  renderSpacesOverview();
+
+  if (!restoreFocus || !boardId) return;
+  requestAnimationFrame(() => {
+    spacesGrid
+      .querySelector(`[data-board-rename="${boardId}"]`)
+      ?.focus();
+  });
+}
+
+async function renameBoard(boardId, rawTitle) {
+  if (boardRenameInFlight || editingBoardId !== boardId) return;
+
+  const board = boards.find((candidate) => candidate.id === boardId);
+  const title = rawTitle.trim();
+  if (!board) return;
+
+  if (!title) {
+    announce('Board name cannot be empty.');
+    focusBoardTitleInput(boardId);
+    return;
+  }
+
+  if (title === board.title) {
+    cancelBoardRename();
+    return;
+  }
+
+  boardRenameInFlight = true;
+  const input = spacesGrid.querySelector(
+    `[data-board-title-input="${boardId}"]`,
+  );
+  if (input instanceof HTMLInputElement) input.disabled = true;
+
+  try {
+    const updatedBoard = await requestApi(`/boards/${boardId}/`, {
+      method: 'PATCH',
+      body: { title },
+    });
+    editingBoardId = null;
+    applyBoardRecords(
+      boards.map((candidate) => (
+        candidate.id === updatedBoard.id ? updatedBoard : candidate
+      )),
+    );
+    announce(`Board renamed to ${updatedBoard.title}.`);
+  } catch (error) {
+    announce(`Could not rename Board: ${error.message}`);
+    if (input instanceof HTMLInputElement) input.disabled = false;
+    focusBoardTitleInput(boardId);
+  } finally {
+    boardRenameInFlight = false;
   }
 }
 
@@ -5733,32 +5814,77 @@ function openHistory() {
   if (auth) void loadHistoryPage({ reset: true });
 }
 
-function renderSpacesOverview() {
-  spacesGrid.replaceChildren();
-  const canvasBounds = canvas.getBoundingClientRect();
-  const canvasWidth = Math.max(1, canvasBounds.width);
-  const canvasHeight = Math.max(1, canvasBounds.height - RESERVED_BOTTOM_SPACE);
+function createSpaceLabel(space) {
+  const label = document.createElement('span');
+  const text = document.createElement('span');
+  label.className = 'space-tile-label';
+  text.className = 'space-tile-label-text';
+  text.textContent = space.label;
+  label.append(text);
+  return label;
+}
 
-  getSpaces().forEach((space) => {
-    const tile = document.createElement('button');
-    const label = document.createElement('span');
-    const surface = document.createElement('span');
+function createBoardTitleEditor(space) {
+  const form = document.createElement('form');
+  const input = document.createElement('input');
+
+  form.className = 'space-title-form';
+  input.className = 'space-title-input';
+  input.type = 'text';
+  input.value = space.label;
+  input.maxLength = 120;
+  input.autocomplete = 'off';
+  input.dataset.boardTitleInput = space.id;
+  input.setAttribute('aria-label', 'Board name');
+
+  form.append(input);
+  form.addEventListener('submit', (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    void renameBoard(space.id, input.value);
+  });
+  input.addEventListener('keydown', (event) => {
+    if (event.key !== 'Escape') return;
+    event.preventDefault();
+    event.stopPropagation();
+    cancelBoardRename();
+  });
+  input.addEventListener('blur', () => {
+    if (editingBoardId === space.id && !boardRenameInFlight) {
+      if (input.value.trim()) void renameBoard(space.id, input.value);
+      else cancelBoardRename({ restoreFocus: false });
+    }
+  });
+
+  return form;
+}
+
+function createBoardRenameButton(space) {
+  const button = document.createElement('button');
+  button.type = 'button';
+  button.className = 'space-board-rename';
+  button.dataset.boardRename = space.id;
+  button.setAttribute('aria-label', `Rename ${space.label}`);
+  button.title = 'Rename Board';
+  button.innerHTML = `
+    <svg viewBox="0 0 20 20" fill="none" aria-hidden="true" focusable="false">
+      <path d="m12.75 4.25 3 3M4.25 15.75l2.7-.55 8.8-8.8a1.55 1.55 0 0 0-2.2-2.2l-8.8 8.8-.5 2.75Z" />
+    </svg>
+  `;
+  button.addEventListener('click', () => startBoardRename(space.id));
+  return button;
+}
+
+function renderSpacePreview(surface, space, canvasWidth, canvasHeight) {
+  const isCanvasPreview = isCanvasSpace(space.id);
+  const isSpatialPreview = isSpatialSpace(space.id);
+  const isPositionedPreview = isCanvasPreview || isSpatialPreview;
+
+  if (isFlowSpace(space.id)) {
     const chrome = document.createElement('span');
     const controls = document.createElement('span');
     const account = document.createElement('span');
     const composer = document.createElement('span');
-
-    tile.type = 'button';
-    tile.className = 'space-tile';
-    tile.dataset.spaceId = space.id;
-    tile.classList.toggle('is-spatial', isSpatialSpace(space.id));
-    tile.classList.toggle('is-active', space.id === activeSpaceId);
-    tile.setAttribute('aria-label', `Open ${space.label}`);
-    if (space.id === activeSpaceId) tile.setAttribute('aria-current', 'true');
-
-    label.className = 'space-tile-label';
-    label.textContent = space.label;
-    surface.className = 'space-preview-surface';
     chrome.className = 'space-preview-chrome';
     controls.className = 'space-preview-controls';
     controls.append(document.createElement('span'), document.createElement('span'));
@@ -5766,94 +5892,209 @@ function renderSpacesOverview() {
     composer.className = 'space-preview-composer';
     chrome.append(controls, account);
     surface.append(chrome, composer);
-    tile.append(surface, label);
+  }
 
-    const isCanvasPreview = isCanvasSpace(space.id);
-    const isSpatialPreview = isSpatialSpace(space.id);
-    const isPositionedPreview = isCanvasPreview || isSpatialPreview;
-    const previewThoughts = thoughts.filter((thought) => (
-      isCanvasPreview
-        ? hasCanvasPlacement(thought, space.id)
-        : isSpatialPreview
-          ? true
-          : thought.pinned && getThoughtSpaceId(thought) === space.id
-    )).slice(0, 80);
-    const previewPositions = previewThoughts.map((thought, index) => {
-      if (isSpatialPreview) {
-        const placement = getSpatialPlacement(thought, space.id);
-        if (placement) return placement;
-        const angle = index * 2.399963;
-        const radius = 40 + Math.sqrt(index + 1) * 34;
-        return {
-          x: Math.cos(angle) * radius,
-          y: Math.sin(angle) * radius,
-        };
-      }
-      return getCanvasPlacement(thought, space.id);
-    });
-    const minCanvasX = Math.min(...previewPositions.map((position) => position?.x ?? 0), 0);
-    const maxCanvasX = Math.max(...previewPositions.map((position) => position?.x ?? 0), 1);
-    const minCanvasY = Math.min(...previewPositions.map((position) => position?.y ?? 0), 0);
-    const maxCanvasY = Math.max(...previewPositions.map((position) => position?.y ?? 0), 1);
-    const canvasRangeX = Math.max(1, maxCanvasX - minCanvasX);
-    const canvasRangeY = Math.max(1, maxCanvasY - minCanvasY);
+  const previewThoughts = thoughts.filter((thought) => (
+    isCanvasPreview
+      ? hasCanvasPlacement(thought, space.id)
+      : isSpatialPreview
+        ? true
+        : thought.pinned && getThoughtSpaceId(thought) === space.id
+  )).slice(0, 80);
+  const previewPositions = previewThoughts.map((thought, index) => {
+    if (isSpatialPreview) {
+      const placement = getSpatialPlacement(thought, space.id);
+      if (placement) return placement;
+      const angle = index * 2.399963;
+      const radius = 40 + Math.sqrt(index + 1) * 34;
+      return {
+        x: Math.cos(angle) * radius,
+        y: Math.sin(angle) * radius,
+      };
+    }
+    return getCanvasPlacement(thought, space.id);
+  });
+  const minCanvasX = Math.min(...previewPositions.map((position) => position?.x ?? 0), 0);
+  const maxCanvasX = Math.max(...previewPositions.map((position) => position?.x ?? 0), 1);
+  const minCanvasY = Math.min(...previewPositions.map((position) => position?.y ?? 0), 0);
+  const maxCanvasY = Math.max(...previewPositions.map((position) => position?.y ?? 0), 1);
+  const canvasRangeX = Math.max(1, maxCanvasX - minCanvasX);
+  const canvasRangeY = Math.max(1, maxCanvasY - minCanvasY);
 
-    previewThoughts.forEach((thought, index) => {
-        const preview = document.createElement('span');
-        const layout = thought.meta?.layout;
-        const positionedPlacement = previewPositions[index];
-        const x = isPositionedPreview
-          ? 0.08 + ((positionedPlacement?.x ?? 0) - minCanvasX) / canvasRangeX * 0.84
-          : Number.isFinite(layout?.x) ? layout.x : 0.5;
-        const y = isPositionedPreview
-          ? 0.08 + ((positionedPlacement?.y ?? 0) - minCanvasY) / canvasRangeY * 0.84
-          : Number.isFinite(layout?.y) ? layout.y : 0.5;
-        const width = Math.min(
-          34,
-          Math.max(12, ((thought.width || 180) / canvasWidth) * 100),
-        );
-        const height = Math.min(
-          18,
-          Math.max(6, ((thought.height || 64) / canvasHeight) * 100),
-        );
+  previewThoughts.forEach((thought, index) => {
+    const preview = document.createElement('span');
+    const layout = thought.meta?.layout;
+    const positionedPlacement = previewPositions[index];
+    const x = isPositionedPreview
+      ? 0.08 + ((positionedPlacement?.x ?? 0) - minCanvasX) / canvasRangeX * 0.84
+      : Number.isFinite(layout?.x) ? layout.x : 0.5;
+    const y = isPositionedPreview
+      ? 0.08 + ((positionedPlacement?.y ?? 0) - minCanvasY) / canvasRangeY * 0.84
+      : Number.isFinite(layout?.y) ? layout.y : 0.5;
+    const width = Math.min(
+      34,
+      Math.max(12, ((thought.width || 180) / canvasWidth) * 100),
+    );
+    const height = Math.min(
+      18,
+      Math.max(6, ((thought.height || 64) / canvasHeight) * 100),
+    );
 
-        preview.className = 'space-preview-card';
-        preview.style.left = `${Math.min(1, Math.max(0, x)) * (100 - width)}%`;
-        preview.style.top = `${Math.min(1, Math.max(0, y)) * (100 - height)}%`;
-        preview.style.width = `${width}%`;
-        preview.style.height = `${height}%`;
-        surface.append(preview);
-      });
-
-    tile.addEventListener('click', () => switchSpace(space.id));
-    spacesGrid.append(tile);
+    preview.className = 'space-preview-card';
+    preview.style.left = `${Math.min(1, Math.max(0, x)) * (100 - width)}%`;
+    preview.style.top = `${Math.min(1, Math.max(0, y)) * (100 - height)}%`;
+    preview.style.width = `${width}%`;
+    preview.style.height = `${height}%`;
+    surface.append(preview);
   });
 
-  if (auth) {
-    const createTile = document.createElement('button');
-    const createSurface = document.createElement('span');
-    const createIcon = document.createElement('span');
-    const createLabel = document.createElement('span');
+}
 
-    createTile.type = 'button';
-    createTile.className = 'space-tile is-create-board';
-    createTile.setAttribute('aria-label', 'Create Board');
+function createSpaceTile(space, canvasWidth, canvasHeight) {
+  const tile = document.createElement('article');
+  const openButton = document.createElement('button');
+  const surface = document.createElement('span');
+  const footer = document.createElement('div');
+  const canRenameBoard = (
+    Boolean(auth)
+    && isCanvasSpace(space.id)
+    && boards.some((board) => board.id === space.id)
+  );
 
-    createSurface.className = 'space-create-surface';
-    createIcon.className = 'space-create-icon';
-    createIcon.innerHTML = `
-      <svg viewBox="0 0 20 20" aria-hidden="true" focusable="false">
-        <path d="M10 4.75v10.5M4.75 10h10.5" />
-      </svg>
-    `;
-    createSurface.append(createIcon);
+  tile.className = 'space-tile';
+  tile.classList.toggle('is-board', isCanvasSpace(space.id));
+  tile.classList.toggle('is-spatial', isSpatialSpace(space.id));
+  tile.classList.toggle('is-active', space.id === activeSpaceId);
 
-    createLabel.className = 'space-tile-label';
-    createLabel.textContent = 'New Board';
-    createTile.append(createSurface, createLabel);
-    createTile.addEventListener('click', () => void createBoard());
-    spacesGrid.append(createTile);
+  openButton.type = 'button';
+  openButton.className = 'space-tile-open';
+  openButton.dataset.spaceId = space.id;
+  openButton.setAttribute(
+    'aria-label',
+    isCanvasSpace(space.id) ? `Open Board: ${space.label}` : `Open ${space.label}`,
+  );
+  if (space.id === activeSpaceId) openButton.setAttribute('aria-current', 'true');
+
+  surface.className = 'space-preview-surface';
+  footer.className = 'space-tile-footer';
+  renderSpacePreview(surface, space, canvasWidth, canvasHeight);
+  openButton.append(surface);
+  openButton.addEventListener('click', () => switchSpace(space.id));
+
+  if (canRenameBoard && editingBoardId === space.id) {
+    footer.append(createBoardTitleEditor(space));
+  } else {
+    footer.append(createSpaceLabel(space));
   }
+
+  tile.append(openButton, footer);
+  if (canRenameBoard && editingBoardId !== space.id) {
+    tile.append(createBoardRenameButton(space));
+  }
+
+  return tile;
+}
+
+function createNewBoardTile() {
+  const tile = document.createElement('article');
+  const button = document.createElement('button');
+  const surface = document.createElement('span');
+  const icon = document.createElement('span');
+  const footer = document.createElement('div');
+  const label = document.createElement('span');
+
+  tile.className = 'space-tile is-create-board';
+  button.type = 'button';
+  button.className = 'space-tile-open';
+  button.setAttribute('aria-label', 'Create Board');
+  surface.className = 'space-create-surface';
+  icon.className = 'space-create-icon';
+  icon.innerHTML = `
+    <svg viewBox="0 0 20 20" aria-hidden="true" focusable="false">
+      <path d="M10 4.75v10.5M4.75 10h10.5" />
+    </svg>
+  `;
+  footer.className = 'space-tile-footer';
+  label.className = 'space-tile-label';
+  label.textContent = 'New Board';
+
+  surface.append(icon);
+  footer.append(label);
+  button.append(surface);
+  button.addEventListener('click', () => void createBoard());
+  tile.append(button, footer);
+  return tile;
+}
+
+function createSpaceSection(title, sectionId, spaces, canvasWidth, canvasHeight) {
+  const section = document.createElement('section');
+  const heading = document.createElement('h2');
+  const grid = document.createElement('div');
+  const headingId = `spaces-section-${sectionId}`;
+
+  section.className = 'spaces-section';
+  section.classList.add(`spaces-section-${sectionId}`);
+  section.setAttribute('aria-labelledby', headingId);
+  heading.className = 'spaces-section-title';
+  heading.id = headingId;
+  heading.textContent = title;
+  grid.className = 'spaces-section-grid';
+  spaces.forEach((space) => {
+    grid.append(createSpaceTile(space, canvasWidth, canvasHeight));
+  });
+  section.append(heading, grid);
+
+  return { section, grid };
+}
+
+function renderSpacesOverview() {
+  spacesGrid.replaceChildren();
+  const canvasBounds = canvas.getBoundingClientRect();
+  const canvasWidth = Math.max(1, canvasBounds.width);
+  const canvasHeight = Math.max(1, canvasBounds.height - RESERVED_BOTTOM_SPACE);
+  const spaces = getSpaces();
+  const flowSpaces = spaces.filter(({ id }) => isFlowSpace(id));
+  const boardSpaces = spaces.filter(({ id }) => isCanvasSpace(id));
+  const flowSection = createSpaceSection(
+    'Spaces', 'flow', flowSpaces, canvasWidth, canvasHeight,
+  );
+  const boardSection = createSpaceSection(
+    'Boards', 'boards', boardSpaces, canvasWidth, canvasHeight,
+  );
+
+  if (auth) boardSection.grid.append(createNewBoardTile());
+  const spatialActive = isSpatialSpace(activeSpaceId);
+  spacesSpatialAction.classList.toggle('is-active', spatialActive);
+  if (spatialActive) spacesSpatialAction.setAttribute('aria-current', 'page');
+  else spacesSpatialAction.removeAttribute('aria-current');
+
+  spacesGrid.append(
+    flowSection.section,
+    boardSection.section,
+  );
+}
+
+function findSpaceTileInDirection(tiles, currentTile, key) {
+  const currentRect = currentTile.getBoundingClientRect();
+  const currentCenter = {
+    x: currentRect.left + currentRect.width / 2,
+    y: currentRect.top + currentRect.height / 2,
+  };
+  const horizontal = key === 'ArrowLeft' || key === 'ArrowRight';
+  const direction = key === 'ArrowLeft' || key === 'ArrowUp' ? -1 : 1;
+
+  return tiles
+    .filter((tile) => tile !== currentTile)
+    .map((tile) => {
+      const rect = tile.getBoundingClientRect();
+      const deltaX = rect.left + rect.width / 2 - currentCenter.x;
+      const deltaY = rect.top + rect.height / 2 - currentCenter.y;
+      const primary = (horizontal ? deltaX : deltaY) * direction;
+      const crossAxis = Math.abs(horizontal ? deltaY : deltaX);
+      return { tile, primary, score: primary + crossAxis * 4 };
+    })
+    .filter(({ primary }) => primary > 1)
+    .sort((left, right) => left.score - right.score)[0]?.tile || null;
 }
 
 function closeSpacesOverview({ restoreFocus = true } = {}) {
@@ -5953,9 +6194,11 @@ function openSpacesOverview() {
   renderThoughtInspector();
   renderSpacesOverview();
   spacesOverview.hidden = false;
-  spacesGrid
-    .querySelector(`[data-space-id="${activeSpaceId}"]`)
-    ?.focus();
+  const activeSpaceControl = spacesGrid.querySelector(
+    `[data-space-id="${activeSpaceId}"]`,
+  );
+  if (activeSpaceControl) activeSpaceControl.focus();
+  else if (isSpatialSpace(activeSpaceId)) spacesSpatialAction.focus();
 }
 
 function updateUi() {
@@ -6405,6 +6648,10 @@ historyButton.addEventListener('click', () => {
 });
 anchorsButton.addEventListener('click', openAnchors);
 spacesButton.addEventListener('click', openSpacesOverview);
+spacesSpatialAction.addEventListener('click', () => {
+  const spatialSpace = getSpaces().find(({ id }) => isSpatialSpace(id));
+  if (spatialSpace) switchSpace(spatialSpace.id);
+});
 boardArrangeButton.addEventListener('click', () => void arrangeBoard());
 boardArrangeUndo.addEventListener('click', () => void undoBoardArrange());
 spacesClose.addEventListener('click', closeSpacesOverview);
@@ -6599,28 +6846,30 @@ window.addEventListener('keydown', (event) => {
   if (event.isComposing || event.repeat) return;
 
   if (viewMode === 'spaces') {
+    if (
+      event.target instanceof HTMLElement
+      && event.target.matches('.space-title-input')
+    ) {
+      return;
+    }
+
     if (event.key === 'Escape') {
       event.preventDefault();
       closeSpacesOverview();
       return;
     }
 
-    const tiles = [...spacesGrid.querySelectorAll('.space-tile')];
-    const focusedIndex = tiles.indexOf(document.activeElement);
-    const currentIndex = focusedIndex >= 0
-      ? focusedIndex
-      : getSpaces().findIndex((space) => space.id === activeSpaceId);
-    const columnCount = window.matchMedia('(max-width: 560px)').matches ? 2 : 3;
-    let nextIndex = currentIndex;
+    if (!event.key.startsWith('Arrow')) return;
 
-    if (event.key === 'ArrowLeft' && currentIndex % columnCount > 0) nextIndex -= 1;
-    else if (event.key === 'ArrowRight' && currentIndex % columnCount < columnCount - 1 && currentIndex + 1 < tiles.length) nextIndex += 1;
-    else if (event.key === 'ArrowUp' && currentIndex >= columnCount) nextIndex -= columnCount;
-    else if (event.key === 'ArrowDown' && currentIndex + columnCount < tiles.length) nextIndex += columnCount;
-    else return;
+    const tiles = [...spacesGrid.querySelectorAll('.space-tile-open')];
+    const currentTile = tiles.find((tile) => tile === document.activeElement);
+    if (!currentTile) return;
+
+    const nextTile = findSpaceTileInDirection(tiles, currentTile, event.key);
+    if (!nextTile) return;
 
     event.preventDefault();
-    tiles[nextIndex]?.focus();
+    nextTile.focus();
     return;
   }
 
