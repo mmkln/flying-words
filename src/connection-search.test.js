@@ -49,3 +49,24 @@ test('matches all words without depending on their order', () => {
 
   assert.deepEqual(results.map(({ id }) => id), ['match']);
 });
+
+test('matches attached link titles without treating them as thought text', () => {
+  const linkedThought = {
+    ...thought('link', 'Personal note', '2026-08-01T00:00:00Z'),
+    meta: {
+      knowledge: { version: 1, kind: 'link' },
+      link: {
+        version: 1,
+        url: 'https://example.com/economics',
+        title: 'Finance and economics',
+      },
+    },
+  };
+
+  const results = findConnectionSearchResults([linkedThought], {
+    query: 'economics finance',
+  });
+
+  assert.deepEqual(results.map(({ id }) => id), ['link']);
+  assert.equal(results[0].text, 'Personal note');
+});

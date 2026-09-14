@@ -2,6 +2,7 @@ export function createThoughtEditor({
   dialog,
   form,
   textarea,
+  linkFields,
   counter,
   discardButton,
   maximum = 2000,
@@ -10,6 +11,7 @@ export function createThoughtEditor({
   onClose,
 }) {
   let session = null;
+  let kind = null;
 
   function updateCounter() {
     const count = textarea.value.length;
@@ -32,9 +34,15 @@ export function createThoughtEditor({
   function save() {
     if (!session) return false;
 
+    const link = linkFields?.getValue() || {};
     const saved = onSave({
       thoughtId: session.thoughtId,
-      text: textarea.value.trim(),
+      draft: {
+        kind,
+        text: textarea.value,
+        linkUrl: link.url || '',
+        linkTitle: link.title || '',
+      },
     });
 
     if (saved === false) return false;
@@ -42,11 +50,17 @@ export function createThoughtEditor({
     return true;
   }
 
-  function open({ thoughtId, text }) {
+  function setKind(nextKind) {
+    kind = nextKind;
+  }
+
+  function open({ thoughtId, draft }) {
     if (session) discard({ restoreFocus: false });
 
-    session = { thoughtId, originalText: text };
-    textarea.value = text;
+    session = { thoughtId, originalDraft: structuredClone(draft) };
+    textarea.value = draft.text;
+    linkFields?.setValue({ url: draft.linkUrl, title: draft.linkTitle });
+    setKind(draft.kind);
     updateCounter();
 
     if (!dialog.open) dialog.showModal();
@@ -74,5 +88,12 @@ export function createThoughtEditor({
     discard();
   });
 
-  return { discard, isOpen: () => session !== null, open, save };
+  return {
+    discard,
+    getKind: () => kind,
+    isOpen: () => session !== null,
+    open,
+    save,
+    setKind,
+  };
 }

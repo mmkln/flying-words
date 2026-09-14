@@ -2,6 +2,7 @@ import {
   matchesThoughtSearch,
   normalizeSearchText,
 } from './thought-search.js';
+import { getThoughtSearchText } from './thought-content.js';
 
 function createdAtTimestamp(thought) {
   const timestamp = new Date(thought.createdAt).getTime();
@@ -21,10 +22,14 @@ export function findConnectionSearchResults(
 
   return thoughts
     .filter((thought) => thought.id !== sourceId)
-    .filter((thought) => matchesThoughtSearch(thought.text, query))
+    .filter((thought) => matchesThoughtSearch(getThoughtSearchText(thought), query))
     .sort((first, second) => {
-      const firstStartsWithQuery = normalizeSearchText(first.text).startsWith(normalizedQuery);
-      const secondStartsWithQuery = normalizeSearchText(second.text).startsWith(normalizedQuery);
+      const firstStartsWithQuery = normalizeSearchText(
+        getThoughtSearchText(first),
+      ).startsWith(normalizedQuery);
+      const secondStartsWithQuery = normalizeSearchText(
+        getThoughtSearchText(second),
+      ).startsWith(normalizedQuery);
 
       if (firstStartsWithQuery !== secondStartsWithQuery) {
         return firstStartsWithQuery ? -1 : 1;

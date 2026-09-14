@@ -3,6 +3,7 @@ import {
   renderKnowledgeKindTrigger,
 } from './knowledge-kind-picker.js';
 import { getThoughtKnowledgeKind } from './knowledge-kinds.js';
+import { getThoughtPresentation } from './thought-content.js';
 import { zoomBoardCameraAtClientPoint } from './board-coordinate-space.js';
 import { getConnectionPathData } from './connection-map-edge-geometry.js';
 
@@ -30,6 +31,7 @@ function rectanglesOverlap(first, second, gap = 0) {
 
 function createThoughtCard(node, onConnectionAction, onExpandBranch) {
   const { thought, root } = node;
+  const presentation = getThoughtPresentation(thought);
   const element = document.createElement('article');
   const icon = document.createElement('span');
   const text = document.createElement('span');
@@ -49,7 +51,7 @@ function createThoughtCard(node, onConnectionAction, onExpandBranch) {
   icon.setAttribute('aria-hidden', 'true');
 
   text.className = 'connection-map-card-text';
-  text.textContent = thought.text;
+  text.textContent = presentation.primaryText;
 
   connectButton.type = 'button';
   connectButton.className = 'connection-map-card-connect';
@@ -67,7 +69,7 @@ function createThoughtCard(node, onConnectionAction, onExpandBranch) {
   else if (node.editing && node.connectionSelected) connectButton.title = 'Remove connection';
   else if (node.editing) connectButton.title = 'Add connection';
   else connectButton.title = 'Edit connections';
-  connectButton.setAttribute('aria-label', `${connectButton.title}: ${thought.text}`);
+  connectButton.setAttribute('aria-label', `${connectButton.title}: ${presentation.primaryText}`);
   connectButton.addEventListener('click', () => onConnectionAction(thought.id));
 
   element.append(icon, text, connectButton);
@@ -94,6 +96,7 @@ function createThoughtCard(node, onConnectionAction, onExpandBranch) {
 }
 
 function createSearchResult({ thought, selected }, onSelect) {
+  const presentation = getThoughtPresentation(thought);
   const button = document.createElement('button');
   const icon = document.createElement('span');
   const text = document.createElement('span');
@@ -108,7 +111,7 @@ function createSearchResult({ thought, selected }, onSelect) {
   icon.className = 'connection-map-result-kind';
   icon.append(createKnowledgeKindIcon(getThoughtKnowledgeKind(thought)));
   icon.setAttribute('aria-hidden', 'true');
-  text.textContent = thought.text;
+  text.textContent = presentation.primaryText;
   direction.textContent = selected ? 'Selected' : '';
   direction.className = 'connection-map-result-state';
   direction.setAttribute('aria-hidden', 'true');

@@ -288,6 +288,29 @@
             </header>
             <div class="spatial-inspector-body">
               <p id="spatial-inspector-text"></p>
+              <a
+                class="thought-resource"
+                id="spatial-inspector-resource"
+                target="_blank"
+                rel="noopener noreferrer"
+                hidden
+              >
+                <span class="thought-resource-icon" aria-hidden="true">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M10 13a5 5 0 0 0 7.54.54l2-2a5 5 0 0 0-7.07-7.07l-1.15 1.15"></path>
+                    <path d="M14 11a5 5 0 0 0-7.54-.54l-2 2a5 5 0 0 0 7.07 7.07l1.15-1.15"></path>
+                  </svg>
+                </span>
+                <span class="thought-resource-copy">
+                  <strong id="spatial-inspector-resource-title"></strong>
+                  <small id="spatial-inspector-resource-host"></small>
+                </span>
+                <svg class="thought-resource-external" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                  <path d="M14 5h5v5"></path>
+                  <path d="m19 5-9 9"></path>
+                  <path d="M19 14v4a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1h4"></path>
+                </svg>
+              </a>
               <div class="spatial-inspector-navigation spatial-only">
                 <button
                   id="spatial-back"
@@ -486,16 +509,19 @@
               aria-expanded="false"
             ></button>
           </div>
-          <label class="sr-only" for="thought-input">New thought</label>
-          <textarea
-            id="thought-input"
-            name="thought"
-            rows="1"
-            maxlength="2000"
-            placeholder="Enter a thought…"
-            autocomplete="off"
-            required
-          ></textarea>
+          <div class="composer-content">
+            <label class="sr-only" for="thought-input">New thought</label>
+            <textarea
+              id="thought-input"
+              name="thought"
+              rows="1"
+              maxlength="2000"
+              placeholder="Enter a thought…"
+              autocomplete="off"
+              required
+            ></textarea>
+          </div>
+          <div id="composer-link-fields"></div>
           <button class="send-button" type="submit" aria-label="Add thought" title="Add thought">
             <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m21 3-7.6 18-3.15-7.25L3 10.6 21 3Zm-10.75 10.75L21 3" /></svg>
           </button>
@@ -604,6 +630,8 @@
           required
         ></textarea>
 
+        <div id="thought-focus-link-fields"></div>
+
         <footer class="thought-focus-footer">
           <output id="thought-focus-count" aria-live="polite" hidden></output>
           <div class="thought-focus-actions">
@@ -622,7 +650,10 @@
           aria-haspopup="listbox"
           aria-expanded="false"
         ></button>
-        <p class="thought-text"></p>
+        <div class="thought-copy">
+          <p class="thought-text"></p>
+          <small class="thought-resource-host" hidden></small>
+        </div>
         <button class="anchor-btn anchor-button" type="button" title="Add to anchors" aria-label="Add to anchors" aria-pressed="false" hidden>
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
             <circle cx="12" cy="5" r="3"></circle>
@@ -662,6 +693,77 @@
           </svg>
         </button>
       </article>
+    </template>
+
+    <template id="link-fields-template">
+      <section class="link-control" data-state="empty">
+        <button
+          class="link-control-trigger"
+          type="button"
+          data-link-trigger
+          aria-label="Attach link"
+          aria-haspopup="dialog"
+          aria-expanded="false"
+          aria-pressed="false"
+        >
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M10 13a5 5 0 0 0 7.54.54l2-2a5 5 0 0 0-7.07-7.07l-1.15 1.15"></path>
+            <path d="M14 11a5 5 0 0 0-7.54-.54l-2 2a5 5 0 0 0 7.07 7.07l1.15-1.15"></path>
+          </svg>
+          <span class="link-control-trigger-label" data-link-trigger-label>Add link</span>
+          <span class="link-control-indicator" data-link-indicator hidden></span>
+        </button>
+
+        <div class="link-control-preview" data-link-preview hidden>
+          <button class="link-control-preview-summary" type="button" data-link-edit>
+            <span class="link-control-preview-icon" aria-hidden="true">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M10 13a5 5 0 0 0 7.54.54l2-2a5 5 0 0 0-7.07-7.07l-1.15 1.15"></path>
+                <path d="M14 11a5 5 0 0 0-7.54-.54l-2 2a5 5 0 0 0 7.07 7.07l1.15-1.15"></path>
+              </svg>
+            </span>
+            <span class="link-control-preview-copy">
+              <strong data-link-preview-title></strong>
+              <small data-link-preview-host></small>
+            </span>
+          </button>
+          <button class="link-control-remove" type="button" data-link-remove aria-label="Remove attached link">×</button>
+        </div>
+
+        <div class="link-control-popover" data-link-popover role="dialog" aria-label="Attach link" hidden>
+          <div class="link-control-url-row">
+            <label class="link-control-url-field">
+              <span class="sr-only">URL</span>
+              <input
+                type="url"
+                data-link-url
+                inputmode="url"
+                autocomplete="url"
+                maxlength="2048"
+                placeholder="Paste a link"
+              />
+            </label>
+            <button class="link-control-confirm" type="button" data-link-confirm>Add</button>
+          </div>
+
+          <small class="link-control-status" data-link-status aria-live="polite" hidden></small>
+
+          <div class="link-control-secondary-actions" data-link-actions hidden>
+            <button type="button" data-link-title-toggle>Edit title</button>
+            <button class="is-destructive" type="button" data-link-remove>Remove</button>
+          </div>
+
+          <label class="link-control-title-field" data-link-title-field hidden>
+            <span>Custom title</span>
+            <input
+              type="text"
+              data-link-title
+              maxlength="300"
+              placeholder="Optional"
+            />
+          </label>
+        </div>
+      </section>
     </template>
 
     <script type="module" src="./src/main.js"></script>

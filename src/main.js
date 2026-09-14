@@ -18,6 +18,14 @@ import {
   renderKnowledgeKindTrigger,
 } from './knowledge-kind-picker.js';
 import { createThoughtEditor } from './thought-editor.js';
+import { createLinkFields } from './link-fields.js';
+import {
+  createThoughtContentPatch,
+  createThoughtDraft,
+  getThoughtPresentation,
+  getThoughtSearchText,
+  validateThoughtDraft,
+} from './thought-content.js';
 import {
   MAX_CONNECTIONS_PER_THOUGHT,
   buildConnectionIndex,
@@ -80,9 +88,15 @@ import {
   setBoardSpaces,
 } from './spaces.js';
 import {
+  buildSpaceUrl,
+  readSpaceIdFromSearch,
+  resolveSpaceId,
+} from './space-navigation.js';
+import {
   applyThoughtPatch,
   diffMetaPatch,
   isPausedBoardPlacementOnlyOperation,
+  mergeMetaPatch,
   mergeThoughtPatches,
   metaPatchFromThought,
 } from './sync-operations.js';
@@ -113,7 +127,7 @@ import {
 const STORAGE_KEY = 'flying-thoughts:v1';
 const AUTH_STORAGE_KEY = 'flying-thoughts:auth:v1';
 const REFRESH_TOKEN_STORAGE_KEY = 'flying-thoughts:refresh-token:v1';
-const ACTIVE_SPACE_STORAGE_KEY = 'flying-thoughts:active-space:v1';
+const LAST_SPACE_STORAGE_PREFIX = 'flying-thoughts:last-space:v2:';
 const CANVAS_CAMERA_STORAGE_PREFIX = 'flying-thoughts:canvas-camera:v1:';
 const SPATIAL_CAMERA_STORAGE_PREFIX = 'flying-thoughts:spatial-camera:v3:';
 const SPATIAL_LAYOUT_STORAGE_PREFIX = 'flying-thoughts:spatial-layout:v3:';
@@ -181,6 +195,9 @@ const spatialInspector = document.querySelector('#spatial-inspector');
 const spatialInspectorKind = document.querySelector('#spatial-inspector-kind');
 const spatialInspectorKindLabel = document.querySelector('#spatial-inspector-kind-label');
 const spatialInspectorText = document.querySelector('#spatial-inspector-text');
+const spatialInspectorResource = document.querySelector('#spatial-inspector-resource');
+const spatialInspectorResourceTitle = document.querySelector('#spatial-inspector-resource-title');
+const spatialInspectorResourceHost = document.querySelector('#spatial-inspector-resource-host');
 const spatialInspectorConnections = document.querySelector('#spatial-inspector-connections');
 const spatialInspectorConnectionsToggle = document.querySelector('#spatial-inspector-connections-toggle');
 const spatialInspectorConnectionsCount = document.querySelector('#spatial-inspector-connections-count');
@@ -265,6 +282,9 @@ const thoughtFocusEditor = document.querySelector('#thought-focus-editor');
 const thoughtFocusCount = document.querySelector('#thought-focus-count');
 const thoughtFocusKind = document.querySelector('#thought-focus-kind');
 const thoughtFocusDiscard = document.querySelector('#thought-focus-discard');
+const linkFieldsTemplate = document.querySelector('#link-fields-template');
+const composerLinkFieldsRoot = document.querySelector('#composer-link-fields');
+const thoughtFocusLinkFieldsRoot = document.querySelector('#thought-focus-link-fields');
 
 let auth = null;
 let accessToken = null;
@@ -341,9 +361,13 @@ let themeMode = normalizeThemeMode(document.documentElement.dataset.themeMode);
 let resolvedTheme = resolveTheme(themeMode, systemThemeQuery.matches);
 let spatialLayoutMode = loadSpatialLayoutMode();
 let viewMode = 'canvas';
-let storedActiveSpaceId = sessionStorage.getItem(ACTIVE_SPACE_STORAGE_KEY);
-let activeSpaceId = storedActiveSpaceId;
-if (!isSpaceId(activeSpaceId)) activeSpaceId = DEFAULT_SPACE_ID;
+const initiallyRequestedSpaceId = readSpaceIdFromSearch(window.location.search);
+let activeSpaceId = (
+  initiallyRequestedSpaceId
+  && isSpaceId(initiallyRequestedSpaceId)
+)
+  ? initiallyRequestedSpaceId
+  : DEFAULT_SPACE_ID;
 let canvasCamera = loadCanvasCamera(activeSpaceId);
 let boardGeometry = applyBoardGeometryCss(DEFAULT_BOARD_GEOMETRY);
 canvasHudVisible = isCanvasSpace(activeSpaceId) && canvasCamera.scale < MAX_CANVAS_SCALE;
@@ -614,7 +638,7 @@ function buildSpatialGraph() {
     const connectionCount = connectionCounts.get(thought.id) || 0;
     return {
       id: thought.id,
-      text: thought.text,
+      text: getThoughtPresentation(thought).primaryText,
       kind: getThoughtKnowledgeKind(thought),
       radius: Math.min(13, 5 + Math.sqrt(connectionCount) * 1.6),
       connectionCount,
@@ -719,30 +743,63 @@ const knowledgeKindPicker = createKnowledgeKindPicker({
   },
 });
 
+function mountLinkFields(host, { presentation = 'detail' } = {}) {
+  host.append(linkFieldsTemplate.content.cloneNode(true));
+  return createLinkFields({
+    root: host.firstElementChild,
+    requestPreview: requestLinkPreview,
+    presentation,
+  });
+}
+
+async function requestLinkPreview(url) {
+  if (!auth) throw new Error('Sign in to load a page title automatically.');
+  return requestApi('/link-preview/', {
+    method: 'POST',
+    body: { url },
+  });
+}
+
+const composerLinkFields = mountLinkFields(composerLinkFieldsRoot, {
+  presentation: 'control',
+});
+const editorLinkFields = mountLinkFields(thoughtFocusLinkFieldsRoot, {
+  presentation: 'detail',
+});
+
 const thoughtEditor = createThoughtEditor({
   dialog: thoughtFocusDialog,
   form: thoughtFocusForm,
   textarea: thoughtFocusEditor,
+  linkFields: editorLinkFields,
   counter: thoughtFocusCount,
   discardButton: thoughtFocusDiscard,
   maximum: MAX_THOUGHT_TEXT_LENGTH,
   warningThreshold: THOUGHT_TEXT_WARNING_THRESHOLD,
-  onSave({ thoughtId, text }) {
+  onSave({ thoughtId, draft }) {
     const thought = getThoughtById(thoughtId);
-    if (!thought || !text) {
-      announce('A thought cannot be empty.');
+    if (!thought) return false;
+
+    const validation = validateThoughtDraft(draft, {
+      maximumTextLength: MAX_THOUGHT_TEXT_LENGTH,
+    });
+    if (!validation.valid) {
+      announce(validation.message);
       return false;
     }
 
-    if (text.length > MAX_THOUGHT_TEXT_LENGTH) {
-      announce(`A thought can contain up to ${MAX_THOUGHT_TEXT_LENGTH} characters.`);
-      return false;
-    }
+    const patch = createThoughtContentPatch(draft);
+    const nextMeta = mergeMetaPatch(thought.meta, patch.meta_patch);
+    const changed = (
+      patch.text !== thought.text
+      || JSON.stringify(nextMeta) !== JSON.stringify(thought.meta || {})
+    );
 
-    if (text !== thought.text) {
-      thought.text = text;
+    if (changed) {
+      thought.text = patch.text;
+      thought.meta = nextMeta;
       saveThoughts();
-      if (isCloudMode()) enqueueThoughtPatch(thought, { text: thought.text });
+      if (isCloudMode()) enqueueThoughtPatch(thought, patch);
       if (historyDialog.open) renderHistory();
       if (isSpatialSpace(activeSpaceId)) {
         refreshSpatialGraph();
@@ -804,7 +861,7 @@ function renderComposerRelation() {
     return;
   }
 
-  composerRelationLabel.textContent = target.text;
+  composerRelationLabel.textContent = getThoughtPresentation(target).primaryText;
   input.placeholder = `Add a related ${getKnowledgeKindLabel(composerKnowledgeKind).toLowerCase()}…`;
 }
 
@@ -886,8 +943,21 @@ function openThoughtKnowledgeKindPicker(
   };
   knowledgeKindPicker.openFor({
     trigger,
-    value: getThoughtKnowledgeKind(thought),
+    value: (
+      thoughtEditor.isOpen() && selectedThoughtId === thought.id
+        ? thoughtEditor.getKind()
+        : getThoughtKnowledgeKind(thought)
+    ),
     onSelect(kind) {
+      if (thoughtEditor.isOpen() && selectedThoughtId === thought.id) {
+        thoughtEditor.setKind(kind);
+        renderKnowledgeKindTrigger(thoughtFocusKind, kind);
+        window.requestAnimationFrame(() => {
+          thoughtFocusEditor.focus({ preventScroll: true });
+        });
+        return;
+      }
+
       updateThoughtKnowledgeKind(thought, kind);
     },
   });
@@ -1387,8 +1457,9 @@ function openSpatialDeleteConfirmation() {
   if (blockEditsDuringAccountSync()) return;
 
   pendingThoughtDeletionId = thought.id;
+  const presentation = getThoughtPresentation(thought);
   deleteThoughtMessage.textContent = (
-    `Delete “${thought.text.slice(0, 120)}”? `
+    `Delete “${presentation.primaryText.slice(0, 120)}”? `
     + 'Its connections will also be removed.'
   );
   closeSpatialInspectorMenu();
@@ -1405,7 +1476,7 @@ function renderSpatialConnections(thought, connectionIndex) {
       return {
         thoughtId,
         direction,
-        text: connectedThought.text,
+        text: getThoughtPresentation(connectedThought).primaryText,
         kind: getThoughtKnowledgeKind(connectedThought),
       };
     })
@@ -1442,6 +1513,7 @@ function renderSpatialLinkSuggestions(thought, connectionIndex) {
   }
 
   suggestions.forEach(({ parent, linked }) => {
+    const presentation = getThoughtPresentation(parent);
     const row = document.createElement('div');
     const relation = document.createElement('span');
     const label = document.createElement('span');
@@ -1451,16 +1523,16 @@ function renderSpatialLinkSuggestions(thought, connectionIndex) {
     relation.className = 'spatial-inspector-suggestion-relation';
     relation.textContent = 'Magnetic parent';
     label.className = 'spatial-inspector-suggestion-text';
-    label.textContent = parent.text;
+    label.textContent = presentation.primaryText;
 
     button.type = 'button';
     button.textContent = linked ? 'Linked' : 'Link';
     button.disabled = linked;
 
     if (linked) {
-      button.setAttribute('aria-label', `Already linked with ${parent.text}`);
+      button.setAttribute('aria-label', `Already linked with ${presentation.primaryText}`);
     } else {
-      button.setAttribute('aria-label', `Link to magnetic parent ${parent.text}`);
+      button.setAttribute('aria-label', `Link to magnetic parent ${presentation.primaryText}`);
       button.addEventListener('click', () => {
         // This starts the existing draft flow. No metadata changes until Done.
         openConnectionEditor(thought);
@@ -1501,9 +1573,15 @@ function renderThoughtInspector() {
   thoughtInspectorStack.dataset.mode = spatialMode ? 'spatial' : 'board';
 
   const kind = getThoughtKnowledgeKind(thought);
+  const presentation = getThoughtPresentation(thought);
   renderKnowledgeKindTrigger(spatialInspectorKind, kind);
   spatialInspectorKindLabel.textContent = getKnowledgeKindLabel(kind);
   spatialInspectorText.textContent = thought.text;
+  spatialInspectorResource.hidden = !presentation.href;
+  spatialInspectorResourceTitle.textContent = presentation.resourceTitle;
+  spatialInspectorResourceHost.textContent = presentation.hostname;
+  if (presentation.href) spatialInspectorResource.href = presentation.href;
+  else spatialInspectorResource.removeAttribute('href');
 
   const anchored = hasAnchor(thought);
   const editingConnections = Boolean(connectionEditor);
@@ -1673,7 +1751,7 @@ function renderConnectionMap() {
         : null
     ),
     editor: editorSource ? {
-      sourceText: editorSource.text,
+      sourceText: getThoughtPresentation(editorSource).primaryText,
       selectedCount: selectedTargetIds.size,
     } : null,
     dirty: (
@@ -3094,6 +3172,7 @@ function renderConnectionSearchResults() {
   );
 
   matches.forEach((thought, index) => {
+    const presentation = getThoughtPresentation(thought);
     const row = document.createElement('div');
     const selectButton = document.createElement('button');
     const kindIcon = document.createElement('span');
@@ -3111,7 +3190,7 @@ function renderConnectionSearchResults() {
     selectButton.setAttribute('aria-pressed', String(selected));
     selectButton.setAttribute(
       'aria-label',
-      `${selected ? 'Remove' : 'Add'} connection to ${thought.text}`,
+      `${selected ? 'Remove' : 'Add'} connection to ${presentation.primaryText}`,
     );
     selectButton.addEventListener('click', () => {
       connectionSearchActiveIndex = index;
@@ -3122,7 +3201,7 @@ function renderConnectionSearchResults() {
     kindIcon.className = 'connection-search-kind-icon';
     renderKnowledgeKindTrigger(kindIcon, getThoughtKnowledgeKind(thought));
     text.className = 'connection-search-text';
-    text.textContent = thought.text;
+    text.textContent = presentation.primaryText;
     state.className = 'connection-search-state';
     state.textContent = selected ? 'Selected' : '';
     selectButton.append(kindIcon, text, state);
@@ -3130,7 +3209,7 @@ function renderConnectionSearchResults() {
     locateButton.type = 'button';
     locateButton.className = 'connection-search-locate';
     locateButton.textContent = 'Locate';
-    locateButton.setAttribute('aria-label', `Locate ${thought.text} in Spatial`);
+    locateButton.setAttribute('aria-label', `Locate ${presentation.primaryText} in Spatial`);
     locateButton.addEventListener('click', () => {
       void navigateToSpatialThought(thought.id, { focus: true, remember: false });
     });
@@ -3643,7 +3722,19 @@ async function loadBoardGeometry() {
   rebuildConnectionLayer();
 }
 
-function applyBoardRecords(records, { preferStored = false } = {}) {
+function lastSpaceStorageKey() {
+  return `${LAST_SPACE_STORAGE_PREFIX}${auth?.id || 'guest'}`;
+}
+
+function loadLastSpaceId() {
+  return localStorage.getItem(lastSpaceStorageKey());
+}
+
+function saveLastSpaceId(spaceId) {
+  localStorage.setItem(lastSpaceStorageKey(), spaceId);
+}
+
+function applyBoardRecords(records) {
   const previousSpaceId = activeSpaceId;
   const wasBoardActive = isCanvasSpace(previousSpaceId);
   boards = Array.isArray(records) ? records : [];
@@ -3652,23 +3743,16 @@ function applyBoardRecords(records, { preferStored = false } = {}) {
   }
   setBoardSpaces(boards);
 
-  const storedSpaceId = sessionStorage.getItem(ACTIVE_SPACE_STORAGE_KEY);
-  let nextSpaceId = (
-    preferStored
-    && storedSpaceId
-    && isSpaceId(storedSpaceId)
-  )
-    ? storedSpaceId
-    : activeSpaceId;
-
-  if (!isSpaceId(nextSpaceId)) {
-    nextSpaceId = wasBoardActive
-      ? getBoardSpaces()[0]?.id || DEFAULT_SPACE_ID
-      : DEFAULT_SPACE_ID;
-  }
-
-  if (nextSpaceId !== activeSpaceId) {
-    switchSpace(nextSpaceId);
+  if (!isSpaceId(activeSpaceId)) {
+    const fallbackSpaceId = resolveSpaceId({
+      requestedSpaceId: null,
+      rememberedSpaceId: loadLastSpaceId(),
+      isValid: isSpaceId,
+      fallbackSpaceId: wasBoardActive
+        ? getBoardSpaces()[0]?.id || DEFAULT_SPACE_ID
+        : DEFAULT_SPACE_ID,
+    });
+    navigateToSpace(fallbackSpaceId, { historyMode: 'replace' });
     return;
   }
 
@@ -3684,7 +3768,7 @@ async function loadBoards() {
 
   try {
     const records = await requestApi('/boards/');
-    applyBoardRecords(records, { preferStored: true });
+    applyBoardRecords(records);
     return true;
   } catch (error) {
     applyBoardRecords([]);
@@ -3710,7 +3794,7 @@ async function createBoard() {
       body: { title: nextBoardTitle() },
     });
     applyBoardRecords([...boards, board]);
-    switchSpace(board.id);
+    navigateToSpace(board.id);
     announce(`${board.title} created.`);
   } catch (error) {
     announce(`Could not create Board: ${error.message}`);
@@ -4808,14 +4892,16 @@ async function refreshThoughtsManually() {
   return manualRefreshInFlight;
 }
 
-async function addThought(rawText, { relationTargetId = null } = {}) {
-  const text = rawText.trim();
-  if (!text) return false;
-
-  if (text.length > MAX_THOUGHT_TEXT_LENGTH) {
-    announce(`A thought can contain up to ${MAX_THOUGHT_TEXT_LENGTH} characters.`);
+async function addThought(draft, { relationTargetId = null } = {}) {
+  const validation = validateThoughtDraft(draft, {
+    maximumTextLength: MAX_THOUGHT_TEXT_LENGTH,
+  });
+  if (!validation.valid) {
+    announce(validation.message);
     return false;
   }
+  const contentPatch = createThoughtContentPatch(draft);
+  const text = contentPatch.text;
 
   if (magnetEditor || connectionEditor) {
     announce('Finish the current card relationship first.');
@@ -4834,9 +4920,7 @@ async function addThought(rawText, { relationTargetId = null } = {}) {
     return false;
   }
 
-  const meta = {
-    knowledge: createKnowledgeMeta(composerKnowledgeKind),
-  };
+  const meta = mergeMetaPatch({}, contentPatch.meta_patch);
 
   const targetSpaceId = activeSpaceId;
   const addingToBoard = isCanvasSpace(targetSpaceId);
@@ -5293,7 +5377,7 @@ function constrainThought(thought) {
   thought.y = Math.min(Math.max(0, thought.y), maxY);
 }
 
-function startThoughtTextEditing(thought) {
+function startThoughtTextEditing(thought, { kind } = {}) {
   if (magnetEditor || connectionEditor) {
     announce('Finish the current card relationship first.');
     return;
@@ -5305,18 +5389,22 @@ function startThoughtTextEditing(thought) {
   selectThought(thought);
   renderKnowledgeKindTrigger(
     thoughtFocusKind,
-    getThoughtKnowledgeKind(thought),
+    kind || getThoughtKnowledgeKind(thought),
   );
   thoughtEditor.open({
     thoughtId: thought.id,
-    text: thought.text,
+    draft: createThoughtDraft(thought, { kind }),
   });
 }
 
 function renderThought(thought) {
   const canvasThought = isCanvasSpace(activeSpaceId);
   const textElement = thought.element.querySelector('.thought-text');
-  textElement.textContent = thought.text;
+  const resourceHost = thought.element.querySelector('.thought-resource-host');
+  const presentation = getThoughtPresentation(thought);
+  textElement.textContent = presentation.primaryText;
+  resourceHost.hidden = !presentation.hostname;
+  resourceHost.textContent = presentation.hostname;
 
   thought.element.classList.toggle('is-pinned', thought.pinned);
   thought.element.classList.toggle('is-canvas-card', canvasThought);
@@ -5504,7 +5592,7 @@ async function focusThoughtInActiveSpace(thought) {
   }
 
   if (thought.pinned && getThoughtSpaceId(thought) !== activeSpaceId) {
-    switchSpace(getThoughtSpaceId(thought));
+    navigateToSpace(getThoughtSpaceId(thought));
   }
 
   const component = getMagnetComponent(thought);
@@ -5558,7 +5646,7 @@ function getLocalHistoryMatches() {
   const query = historySearch.value;
 
   return [...thoughts]
-    .filter((thought) => matchesThoughtSearch(thought.text, query))
+    .filter((thought) => matchesThoughtSearch(getThoughtSearchText(thought), query))
     .sort((first, second) => (
       validCreatedAt(second.createdAt) - validCreatedAt(first.createdAt)
     ));
@@ -5675,6 +5763,7 @@ function renderHistory() {
 
     const list = document.createElement('ul');
     groupThoughts.forEach((thought) => {
+      const presentation = getThoughtPresentation(thought);
       const item = document.createElement('li');
       const row = document.createElement('div');
       const kindButton = document.createElement('button');
@@ -5693,7 +5782,7 @@ function renderHistory() {
       contentButton.type = 'button';
       contentButton.className = 'history-item-content';
       text.className = 'history-item-text';
-      text.textContent = thought.text;
+      text.textContent = presentation.primaryText;
       details.className = 'history-item-details';
       time.dateTime = validCreatedAt(thought.createdAt).toISOString();
       time.textContent = formatHistoryDate(thought.createdAt);
@@ -5755,6 +5844,7 @@ function renderAnchors() {
   section.className = 'history-group';
 
   anchoredThoughts.forEach((thought) => {
+    const presentation = getThoughtPresentation(thought);
     const item = document.createElement('li');
     const row = document.createElement('div');
     const kindIcon = document.createElement('span');
@@ -5773,7 +5863,7 @@ function renderAnchors() {
     });
 
     text.className = 'history-item-text';
-    text.textContent = thought.text;
+    text.textContent = presentation.primaryText;
     contentButton.append(text);
 
     removeButton.type = 'button';
@@ -5979,7 +6069,7 @@ function createSpaceTile(space, canvasWidth, canvasHeight) {
   footer.className = 'space-tile-footer';
   renderSpacePreview(surface, space, canvasWidth, canvasHeight);
   openButton.append(surface);
-  openButton.addEventListener('click', () => switchSpace(space.id));
+  openButton.addEventListener('click', () => navigateToSpace(space.id));
 
   if (canRenameBoard && editingBoardId === space.id) {
     footer.append(createBoardTitleEditor(space));
@@ -6107,7 +6197,43 @@ function closeSpacesOverview({ restoreFocus = true } = {}) {
   if (restoreFocus) spacesButton.focus();
 }
 
-function switchSpace(spaceId) {
+function navigateToSpace(
+  spaceId,
+  {
+    historyMode = 'push',
+    remember = true,
+  } = {},
+) {
+  if (!isSpaceId(spaceId)) return false;
+
+  const currentUrlSpaceId = readSpaceIdFromSearch(window.location.search);
+  activateSpace(spaceId);
+
+  if (historyMode !== 'none' && currentUrlSpaceId !== spaceId) {
+    const url = buildSpaceUrl(window.location.href, spaceId);
+    const method = historyMode === 'replace' ? 'replaceState' : 'pushState';
+    window.history[method]({ spaceId }, '', url);
+  }
+
+  if (remember) saveLastSpaceId(spaceId);
+  return true;
+}
+
+function restoreSpaceNavigation() {
+  const requestedSpaceId = readSpaceIdFromSearch(window.location.search);
+  const spaceId = resolveSpaceId({
+    requestedSpaceId,
+    rememberedSpaceId: loadLastSpaceId(),
+    isValid: isSpaceId,
+    fallbackSpaceId: DEFAULT_SPACE_ID,
+  });
+
+  navigateToSpace(spaceId, {
+    historyMode: requestedSpaceId === spaceId ? 'none' : 'replace',
+  });
+}
+
+function activateSpace(spaceId) {
   if (!isSpaceId(spaceId)) return;
 
   clearComposerRelation();
@@ -6124,7 +6250,6 @@ function switchSpace(spaceId) {
   saveCanvasCamera();
 
   activeSpaceId = spaceId;
-  sessionStorage.setItem(ACTIVE_SPACE_STORAGE_KEY, activeSpaceId);
   canvasCamera = loadCanvasCamera(activeSpaceId);
   clearCanvasHudTimer();
   canvasHudVisible = isCanvasSpace(activeSpaceId) && !isCanvasAtDefaultScale();
@@ -6465,6 +6590,12 @@ async function restoreTokenSession() {
   }
 }
 
+async function initializeApplication() {
+  await restoreTokenSession();
+  restoreSpaceNavigation();
+  window.addEventListener('popstate', restoreSpaceNavigation);
+}
+
 function clearAuthenticatedState(message) {
   clearSpatialNavigationHistory();
   resetPaginatedThoughtState();
@@ -6532,13 +6663,22 @@ form.addEventListener('submit', async (event) => {
   const submittedText = input.value;
   if (!submittedText.trim()) return;
   const relationTargetId = composerRelationTargetId;
+  const link = composerLinkFields.getValue();
+  const draft = {
+    kind: composerKnowledgeKind,
+    text: submittedText,
+    linkUrl: link.url,
+    linkTitle: link.title,
+  };
 
   handlingThoughtSubmit = true;
-  input.value = '';
   try {
-    const added = await addThought(submittedText, { relationTargetId });
-    if (added) clearComposerRelation();
-    if (!added && !input.value) input.value = submittedText;
+    const added = await addThought(draft, { relationTargetId });
+    if (added) {
+      input.value = '';
+      composerLinkFields.reset();
+      clearComposerRelation();
+    }
   } finally {
     handlingThoughtSubmit = false;
     resizeComposer();
@@ -6650,7 +6790,7 @@ anchorsButton.addEventListener('click', openAnchors);
 spacesButton.addEventListener('click', openSpacesOverview);
 spacesSpatialAction.addEventListener('click', () => {
   const spatialSpace = getSpaces().find(({ id }) => isSpatialSpace(id));
-  if (spatialSpace) switchSpace(spatialSpace.id);
+  if (spatialSpace) navigateToSpace(spatialSpace.id);
 });
 boardArrangeButton.addEventListener('click', () => void arrangeBoard());
 boardArrangeUndo.addEventListener('click', () => void undoBoardArrange());
@@ -6994,7 +7134,7 @@ renderCanvasCamera();
 void loadBoardGeometry();
 if (isSpatialSpace(activeSpaceId)) void activateSpatialView();
 updateAccountControl();
-void restoreTokenSession();
+void initializeApplication();
 window.addEventListener('online', () => {
   renderBoardArrangeControl();
   if (!auth) return;

@@ -50,7 +50,7 @@ export const KnowledgeKindOptions = Object.freeze([
     value: KnowledgeKind.LINK,
     label: 'Link',
     icon: 'link',
-    placeholder: 'Enter a link…',
+    placeholder: 'Add a note about this link…',
   },
   {
     value: KnowledgeKind.RESEARCH_RESULT,
