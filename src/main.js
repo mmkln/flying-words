@@ -1451,10 +1451,10 @@ async function copySelectedThoughtId() {
   }
 }
 
-function openSpatialDeleteConfirmation() {
-  const thought = selectedThoughtId ? getThoughtById(selectedThoughtId) : null;
+function openThoughtDeleteConfirmation(thought) {
   if (!thought || connectionEditor || magnetEditor) return;
   if (blockEditsDuringAccountSync()) return;
+  if (deleteThoughtDialog.open) return;
 
   pendingThoughtDeletionId = thought.id;
   const presentation = getThoughtPresentation(thought);
@@ -3453,7 +3453,7 @@ function makeThought(
   textElement.title = 'Click again to edit · Drag the card to move it';
   magnetButton.addEventListener('click', () => handleMagnetButton(thought));
   connectionButton.addEventListener('click', () => handleConnectionButton(thought));
-  deleteButton.addEventListener('click', () => removeThought(thought));
+  deleteButton.addEventListener('click', () => openThoughtDeleteConfirmation(thought));
   element.addEventListener('pointerdown', (event) => beginDrag(event, thought));
   element.addEventListener('keydown', (event) => {
     if (event.target !== element) return;
@@ -6732,7 +6732,10 @@ spatialInspectorOpenMap.addEventListener('click', () => {
   if (thought) openConnectionMap(thought.id);
 });
 spatialInspectorCopyId.addEventListener('click', () => void copySelectedThoughtId());
-spatialInspectorDelete.addEventListener('click', openSpatialDeleteConfirmation);
+spatialInspectorDelete.addEventListener('click', () => {
+  const thought = selectedThoughtId ? getThoughtById(selectedThoughtId) : null;
+  openThoughtDeleteConfirmation(thought);
+});
 deleteThoughtCancel.addEventListener('click', () => {
   pendingThoughtDeletionId = null;
   deleteThoughtDialog.close();
