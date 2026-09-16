@@ -2419,6 +2419,29 @@ button { -webkit-tap-highlight-color: transparent; }
 .history-item-content { display: grid; min-width: 0; gap: 5px; padding: 0; border: 0; color: inherit; cursor: pointer; background: transparent; font: inherit; text-align: left; }
 .history-item-content:focus-visible { outline: 0; }
 .history-item-text { min-width: 0; overflow: hidden; font-size: 13px; line-height: 1.4; text-overflow: ellipsis; white-space: nowrap; }
+.history-preview {
+  position: absolute;
+  z-index: 5;
+  right: 14px;
+  left: 14px;
+  display: -webkit-box;
+  max-height: 240px;
+  padding: 12px 14px;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 8;
+  border: 1px solid var(--border-subtle);
+  border-radius: 12px;
+  color: var(--text-primary);
+  background: var(--surface-elevated);
+  box-shadow: var(--shadow-panel);
+  font-size: 13px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+  pointer-events: none;
+}
+.history-preview[hidden] { display: none; }
 .history-item-details { display: flex; align-items: center; gap: 8px; color: #8b849d; font-size: 11px; }
 .history-pinned { color: #7459c9; }
 .history-pinned::before { content: ""; display: inline-block; width: 4px; height: 4px; margin: 0 5px 2px 0; border-radius: 50%; background: currentColor; }
