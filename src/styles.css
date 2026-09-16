@@ -934,6 +934,7 @@ button { -webkit-tap-highlight-color: transparent; }
 }
 
 .connection-map-header h2 {
+  grid-column: 2;
   margin: 0;
   font-size: 17px;
   letter-spacing: -.02em;
@@ -967,19 +968,10 @@ button { -webkit-tap-highlight-color: transparent; }
   outline-offset: 1px;
 }
 
-#connection-map-done {
+#connection-map-close {
+  grid-column: 3;
   justify-self: end;
-  color: #fff;
-  background: var(--accent);
 }
-
-#connection-map-cancel {
-  justify-self: start;
-  width: fit-content;
-}
-
-#connection-map-done:hover:not(:disabled) { background: var(--accent-hover); }
-#connection-map-done:disabled { cursor: default; opacity: .4; }
 
 .connection-map-stage {
   position: relative;
@@ -1105,6 +1097,10 @@ button { -webkit-tap-highlight-color: transparent; }
 }
 
 .connection-map-card:hover { border-color: var(--border-hover); box-shadow: var(--shadow-card-hover); }
+.connection-map-card:focus:not(.is-connection-source):not(.is-connection-selected) {
+  border-color: color-mix(in srgb, var(--accent) 42%, transparent);
+  box-shadow: 0 0 0 2px var(--focus-ring), var(--shadow-card-hover);
+}
 .connection-map-card.is-dragging { z-index: 10; cursor: grabbing; box-shadow: var(--shadow-panel); transition: none; }
 .connection-map-card.is-connection-source {
   border-color: color-mix(in srgb, var(--accent) 62%, transparent);
@@ -1133,6 +1129,17 @@ button { -webkit-tap-highlight-color: transparent; }
   background: color-mix(in srgb, var(--kind-color) 11%, transparent);
 }
 .connection-map-card-kind svg { width: 23px; height: 23px; }
+.connection-map-card-kind {
+  padding: 0;
+  border: 0;
+  cursor: pointer;
+  font: inherit;
+}
+.connection-map-card-kind:hover { background: color-mix(in srgb, var(--kind-color) 18%, transparent); }
+.connection-map-card-kind:focus-visible {
+  outline: 3px solid var(--focus-ring);
+  outline-offset: 2px;
+}
 .connection-map-card-text {
   display: -webkit-box;
   min-width: 0;
@@ -1144,6 +1151,7 @@ button { -webkit-tap-highlight-color: transparent; }
   -webkit-box-orient: vertical;
   -webkit-line-clamp: 3;
   white-space: pre-wrap;
+  cursor: text;
 }
 .connection-map-card[data-knowledge-kind="observation"],
 .connection-map-result[data-knowledge-kind="observation"],

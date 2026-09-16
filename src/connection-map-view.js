@@ -29,11 +29,17 @@ function rectanglesOverlap(first, second, gap = 0) {
   );
 }
 
-function createThoughtCard(node, onConnectionAction, onExpandBranch) {
+function createThoughtCard(
+  node,
+  onConnectionAction,
+  onExpandBranch,
+  onEditKind,
+  onEditText,
+) {
   const { thought, root } = node;
   const presentation = getThoughtPresentation(thought);
   const element = document.createElement('article');
-  const icon = document.createElement('span');
+  const icon = document.createElement('button');
   const text = document.createElement('span');
   const connectButton = document.createElement('button');
 
@@ -46,12 +52,38 @@ function createThoughtCard(node, onConnectionAction, onExpandBranch) {
   element.dataset.knowledgeKind = getThoughtKnowledgeKind(thought);
   element.tabIndex = 0;
 
+  icon.type = 'button';
   icon.className = 'connection-map-card-kind';
-  icon.append(createKnowledgeKindIcon(getThoughtKnowledgeKind(thought)));
-  icon.setAttribute('aria-hidden', 'true');
+  icon.setAttribute('aria-haspopup', 'listbox');
+  icon.setAttribute('aria-expanded', 'false');
+  renderKnowledgeKindTrigger(icon, getThoughtKnowledgeKind(thought));
+  icon.addEventListener('click', () => onEditKind(thought.id, icon));
 
   text.className = 'connection-map-card-text';
   text.textContent = presentation.primaryText;
+  text.title = 'Click again to edit';
+  let textWasPressed = false;
+  let editArmed = false;
+  element.addEventListener('pointerdown', (event) => {
+    textWasPressed = text.contains(event.target);
+  });
+  element.addEventListener('click', (event) => {
+    if (event.target.closest('button')) return;
+    const clickedText = textWasPressed || text.contains(event.target);
+    textWasPressed = false;
+    if (editArmed && clickedText) {
+      onEditText(thought.id);
+      return;
+    }
+    editArmed = true;
+    element.focus({ preventScroll: true });
+  });
+  element.addEventListener('blur', () => { editArmed = false; });
+  element.addEventListener('keydown', (event) => {
+    if (event.target !== element || (event.key !== 'Enter' && event.key !== 'F2')) return;
+    event.preventDefault();
+    onEditText(thought.id);
+  });
 
   connectButton.type = 'button';
   connectButton.className = 'connection-map-card-connect';
@@ -157,11 +189,11 @@ export function createConnectionMapView({
   onExpandBranch,
   onFinishConnectionEditing,
   onQueryChange,
-  onCommit,
-  onCancel,
+  onEditKind,
+  onEditText,
+  onClose,
 }) {
-  const cancelButton = dialog.querySelector('#connection-map-cancel');
-  const doneButton = dialog.querySelector('#connection-map-done');
+  const closeButton = dialog.querySelector('#connection-map-close');
   const searchInput = dialog.querySelector('#connection-map-search');
   const searchResults = dialog.querySelector('#connection-map-results');
   const viewport = dialog.querySelector('#connection-map-viewport');
@@ -428,8 +460,7 @@ export function createConnectionMapView({
     });
   }
 
-  cancelButton.addEventListener('click', onCancel);
-  doneButton.addEventListener('click', onCommit);
+  closeButton.addEventListener('click', onClose);
   selectionFinish.addEventListener('click', onFinishConnectionEditing);
   searchInput.addEventListener('input', () => onQueryChange(searchInput.value));
   searchInput.addEventListener('keydown', (event) => {
@@ -440,7 +471,7 @@ export function createConnectionMapView({
   });
   dialog.addEventListener('cancel', (event) => {
     event.preventDefault();
-    onCancel();
+    onClose();
   });
   fitButton.addEventListener('click', fitAll);
   zoomOutButton.addEventListener('click', () => zoomAtCenter(camera.scale - ZOOM_STEP));
@@ -512,7 +543,6 @@ export function createConnectionMapView({
     results,
     createProposal,
     editor,
-    dirty,
     query,
   }) {
     if (searchInput.value !== query) searchInput.value = query;
@@ -534,6 +564,8 @@ export function createConnectionMapView({
         node,
         onConnectionAction,
         onExpandBranch,
+        onEditKind,
+        onEditText,
       );
       const position = positions.get(node.thought.id);
       element.style.transform = `translate3d(${position.x}px, ${position.y}px, 0)`;
@@ -565,8 +597,13 @@ export function createConnectionMapView({
     }
     searchResults.replaceChildren(resultFragment);
     searchResults.hidden = results.length === 0 && !createProposal;
-    doneButton.disabled = Boolean(editor) || !dirty;
   }
 
-  return { open, close, render, fitAll, revealThought };
+  function focusThought(thoughtId, { kind = false } = {}) {
+    const card = nodeElements.get(thoughtId);
+    const target = kind ? card?.querySelector('.connection-map-card-kind') : card;
+    target?.focus({ preventScroll: true });
+  }
+
+  return { open, close, render, fitAll, revealThought, focusThought };
 }

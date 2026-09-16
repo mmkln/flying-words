@@ -54,10 +54,10 @@ export function createThoughtEditor({
     kind = nextKind;
   }
 
-  function open({ thoughtId, draft }) {
+  function open({ thoughtId, draft, origin = 'space' }) {
     if (session) discard({ restoreFocus: false });
 
-    session = { thoughtId, originalDraft: structuredClone(draft) };
+    session = { thoughtId, origin, originalDraft: structuredClone(draft) };
     textarea.value = draft.text;
     linkFields?.setValue({ url: draft.linkUrl, title: draft.linkTitle });
     setKind(draft.kind);
@@ -91,6 +91,7 @@ export function createThoughtEditor({
   return {
     discard,
     getKind: () => kind,
+    getThoughtId: () => session?.thoughtId || null,
     isOpen: () => session !== null,
     open,
     save,
