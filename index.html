@@ -200,9 +200,9 @@
             <path d="m8.2 6.8 7.6-.6M17.4 8.2l-1 7.6M13.9 18l-6.7-.7M6.4 9.1l-.9 5.7"></path>
           </svg>
         </button>
-        <div class="board-arrange-toast" id="board-arrange-toast" role="status" hidden>
+        <div class="board-action-toast" id="board-action-toast" role="status" hidden>
           <span>Board arranged</span>
-          <button id="board-arrange-undo" type="button">Undo</button>
+          <button id="board-action-undo" type="button">Undo</button>
         </div>
         <div
           class="spatial-world"
@@ -372,6 +372,12 @@
                 role="menuitem"
               >Open connections in 2D</button>
               <button
+                id="spatial-inspector-remove-board"
+                class="board-only"
+                type="button"
+                role="menuitem"
+              >Remove from this Board</button>
+              <button
                 id="spatial-inspector-copy-id"
                 type="button"
                 role="menuitem"
@@ -381,7 +387,7 @@
                 class="is-destructive"
                 type="button"
                 role="menuitem"
-              >Delete thought…</button>
+              >Delete thought everywhere…</button>
             </div>
           </aside>
           <aside
@@ -421,7 +427,7 @@
         aria-labelledby="delete-thought-title"
       >
         <section>
-          <h2 id="delete-thought-title">Delete thought?</h2>
+          <h2 id="delete-thought-title">Delete thought everywhere?</h2>
           <p id="delete-thought-message"></p>
           <footer>
             <button id="delete-thought-cancel" type="button">Cancel</button>

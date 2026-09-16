@@ -47,6 +47,7 @@ import {
   getCanvasPlacement,
   hasCanvasPlacement,
   normalizeCanvasMeta,
+  withoutCanvasPlacement,
   withCanvasPlacement,
 } from './canvas-placements.js';
 import {
@@ -178,9 +179,9 @@ const canvasWorld = document.querySelector('#canvas-world');
 const boardMinimap = document.querySelector('#board-minimap');
 const boardMinimapCanvas = document.querySelector('#board-minimap-canvas');
 const boardArrangeButton = document.querySelector('#board-arrange-button');
-const boardArrangeToast = document.querySelector('#board-arrange-toast');
-const boardArrangeToastMessage = boardArrangeToast.querySelector('span');
-const boardArrangeUndo = document.querySelector('#board-arrange-undo');
+const boardActionToast = document.querySelector('#board-action-toast');
+const boardActionToastMessage = boardActionToast.querySelector('span');
+const boardActionUndo = document.querySelector('#board-action-undo');
 const spatialWorld = document.querySelector('#spatial-world');
 const spatialFitButton = document.querySelector('#spatial-fit');
 const spatialFocusButton = document.querySelector('#spatial-focus');
@@ -212,6 +213,7 @@ const spatialInspectorMore = document.querySelector('#spatial-inspector-more');
 const spatialInspectorMenu = document.querySelector('#spatial-inspector-menu');
 const spatialInspectorAnchor = document.querySelector('#spatial-inspector-anchor');
 const spatialInspectorOpenMap = document.querySelector('#spatial-inspector-open-map');
+const spatialInspectorRemoveBoard = document.querySelector('#spatial-inspector-remove-board');
 const spatialInspectorCopyId = document.querySelector('#spatial-inspector-copy-id');
 const spatialInspectorDelete = document.querySelector('#spatial-inspector-delete');
 const deleteThoughtDialog = document.querySelector('#delete-thought-dialog');
@@ -327,8 +329,9 @@ let canvasMinimapFrame = null;
 let boardArrangeAnimationFrame = null;
 let boardArrangeAnimationFinish = null;
 let boardArrangeInFlight = false;
-let boardArrangeUndoSnapshot = null;
-let boardArrangeToastTimer = null;
+let boardActionUndoHandler = null;
+let boardActionUndoKind = null;
+let boardActionToastTimer = null;
 let canvasHudTimer = null;
 let canvasHudVisible = false;
 let canvasHudExpanded = false;
@@ -494,30 +497,35 @@ function renderBoardArrangeControl() {
   boardArrangeButton.setAttribute('aria-label', boardArrangeButton.title);
 }
 
-function hideBoardArrangeUndo() {
-  window.clearTimeout(boardArrangeToastTimer);
-  boardArrangeToastTimer = null;
-  boardArrangeUndoSnapshot = null;
-  boardArrangeToast.hidden = true;
+function hideBoardActionMessage() {
+  window.clearTimeout(boardActionToastTimer);
+  boardActionToastTimer = null;
+  boardActionUndoHandler = null;
+  boardActionUndoKind = null;
+  boardActionToast.hidden = true;
 }
 
 function showBoardArrangeUndo(snapshot) {
-  showBoardArrangeMessage('Board arranged', {
-    snapshot,
+  showBoardActionMessage('Board arranged', {
+    onUndo: () => undoBoardArrange(snapshot),
+    undoKind: 'arrange',
     duration: 15_000,
   });
 }
 
-function showBoardArrangeMessage(message, {
-  snapshot = null,
+function showBoardActionMessage(message, {
+  onUndo = null,
+  undoKind = null,
   duration = 5_000,
 } = {}) {
-  window.clearTimeout(boardArrangeToastTimer);
-  boardArrangeUndoSnapshot = snapshot;
-  boardArrangeToastMessage.textContent = message;
-  boardArrangeUndo.hidden = !snapshot;
-  boardArrangeToast.hidden = false;
-  boardArrangeToastTimer = window.setTimeout(hideBoardArrangeUndo, duration);
+  window.clearTimeout(boardActionToastTimer);
+  boardActionUndoHandler = onUndo;
+  boardActionUndoKind = undoKind;
+  boardActionToastMessage.textContent = message;
+  boardActionUndo.hidden = !onUndo;
+  boardActionUndo.disabled = false;
+  boardActionToast.hidden = false;
+  boardActionToastTimer = window.setTimeout(hideBoardActionMessage, duration);
 }
 
 function renderThemeButton() {
@@ -1472,7 +1480,7 @@ function openThoughtDeleteConfirmation(thought) {
   const presentation = getThoughtPresentation(thought);
   deleteThoughtMessage.textContent = (
     `Delete “${presentation.primaryText.slice(0, 120)}”? `
-    + 'Its connections will also be removed.'
+    + 'This removes it everywhere, including its connections.'
   );
   closeSpatialInspectorMenu();
   deleteThoughtDialog.showModal();
@@ -3437,7 +3445,14 @@ function makeThought(
   textElement.title = 'Click again to edit · Drag the card to move it';
   magnetButton.addEventListener('click', () => handleMagnetButton(thought));
   connectionButton.addEventListener('click', () => handleConnectionButton(thought));
-  deleteButton.addEventListener('click', () => openThoughtDeleteConfirmation(thought));
+  deleteButton.addEventListener('click', (event) => {
+    if (isCanvasSpace(activeSpaceId)) {
+      const removed = removeThoughtFromBoard(thought);
+      if (removed && event.detail === 0) boardActionUndo.focus({ preventScroll: true });
+    } else {
+      openThoughtDeleteConfirmation(thought);
+    }
+  });
   element.addEventListener('pointerdown', (event) => beginDrag(event, thought));
   element.addEventListener('keydown', (event) => {
     if (event.target !== element) return;
@@ -4371,18 +4386,18 @@ async function arrangeBoard() {
   if (magnetEditor || connectionEditor || thoughtEditor.isOpen()) {
     const message = 'Finish editing the current card first.';
     announce(message);
-    showBoardArrangeMessage(message);
+    showBoardActionMessage(message);
     return;
   }
   if (auth && blockEditsDuringAccountSync()) {
-    showBoardArrangeMessage('Wait until your saved thoughts finish loading.');
+    showBoardActionMessage('Wait until your saved thoughts finish loading.');
     return;
   }
 
   boardArrangeInFlight = true;
   canvas.classList.add('is-arranging');
   renderBoardArrangeControl();
-  hideBoardArrangeUndo();
+  hideBoardActionMessage();
 
   try {
     if (auth) await prepareCloudBoardLayout();
@@ -4391,14 +4406,14 @@ async function arrangeBoard() {
     if (before.length < 2) {
       const message = 'Add at least two cards to arrange the Board.';
       announce(message);
-      showBoardArrangeMessage(message);
+      showBoardActionMessage(message);
       return;
     }
     const positions = calculateBoardGraphLayout(getBoardGraphLayoutInput());
     if (boardPositionsMatch(before, positions)) {
       const message = 'The Board is already arranged.';
       announce(message);
-      showBoardArrangeMessage(message);
+      showBoardActionMessage(message);
       return;
     }
 
@@ -4420,11 +4435,11 @@ async function arrangeBoard() {
       await loadServerThoughts();
       const message = 'The Board changed elsewhere. The latest version was reloaded.';
       announce(message);
-      showBoardArrangeMessage(message);
+      showBoardActionMessage(message);
     } else {
       const message = `Could not arrange the Board: ${error.message}`;
       announce(message);
-      showBoardArrangeMessage(message, { duration: 8_000 });
+      showBoardActionMessage(message, { duration: 8_000 });
     }
   } finally {
     boardArrangeInFlight = false;
@@ -4433,21 +4448,23 @@ async function arrangeBoard() {
   }
 }
 
-async function undoBoardArrange() {
-  const snapshot = boardArrangeUndoSnapshot;
+async function undoBoardArrange(snapshot) {
   if (
     !snapshot
     || boardArrangeInFlight
     || snapshot.spaceId !== activeSpaceId
     || !isCanvasSpace(activeSpaceId)
-  ) return;
+  ) {
+    hideBoardActionMessage();
+    return;
+  }
 
   const currentIds = new Set(getBoardThoughts().map(({ id }) => id));
   if (
     snapshot.positions.length !== currentIds.size
     || snapshot.positions.some(({ id }) => !currentIds.has(id))
   ) {
-    hideBoardArrangeUndo();
+    hideBoardActionMessage();
     announce('The Board changed, so that arrangement can no longer be undone.');
     return;
   }
@@ -4466,19 +4483,19 @@ async function undoBoardArrange() {
     const stagedPositions = stageBoardPositions(snapshot.positions, records);
     await animateBoardPositions(stagedPositions);
     saveThoughts();
-    hideBoardArrangeUndo();
+    hideBoardActionMessage();
     announce('Board arrangement undone.');
   } catch (error) {
     if (error instanceof ApiError && error.status === 409) {
       await loadServerThoughts();
-      hideBoardArrangeUndo();
+      hideBoardActionMessage();
       const message = 'The Board changed elsewhere. The latest version was reloaded.';
       announce(message);
-      showBoardArrangeMessage(message);
+      showBoardActionMessage(message);
     } else {
       const message = `Could not undo the arrangement: ${error.message}`;
       announce(message);
-      showBoardArrangeMessage(message, { duration: 8_000 });
+      showBoardActionMessage(message, { duration: 8_000 });
     }
   } finally {
     boardArrangeInFlight = false;
@@ -5091,6 +5108,67 @@ function removeThought(thought) {
   removeThoughtElement(thought);
 }
 
+function removeThoughtFromBoard(thought) {
+  if (
+    !isCanvasSpace(activeSpaceId)
+    || boardArrangeInFlight
+    || connectionEditor
+    || magnetEditor
+    || blockEditsDuringAccountSync()
+  ) return false;
+
+  const position = thought ? getCanvasPlacement(thought, activeSpaceId) : null;
+  if (!thought || !position) return false;
+
+  const snapshot = {
+    thoughtId: thought.id,
+    boardId: activeSpaceId,
+    position: { ...position },
+  };
+  thought.meta = withoutCanvasPlacement(thought.meta, snapshot.boardId);
+  if (selectedThoughtId === thought.id) clearThoughtSelection();
+  syncThoughtElementVisibility(thought);
+  rebuildConnectionLayer();
+  updateUi();
+  saveThoughts();
+  if (isCloudMode()) enqueueThoughtMetaPatch(thought, ['canvas']);
+
+  const boardName = getSpaces().find(({ id }) => id === snapshot.boardId)?.label || 'Board';
+  showBoardActionMessage(`Removed from “${boardName}”`, {
+    onUndo: () => undoRemoveFromBoard(snapshot),
+    undoKind: 'remove',
+    duration: 15_000,
+  });
+  announce(`Thought removed from ${boardName}.`);
+  return true;
+}
+
+function undoRemoveFromBoard({ thoughtId, boardId, position }) {
+  if (boardArrangeInFlight || blockEditsDuringAccountSync()) {
+    hideBoardActionMessage();
+    return;
+  }
+
+  const thought = getThoughtById(thoughtId);
+  if (!thought || hasCanvasPlacement(thought, boardId)) {
+    hideBoardActionMessage();
+    return;
+  }
+
+  thought.meta = withCanvasPlacement(thought.meta, boardId, position);
+  if (activeSpaceId === boardId) {
+    applyCanvasPlacement(thought);
+    syncThoughtElementVisibility(thought);
+    renderThought(thought);
+  }
+  rebuildConnectionLayer();
+  updateUi();
+  saveThoughts();
+  if (isCloudMode()) enqueueThoughtMetaPatch(thought, ['canvas']);
+  hideBoardActionMessage();
+  announce('Thought restored to Board.');
+}
+
 function removeThoughtElement(thought) {
   if (draggedThought === thought) stopDrag();
   thought.element.classList.add('is-removing');
@@ -5237,7 +5315,7 @@ function stopDrag(event, { cancelled = !event } = {}) {
   thought.element.classList.remove('is-dragging');
 
   if (isCanvasSpace(activeSpaceId)) {
-    hideBoardArrangeUndo();
+    if (boardActionUndoKind === 'arrange') hideBoardActionMessage();
     updateCanvasPlacement(thought);
     draggedThought = null;
     saveThoughts();
@@ -5394,6 +5472,18 @@ function renderThought(thought) {
   thought.element.classList.toggle('is-pinned', thought.pinned);
   thought.element.classList.toggle('is-canvas-card', canvasThought);
   thought.element.classList.toggle('is-selected', selectedThoughtId === thought.id);
+  const cardActionButton = thought.element.querySelector('.delete-button');
+  const cardAction = canvasThought ? 'remove-board' : 'delete';
+  if (cardActionButton.dataset.action !== cardAction) {
+    const label = canvasThought ? 'Remove from this Board' : 'Delete thought';
+    cardActionButton.dataset.action = cardAction;
+    cardActionButton.title = label;
+    cardActionButton.setAttribute('aria-label', label);
+    cardActionButton.querySelector('path').setAttribute(
+      'd',
+      canvasThought ? 'M5 12h14' : 'M6 18 18 6M6 6l12 12',
+    );
+  }
   const kind = getThoughtKnowledgeKind(thought);
   if (thought.element.dataset.knowledgeKind !== kind) {
     const kindButton = thought.element.querySelector('.thought-kind-button');
@@ -6716,6 +6806,13 @@ spatialInspectorOpenMap.addEventListener('click', () => {
   const thought = selectedThoughtId ? getThoughtById(selectedThoughtId) : null;
   if (thought) openConnectionMap(thought.id);
 });
+spatialInspectorRemoveBoard.addEventListener('click', (event) => {
+  const thought = selectedThoughtId ? getThoughtById(selectedThoughtId) : null;
+  const removed = removeThoughtFromBoard(thought);
+  if (removed && event.detail === 0) {
+    boardActionUndo.focus({ preventScroll: true });
+  }
+});
 spatialInspectorCopyId.addEventListener('click', () => void copySelectedThoughtId());
 spatialInspectorDelete.addEventListener('click', () => {
   const thought = selectedThoughtId ? getThoughtById(selectedThoughtId) : null;
@@ -6781,7 +6878,13 @@ spacesSpatialAction.addEventListener('click', () => {
   if (spatialSpace) navigateToSpace(spatialSpace.id);
 });
 boardArrangeButton.addEventListener('click', () => void arrangeBoard());
-boardArrangeUndo.addEventListener('click', () => void undoBoardArrange());
+boardActionUndo.addEventListener('click', () => {
+  const undo = boardActionUndoHandler;
+  if (!undo) return;
+  boardActionUndoHandler = null;
+  boardActionUndo.disabled = true;
+  void undo();
+});
 spacesClose.addEventListener('click', closeSpacesOverview);
 spacesOverview.addEventListener('click', (event) => {
   if (event.target === spacesOverview) closeSpacesOverview();
