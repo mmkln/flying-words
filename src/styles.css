@@ -905,9 +905,9 @@ button { -webkit-tap-highlight-color: transparent; }
 #delete-thought-confirm { color: #fff; background: #c84149; }
 
 .connection-map-dialog {
-  width: calc(100vw - clamp(32px, 4vw, 72px));
+  width: 100vw;
   max-width: none;
-  height: calc(100dvh - clamp(32px, 5dvh, 64px));
+  height: 100dvh;
   max-height: none;
   padding: 0;
   overflow: hidden;
