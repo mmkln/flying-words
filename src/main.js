@@ -400,6 +400,7 @@ const connectionMapView = createConnectionMapView({
   onCreateKind: openConnectionMapCreateKindPicker,
   onConnectionAction: handleConnectionMapAction,
   onExpandBranch: expandConnectionMapBranch,
+  onHideThought: hideConnectionMapThought,
   onFinishConnectionEditing: finishConnectionMapEditing,
   onQueryChange: changeConnectionMapQuery,
   onEditKind: openConnectionMapThoughtKindPicker,
@@ -1832,6 +1833,16 @@ function expandConnectionMapBranch(sourceId) {
   });
   renderConnectionMap();
   announce(`${hiddenIds.length} connected ${hiddenIds.length === 1 ? 'thought' : 'thoughts'} revealed.`);
+}
+
+function hideConnectionMapThought(thoughtId) {
+  const session = connectionMapSession;
+  if (!session || session.editor || thoughtId === session.rootId) return;
+  if (!session.visibleIds.delete(thoughtId)) return;
+
+  session.spawnAnchorById.delete(thoughtId);
+  renderConnectionMap();
+  announce('Thought hidden from this view.');
 }
 
 function selectConnectionMapSearchThought(thoughtId) {

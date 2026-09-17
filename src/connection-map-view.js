@@ -33,6 +33,7 @@ function createThoughtCard(
   node,
   onConnectionAction,
   onExpandBranch,
+  onHideThought,
   onEditKind,
   onEditText,
 ) {
@@ -105,6 +106,24 @@ function createThoughtCard(
   connectButton.addEventListener('click', () => onConnectionAction(thought.id));
 
   element.append(icon, text, connectButton);
+
+  if (!root && !node.editing) {
+    const hideButton = document.createElement('button');
+    hideButton.type = 'button';
+    hideButton.className = 'connection-map-card-hide';
+    hideButton.title = 'Hide from this view';
+    hideButton.setAttribute(
+      'aria-label',
+      `Hide from this view: ${presentation.primaryText}`,
+    );
+    hideButton.innerHTML = `
+      <svg viewBox="0 0 24 24" aria-hidden="true">
+        <path d="M5 12h14"></path>
+      </svg>
+    `;
+    hideButton.addEventListener('click', () => onHideThought(thought.id));
+    element.append(hideButton);
+  }
 
   if (node.hiddenConnectionCount > 0) {
     const expandButton = document.createElement('button');
@@ -187,6 +206,7 @@ export function createConnectionMapView({
   onCreateKind,
   onConnectionAction,
   onExpandBranch,
+  onHideThought,
   onFinishConnectionEditing,
   onQueryChange,
   onEditKind,
@@ -564,6 +584,7 @@ export function createConnectionMapView({
         node,
         onConnectionAction,
         onExpandBranch,
+        onHideThought,
         onEditKind,
         onEditText,
       );

@@ -1227,6 +1227,53 @@ button { -webkit-tap-highlight-color: transparent; }
   pointer-events: auto;
 }
 
+.connection-map-card-hide {
+  position: absolute;
+  z-index: 4;
+  top: -9px;
+  right: -9px;
+  display: grid;
+  width: 30px;
+  height: 30px;
+  padding: 6px;
+  place-items: center;
+  border: 1px solid var(--border-subtle);
+  border-radius: 50%;
+  color: var(--text-secondary);
+  cursor: pointer;
+  background: var(--surface-elevated);
+  box-shadow: var(--shadow-control);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity .16s ease, color .16s ease, background .16s ease;
+}
+
+.connection-map-card-hide svg {
+  width: 16px;
+  height: 16px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2;
+  stroke-linecap: round;
+}
+
+.connection-map-card:hover .connection-map-card-hide,
+.connection-map-card:focus-within .connection-map-card-hide,
+.connection-map-card-hide:focus-visible {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.connection-map-card-hide:hover {
+  color: var(--accent);
+  background: var(--surface-hover);
+}
+
+.connection-map-card-hide:focus-visible {
+  outline: 3px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+
 .connection-map-card-expand {
   position: absolute;
   z-index: 4;
@@ -3899,7 +3946,8 @@ kbd {
 }
 
 @media (hover: none) {
-  .connection-map-card-connect {
+  .connection-map-card-connect,
+  .connection-map-card-hide {
     opacity: 1;
     pointer-events: auto;
   }
