@@ -3014,6 +3014,45 @@ kbd { padding: 1px 4px; border: 1px solid rgba(114,104,143,.25); border-bottom-w
 /* Canvas has no magnet action, so the connection control owns the left anchor. */
 .thought-card.is-canvas-card .connection-btn { left: -9px; }
 
+.board-expand-button {
+  position: absolute;
+  z-index: 4;
+  right: -9px;
+  bottom: -9px;
+  display: grid;
+  min-width: 30px;
+  height: 30px;
+  padding: 0 8px;
+  place-items: center;
+  border: 1px solid var(--border-subtle);
+  border-radius: 15px;
+  color: var(--text-secondary);
+  cursor: pointer;
+  background: var(--surface-elevated);
+  box-shadow: var(--shadow-control);
+  font: inherit;
+  font-size: 11px;
+  font-weight: 700;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity .16s ease, color .16s ease, border-color .16s ease;
+}
+
+.board-expand-button[hidden] { display: none; }
+.thought-card:hover .board-expand-button,
+.thought-card:focus-within .board-expand-button {
+  opacity: 1;
+  pointer-events: auto;
+}
+.board-expand-button:hover { color: var(--accent); border-color: var(--border-hover); }
+.board-expand-button:focus-visible {
+  opacity: 1;
+  pointer-events: auto;
+  outline: 3px solid var(--focus-ring);
+  outline-offset: 1px;
+}
+.thought-space.is-connection-editing .board-expand-button { display: none; }
+
 .connection-btn svg {
   display: block;
   width: 17px;
@@ -3953,7 +3992,8 @@ kbd {
 
 @media (hover: none) {
   .connection-map-card-connect,
-  .connection-map-card-hide {
+  .connection-map-card-hide,
+  .board-expand-button:not([hidden]) {
     opacity: 1;
     pointer-events: auto;
   }

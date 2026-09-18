@@ -58,6 +58,10 @@ import {
 } from './board-geometry.js';
 import { planBoardInsertion } from './board-insertion.js';
 import {
+  getMissingBoardConnectionIds,
+  planBoardConnectionExpansion,
+} from './board-connection-expansion.js';
+import {
   clientPointToBoardWorld,
   getManualBoardDragPosition,
   getBoardSpawnGap,
@@ -474,6 +478,32 @@ function scheduleCanvasMinimapRender() {
 
 function getBoardThoughts() {
   return thoughts.filter((thought) => hasCanvasPlacement(thought, activeSpaceId));
+}
+
+function renderBoardExpansionControls() {
+  const boardActive = isCanvasSpace(activeSpaceId);
+  const graphReady = !auth || (isCloudMode() && !serverThoughtsNextCursor);
+  const boardThoughts = boardActive ? getBoardThoughts() : [];
+  const boardIds = new Set(boardThoughts.map(({ id }) => id));
+  const connectionIndex = boardActive && graphReady
+    ? buildConnectionIndex(thoughts)
+    : null;
+
+  thoughts.forEach((thought) => {
+    const button = thought.element.querySelector('.board-expand-button');
+    if (!button) return;
+
+    const missingIds = connectionIndex && boardIds.has(thought.id)
+      ? getMissingBoardConnectionIds(thought.id, connectionIndex, boardIds)
+      : [];
+    button.hidden = missingIds.length === 0;
+    if (!missingIds.length) return;
+
+    button.textContent = `+${missingIds.length}`;
+    const label = `Add ${missingIds.length} connected ${missingIds.length === 1 ? 'thought' : 'thoughts'} to this Board`;
+    button.title = label;
+    button.setAttribute('aria-label', label);
+  });
 }
 
 function renderBoardArrangeControl() {
@@ -3438,6 +3468,7 @@ function persistConnectionChanges(changedThoughts) {
   if (!changedThoughts.length) return;
 
   rebuildConnectionLayer();
+  renderBoardExpansionControls();
   saveThoughts();
   if (isCloudMode()) {
     changedThoughts.forEach((thought) => {
@@ -3481,6 +3512,7 @@ function makeThought(
   const pinButton = fragment.querySelector('.pin-button');
   const magnetButton = fragment.querySelector('.magnet-button');
   const connectionButton = fragment.querySelector('.connection-button');
+  const boardExpandButton = fragment.querySelector('.board-expand-button');
   const deleteButton = fragment.querySelector('.delete-button');
   const rect = canvas.getBoundingClientRect();
   const thought = {
@@ -3541,6 +3573,10 @@ function makeThought(
   textElement.title = 'Click again to edit · Drag the card to move it';
   magnetButton.addEventListener('click', () => handleMagnetButton(thought));
   connectionButton.addEventListener('click', () => handleConnectionButton(thought));
+  boardExpandButton.addEventListener('click', (event) => {
+    event.stopPropagation();
+    addConnectedThoughtsToBoard(thought.id);
+  });
   deleteButton.addEventListener('click', (event) => {
     if (isCanvasSpace(activeSpaceId)) {
       const removed = removeThoughtFromBoard(thought);
@@ -4718,6 +4754,7 @@ async function loadRemainingServerThoughts({
       mergeServerThoughts(page.results);
       serverThoughtsNextCursor = page.nextCursor;
       nextCursor = page.nextCursor;
+      renderBoardExpansionControls();
 
       if (isSpatialSpace(activeSpaceId)) refreshSpatialGraph();
     } catch (error) {
@@ -4745,6 +4782,7 @@ async function loadServerThoughts({ silent = false } = {}) {
 
     applyServerThoughts(page.results);
     serverThoughtsNextCursor = page.nextCursor;
+    renderBoardExpansionControls();
     if (page.nextCursor) {
       void loadRemainingServerThoughts({
         cursor: page.nextCursor,
@@ -4825,7 +4863,10 @@ async function restoreAuthenticatedThoughts({ silent = false } = {}) {
     ready = await loadServerThoughts({ silent });
   }
 
-  if (ready && auth) serverStateReady = true;
+  if (ready && auth) {
+    serverStateReady = true;
+    renderBoardExpansionControls();
+  }
   if (isCloudMode()) void flushOutbox();
   return ready;
 }
@@ -5679,6 +5720,59 @@ function addOrFocusThoughtOnCanvas(thought) {
   updateUi();
   thought.element.focus({ preventScroll: true });
   announce('Thought added to Board.');
+}
+
+function addConnectedThoughtsToBoard(sourceId) {
+  if (!isCanvasSpace(activeSpaceId) || boardArrangeInFlight || connectionEditor || magnetEditor) return;
+  if (blockEditsDuringAccountSync()) return;
+  if (auth && serverThoughtsNextCursor) {
+    announce('Wait until connected thoughts finish loading.');
+    return;
+  }
+
+  const source = getThoughtById(sourceId);
+  const sourcePlacement = source && getCanvasPlacement(source, activeSpaceId);
+  if (!sourcePlacement) return;
+
+  const boardThoughts = getBoardThoughts();
+  const boardIds = new Set(boardThoughts.map(({ id }) => id));
+  const connectionIndex = buildConnectionIndex(thoughts);
+  const missingIds = getMissingBoardConnectionIds(sourceId, connectionIndex, boardIds);
+  if (!missingIds.length) {
+    renderBoardExpansionControls();
+    return;
+  }
+
+  const obstacles = boardThoughts.map((thought) => ({
+    id: thought.id,
+    ...getCanvasPlacement(thought, activeSpaceId),
+    width: boardGeometry.cardWidth,
+    height: boardGeometry.cardHeight,
+  }));
+  const placements = planBoardConnectionExpansion({
+    source: sourcePlacement,
+    missingIds,
+    obstacles,
+    geometry: boardGeometry,
+  });
+
+  const addedThoughts = placements.map(({ id, x, y }) => {
+    const thought = getThoughtById(id);
+    if (!thought) return null;
+    thought.meta = withCanvasPlacement(thought.meta, activeSpaceId, { x, y });
+    applyCanvasPlacement(thought);
+    syncThoughtElementVisibility(thought);
+    renderThought(thought);
+    return thought;
+  }).filter(Boolean);
+
+  saveThoughts();
+  if (isCloudMode()) {
+    addedThoughts.forEach((thought) => enqueueThoughtMetaPatch(thought, ['canvas']));
+  }
+  rebuildConnectionLayer();
+  updateUi();
+  announce(`${addedThoughts.length} connected ${addedThoughts.length === 1 ? 'thought' : 'thoughts'} added to Board.`);
 }
 
 async function navigateToSpatialThought(
@@ -6564,6 +6658,7 @@ function updateUi() {
   renderThoughtInspector();
   updateManualRefreshControls();
   renderBoardArrangeControl();
+  renderBoardExpansionControls();
 }
 
 function announce(message) {
