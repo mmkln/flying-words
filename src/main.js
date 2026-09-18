@@ -350,6 +350,7 @@ let syncCompatibilityAnnounced = false;
 let magnetEditor = null;
 let connectionEditor = null;
 let connectionMapSession = null;
+let connectionMapBoardSaveInFlight = false;
 let connectionSearchActiveIndex = 0;
 let composerRelationTargetId = null;
 let composerKnowledgeKind = KnowledgeKind.THOUGHT;
@@ -405,6 +406,7 @@ const connectionMapView = createConnectionMapView({
   onQueryChange: changeConnectionMapQuery,
   onEditKind: openConnectionMapThoughtKindPicker,
   onEditText: editConnectionMapThought,
+  onSaveBoard: saveConnectionMapAsBoard,
   onClose: closeConnectionMap,
 });
 
@@ -1769,6 +1771,8 @@ function renderConnectionMap() {
       selectedCount: selectedTargetIds.size,
     } : null,
     query: session.query,
+    saveBoardVisible: Boolean(auth),
+    savingBoard: connectionMapBoardSaveInFlight,
   });
 }
 
@@ -1803,7 +1807,7 @@ function openConnectionMap(rootId) {
 }
 
 function closeConnectionMap() {
-  if (!connectionMapSession) return;
+  if (!connectionMapSession || connectionMapBoardSaveInFlight) return;
 
   finishConnectionMapEditing({ render: false });
   knowledgeKindPicker.close();
@@ -1815,6 +1819,86 @@ function closeConnectionMap() {
     spatialView?.setSelectedThought(selectedThoughtId);
     renderThoughtInspector();
   }
+}
+
+async function saveConnectionMapAsBoard() {
+  const session = connectionMapSession;
+  if (!session || session.editor || connectionMapBoardSaveInFlight) return;
+  if (!auth) {
+    announce('Sign in to save this layout as a Board.');
+    return;
+  }
+  if (blockEditsDuringAccountSync()) return;
+  if (!isCloudMode()) {
+    announce('Wait until your thoughts finish loading, then try again.');
+    return;
+  }
+
+  const layout = connectionMapView.getLayoutSnapshot()
+    .filter(({ id }) => session.visibleIds.has(id) && getThoughtById(id));
+  const rootPosition = layout.find(({ id }) => id === session.rootId);
+  if (!rootPosition) return;
+  // Translation preserves the temporary layout while keeping its root visible
+  // when this Board is opened in a browser without a saved camera position.
+  const positions = layout.map(({ id, x, y }) => ({
+    id,
+    x: x - rootPosition.x + 160,
+    y: y - rootPosition.y + 160,
+  }));
+
+  const root = getThoughtById(session.rootId);
+  const rootTitle = getThoughtPresentation(root).primaryText.trim().split('\n')[0].trim();
+  const title = rootTitle.length > 80 ? `${rootTitle.slice(0, 79).trimEnd()}…` : rootTitle;
+  const accountId = auth.id;
+  connectionMapBoardSaveInFlight = true;
+  renderConnectionMap();
+
+  try {
+    const board = await createBoardRecord(title || nextBoardTitle());
+    if (auth?.id !== accountId) throw new Error('The signed-in account changed.');
+
+    positions.forEach(({ id, x, y }) => {
+      const thought = getThoughtById(id);
+      thought.meta = withCanvasPlacement(thought.meta, board.id, { x, y });
+    });
+    saveThoughts();
+    positions.forEach(({ id }) => enqueueThoughtMetaPatch(getThoughtById(id), ['canvas']));
+
+    applyBoardRecords([...boards, board]);
+    connectionMapBoardSaveInFlight = false;
+    closeConnectionMap();
+    navigateToSpace(board.id);
+    fitBoardCameraToPositions(positions);
+    announce(`Saved ${positions.length} thoughts to “${board.title}”.`);
+  } catch (error) {
+    announce(`Could not save Board: ${error.message}`);
+  } finally {
+    connectionMapBoardSaveInFlight = false;
+    if (connectionMapSession === session) renderConnectionMap();
+  }
+}
+
+function fitBoardCameraToPositions(positions) {
+  const safe = getCanvasSpawnSafeArea();
+  const bounds = canvas.getBoundingClientRect();
+  const minX = Math.min(...positions.map(({ x }) => x));
+  const minY = Math.min(...positions.map(({ y }) => y));
+  const maxX = Math.max(...positions.map(({ x }) => x + boardGeometry.cardWidth));
+  const maxY = Math.max(...positions.map(({ y }) => y + boardGeometry.cardHeight));
+  const padding = 36;
+  const scale = Math.min(MAX_CANVAS_SCALE, Math.max(MIN_CANVAS_SCALE, Math.min(
+    (safe.right - safe.left - padding * 2) / (maxX - minX),
+    (safe.bottom - safe.top - padding * 2) / (maxY - minY),
+  )));
+
+  canvasCamera = {
+    x: (safe.left + safe.right) / 2 - bounds.left - (minX + maxX) / 2 * scale,
+    y: (safe.top + safe.bottom) / 2 - bounds.top - (minY + maxY) / 2 * scale,
+    scale,
+  };
+  canvasHudVisible = !isCanvasAtDefaultScale();
+  renderCanvasCamera();
+  saveCanvasCamera();
 }
 
 function expandConnectionMapBranch(sourceId) {
@@ -3792,6 +3876,13 @@ function nextBoardTitle() {
   return `Board ${boards.length + 1}`;
 }
 
+function createBoardRecord(title) {
+  return requestApi('/boards/', {
+    method: 'POST',
+    body: { title },
+  });
+}
+
 async function createBoard() {
   if (!auth) {
     announce('Sign in to create more Boards.');
@@ -3800,10 +3891,7 @@ async function createBoard() {
   if (blockEditsDuringAccountSync()) return;
 
   try {
-    const board = await requestApi('/boards/', {
-      method: 'POST',
-      body: { title: nextBoardTitle() },
-    });
+    const board = await createBoardRecord(nextBoardTitle());
     applyBoardRecords([...boards, board]);
     navigateToSpace(board.id);
     announce(`${board.title} created.`);

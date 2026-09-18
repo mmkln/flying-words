@@ -960,9 +960,10 @@ button { -webkit-tap-highlight-color: transparent; }
   font-weight: 650;
 }
 
-.connection-map-header button:hover,
+.connection-map-header button:hover:not(:disabled),
 .connection-map-selection button:hover,
 .connection-map-controls button:hover:not(:disabled) { background: var(--surface-tint); }
+.connection-map-header button:disabled { opacity: .5; cursor: default; }
 .connection-map-header button:focus-visible,
 .connection-map-selection button:focus-visible,
 .connection-map-controls button:focus-visible,
@@ -971,6 +972,11 @@ button { -webkit-tap-highlight-color: transparent; }
 .connection-map-search:focus-within {
   outline: 3px solid var(--focus-ring);
   outline-offset: 1px;
+}
+
+#connection-map-save-board {
+  grid-column: 1;
+  justify-self: start;
 }
 
 #connection-map-close {

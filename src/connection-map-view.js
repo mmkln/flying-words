@@ -211,12 +211,15 @@ export function createConnectionMapView({
   onQueryChange,
   onEditKind,
   onEditText,
+  onSaveBoard,
   onClose,
 }) {
+  const saveBoardButton = dialog.querySelector('#connection-map-save-board');
   const closeButton = dialog.querySelector('#connection-map-close');
   const searchInput = dialog.querySelector('#connection-map-search');
   const searchResults = dialog.querySelector('#connection-map-results');
   const viewport = dialog.querySelector('#connection-map-viewport');
+  const stage = dialog.querySelector('.connection-map-stage');
   const world = dialog.querySelector('#connection-map-world');
   const edgesLayer = dialog.querySelector('#connection-map-edges');
   const nodesLayer = dialog.querySelector('#connection-map-nodes');
@@ -480,6 +483,7 @@ export function createConnectionMapView({
     });
   }
 
+  saveBoardButton.addEventListener('click', onSaveBoard);
   closeButton.addEventListener('click', onClose);
   selectionFinish.addEventListener('click', onFinishConnectionEditing);
   searchInput.addEventListener('input', () => onQueryChange(searchInput.value));
@@ -564,7 +568,14 @@ export function createConnectionMapView({
     createProposal,
     editor,
     query,
+    saveBoardVisible = true,
+    savingBoard = false,
   }) {
+    saveBoardButton.hidden = !saveBoardVisible;
+    saveBoardButton.disabled = savingBoard || Boolean(editor);
+    saveBoardButton.textContent = savingBoard ? 'Saving…' : 'Save as Board';
+    closeButton.disabled = savingBoard;
+    stage.inert = savingBoard;
     if (searchInput.value !== query) searchInput.value = query;
 
     const activeIds = new Set(nodes.map(({ thought }) => thought.id));
@@ -626,5 +637,9 @@ export function createConnectionMapView({
     target?.focus({ preventScroll: true });
   }
 
-  return { open, close, render, fitAll, revealThought, focusThought };
+  function getLayoutSnapshot() {
+    return [...positions].map(([id, { x, y }]) => ({ id, x, y }));
+  }
+
+  return { open, close, render, fitAll, revealThought, focusThought, getLayoutSnapshot };
 }
