@@ -224,6 +224,10 @@ const deleteThoughtDialog = document.querySelector('#delete-thought-dialog');
 const deleteThoughtMessage = document.querySelector('#delete-thought-message');
 const deleteThoughtCancel = document.querySelector('#delete-thought-cancel');
 const deleteThoughtConfirm = document.querySelector('#delete-thought-confirm');
+const deleteBoardDialog = document.querySelector('#delete-board-dialog');
+const deleteBoardMessage = document.querySelector('#delete-board-message');
+const deleteBoardCancel = document.querySelector('#delete-board-cancel');
+const deleteBoardConfirm = document.querySelector('#delete-board-confirm');
 const connectionMapDialog = document.querySelector('#connection-map-dialog');
 const connectionLayer = document.querySelector('#connection-layer');
 const form = document.querySelector('#thought-form');
@@ -382,6 +386,8 @@ canvasHudVisible = isCanvasSpace(activeSpaceId) && canvasCamera.scale < MAX_CANV
 let boards = [];
 let editingBoardId = null;
 let boardRenameInFlight = false;
+let pendingBoardDeletionId = null;
+let boardDeleteInFlight = false;
 
 const connectionRenderer = createConnectionRenderer({
   layer: connectionLayer,
@@ -3909,7 +3915,11 @@ async function loadBoards() {
 }
 
 function nextBoardTitle() {
-  return `Board ${boards.length + 1}`;
+  const highestNumber = boards.reduce((highest, board) => {
+    const match = /^Board (\d+)$/.exec(board.title);
+    return match ? Math.max(highest, Number(match[1])) : highest;
+  }, boards.length);
+  return `Board ${highestNumber + 1}`;
 }
 
 function createBoardRecord(title) {
@@ -3961,7 +3971,7 @@ function cancelBoardRename({ restoreFocus = true } = {}) {
   if (!restoreFocus || !boardId) return;
   requestAnimationFrame(() => {
     spacesGrid
-      .querySelector(`[data-board-rename="${boardId}"]`)
+      .querySelector(`[data-board-actions="${boardId}"]`)
       ?.focus();
   });
 }
@@ -4008,6 +4018,61 @@ async function renameBoard(boardId, rawTitle) {
     focusBoardTitleInput(boardId);
   } finally {
     boardRenameInFlight = false;
+  }
+}
+
+function openBoardDeleteConfirmation(boardId) {
+  const board = boards.find((candidate) => candidate.id === boardId);
+  if (!board || !auth || boardDeleteInFlight || deleteBoardDialog.open) return;
+  if (boards.length <= 1) {
+    announce('Keep at least one Board.');
+    return;
+  }
+  if (blockEditsDuringAccountSync()) return;
+
+  pendingBoardDeletionId = boardId;
+  deleteBoardMessage.textContent = (
+    `Delete “${board.title}”? Its card positions on this Board will be removed. `
+    + 'The thoughts and their connections will remain.'
+  );
+  deleteBoardDialog.showModal();
+}
+
+async function deleteBoard(boardId) {
+  if (boardDeleteInFlight || pendingBoardDeletionId !== boardId || !auth) return;
+  if (blockEditsDuringAccountSync()) return;
+  if (outboxFlushInFlight || loadOutbox(auth.id).length) {
+    announce('Wait until pending thought changes finish syncing before deleting a Board.');
+    return;
+  }
+
+  const accountId = auth.id;
+  const title = boards.find((board) => board.id === boardId)?.title || 'Board';
+  boardDeleteInFlight = true;
+  deleteBoardCancel.disabled = true;
+  deleteBoardConfirm.disabled = true;
+
+  try {
+    await requestApi(`/boards/${boardId}/`, { method: 'DELETE' });
+    deleteBoardDialog.close();
+    if (auth?.id !== accountId) return;
+
+    if (loadLastSpaceId() === boardId) {
+      localStorage.removeItem(lastSpaceStorageKey());
+    }
+    applyBoardRecords(boards.filter((board) => board.id !== boardId));
+    localStorage.removeItem(canvasCameraStorageKey(boardId));
+    announce(`“${title}” deleted. Thoughts and connections remain.`);
+    const refreshed = await loadServerThoughts({ silent: true });
+    if (!refreshed && auth?.id === accountId) {
+      announce('Board deleted, but thoughts could not be refreshed. Reload to sync.');
+    }
+  } catch (error) {
+    announce(`Could not delete Board: ${error.message}`);
+  } finally {
+    boardDeleteInFlight = false;
+    deleteBoardCancel.disabled = false;
+    deleteBoardConfirm.disabled = false;
   }
 }
 
@@ -6259,20 +6324,59 @@ function createBoardTitleEditor(space) {
   return form;
 }
 
-function createBoardRenameButton(space) {
-  const button = document.createElement('button');
-  button.type = 'button';
-  button.className = 'space-board-rename';
-  button.dataset.boardRename = space.id;
-  button.setAttribute('aria-label', `Rename ${space.label}`);
-  button.title = 'Rename Board';
-  button.innerHTML = `
-    <svg viewBox="0 0 20 20" fill="none" aria-hidden="true" focusable="false">
-      <path d="m12.75 4.25 3 3M4.25 15.75l2.7-.55 8.8-8.8a1.55 1.55 0 0 0-2.2-2.2l-8.8 8.8-.5 2.75Z" />
+function closeBoardActionsMenus() {
+  spacesGrid.querySelectorAll('.space-board-actions-menu:not([hidden])').forEach((menu) => {
+    menu.hidden = true;
+    menu.previousElementSibling?.setAttribute('aria-expanded', 'false');
+  });
+}
+
+function createBoardActions(space) {
+  const actions = document.createElement('div');
+  const trigger = document.createElement('button');
+  const menu = document.createElement('div');
+  const rename = document.createElement('button');
+  const remove = document.createElement('button');
+
+  actions.className = 'space-board-actions';
+  trigger.type = 'button';
+  trigger.className = 'space-board-actions-trigger';
+  trigger.dataset.boardActions = space.id;
+  trigger.setAttribute('aria-label', `Board actions for ${space.label}`);
+  trigger.setAttribute('aria-expanded', 'false');
+  trigger.title = 'Board actions';
+  trigger.innerHTML = `
+    <svg viewBox="0 0 20 20" fill="currentColor" aria-hidden="true" focusable="false">
+      <circle cx="4.5" cy="10" r="1.4" />
+      <circle cx="10" cy="10" r="1.4" />
+      <circle cx="15.5" cy="10" r="1.4" />
     </svg>
   `;
-  button.addEventListener('click', () => startBoardRename(space.id));
-  return button;
+  menu.className = 'space-board-actions-menu';
+  menu.hidden = true;
+  rename.type = 'button';
+  rename.textContent = 'Rename';
+  remove.type = 'button';
+  remove.className = 'is-destructive';
+  remove.textContent = 'Delete Board';
+  remove.disabled = boards.length <= 1;
+  if (remove.disabled) remove.title = 'Keep at least one Board';
+
+  trigger.addEventListener('click', () => {
+    const shouldOpen = menu.hidden;
+    closeBoardActionsMenus();
+    menu.hidden = !shouldOpen;
+    trigger.setAttribute('aria-expanded', String(shouldOpen));
+    if (shouldOpen) rename.focus();
+  });
+  rename.addEventListener('click', () => startBoardRename(space.id));
+  remove.addEventListener('click', () => {
+    closeBoardActionsMenus();
+    openBoardDeleteConfirmation(space.id);
+  });
+  menu.append(rename, remove);
+  actions.append(trigger, menu);
+  return actions;
 }
 
 function renderSpacePreview(surface, space, canvasWidth, canvasHeight) {
@@ -6389,7 +6493,7 @@ function createSpaceTile(space, canvasWidth, canvasHeight) {
 
   tile.append(openButton, footer);
   if (canRenameBoard && editingBoardId !== space.id) {
-    tile.append(createBoardRenameButton(space));
+    tile.append(createBoardActions(space));
   }
 
   return tile;
@@ -7069,6 +7173,16 @@ deleteThoughtConfirm.addEventListener('click', () => {
 deleteThoughtDialog.addEventListener('close', () => {
   pendingThoughtDeletionId = null;
 });
+deleteBoardCancel.addEventListener('click', () => deleteBoardDialog.close());
+deleteBoardConfirm.addEventListener('click', () => {
+  if (pendingBoardDeletionId) void deleteBoard(pendingBoardDeletionId);
+});
+deleteBoardDialog.addEventListener('cancel', (event) => {
+  if (boardDeleteInFlight) event.preventDefault();
+});
+deleteBoardDialog.addEventListener('close', () => {
+  pendingBoardDeletionId = null;
+});
 
 accountTrigger.addEventListener('click', () => {
   if (boardArrangeInFlight) {
@@ -7327,10 +7441,27 @@ window.addEventListener('resize', () => {
   nextSpawnAt = 0;
   scheduleSave();
 });
+document.addEventListener('pointerdown', (event) => {
+  if (
+    viewMode !== 'spaces'
+    || (event.target instanceof Element && event.target.closest('.space-board-actions'))
+  ) return;
+  closeBoardActionsMenus();
+});
 window.addEventListener('keydown', (event) => {
   if (event.isComposing || event.repeat) return;
+  if (deleteBoardDialog.open) return;
 
   if (viewMode === 'spaces') {
+    const openBoardMenu = spacesGrid.querySelector(
+      '.space-board-actions-menu:not([hidden])',
+    );
+    if (event.key === 'Escape' && openBoardMenu) {
+      event.preventDefault();
+      openBoardMenu.previousElementSibling?.focus();
+      closeBoardActionsMenus();
+      return;
+    }
     if (
       event.target instanceof HTMLElement
       && event.target.matches('.space-title-input')
