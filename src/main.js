@@ -144,7 +144,8 @@ const QUARANTINED_OUTBOX_STORAGE_PREFIX = 'flying-thoughts:outbox-quarantine:v1:
 const THEME_STORAGE_KEY = 'flying-thoughts:theme:v1';
 const MAX_THOUGHT_TEXT_LENGTH = 2000;
 const THOUGHT_TEXT_WARNING_THRESHOLD = 1700;
-const INITIAL_THOUGHT_PAGE_SIZE = 1000;
+const INITIAL_THOUGHT_PAGE_SIZE = 100;
+const BACKGROUND_THOUGHT_PAGE_SIZE = 1000;
 const HISTORY_PAGE_SIZE = 50;
 const CONNECTION_SEARCH_PAGE_SIZE = 30;
 const CONNECTION_MAP_INITIAL_DEPTH = 2;
@@ -302,6 +303,8 @@ let accessToken = null;
 let refreshToken = localStorage.getItem(REFRESH_TOKEN_STORAGE_KEY);
 let refreshInFlight = null;
 let sessionValidated = false;
+let applicationReady = false;
+let animationStarted = false;
 let legacyOutboxQuarantined = false;
 let thoughts = loadStoredThoughts(STORAGE_KEY);
 let syncPending = false;
@@ -1087,6 +1090,23 @@ function applyTokenSession(payload) {
 
 function isCloudMode() {
   return Boolean(auth) && sessionValidated && !syncPending && serverStateReady;
+}
+
+function setApplicationReady(ready) {
+  applicationReady = ready;
+  document.documentElement.dataset.appReady = String(ready);
+  canvas.setAttribute('aria-busy', String(!ready));
+  composerWrap.inert = !ready;
+  historyButton.disabled = !ready;
+  spacesButton.disabled = !ready;
+  anchorsButton.disabled = !ready;
+}
+
+function startAnimationOnce() {
+  if (animationStarted) return;
+
+  animationStarted = true;
+  window.requestAnimationFrame(animate);
 }
 
 function blockEditsDuringAccountSync() {
@@ -3849,7 +3869,7 @@ async function loadBoardGeometry() {
     return;
   }
 
-  if (!isCanvasSpace(activeSpaceId)) return;
+  if (!applicationReady || !isCanvasSpace(activeSpaceId)) return;
 
   getActiveThoughts().forEach((thought) => {
     renderThought(thought);
@@ -4838,14 +4858,14 @@ async function loadRemainingServerThoughts({
 
     try {
       const page = await requestThoughtListPage({
-        limit: INITIAL_THOUGHT_PAGE_SIZE,
+        limit: BACKGROUND_THOUGHT_PAGE_SIZE,
         cursor: nextCursor,
       });
 
       if (!auth || syncPending || requestId !== serverThoughtsRequestId) return false;
 
-      mergeServerThoughts(page.results);
       serverThoughtsNextCursor = page.nextCursor;
+      mergeServerThoughts(page.results);
       nextCursor = page.nextCursor;
       renderBoardExpansionControls();
 
@@ -6703,7 +6723,7 @@ function activateSpace(spaceId) {
     rebuildConnectionLayer();
     updateUi();
     closeSpacesOverview();
-    void activateSpatialView();
+    if (applicationReady) void activateSpatialView();
 
     const label = getSpaces().find((space) => space.id === activeSpaceId)?.label;
     announce(`${label || 'Space'} opened.`);
@@ -6774,7 +6794,19 @@ function updateUi() {
   const anchorsAvailable = boardActive || spatialActive;
   anchorsButton.hidden = !anchorsAvailable;
   if (!anchorsAvailable && anchorsDialog.open) anchorsDialog.close();
-  emptyState.hidden = thoughts.some(isThoughtAvailableInActiveSpace);
+  const hasAvailableThoughts = thoughts.some(isThoughtAvailableInActiveSpace);
+  const thoughtDataStillLoading = Boolean(
+    auth
+    && (
+      !serverStateReady
+      || serverThoughtsNextCursor
+    )
+  );
+  emptyState.hidden = (
+    !applicationReady
+    || hasAvailableThoughts
+    || thoughtDataStillLoading
+  );
   if (boardActive) {
     emptyStateTitle.textContent = 'Your Board is empty';
     emptyStateDescription.textContent = 'Add a card, then drag the board to move or pinch to zoom out.';
@@ -6997,10 +7029,12 @@ async function activateAuthenticatedAccount() {
   if (legacyOutboxQuarantined) {
     announce('Older unsynced changes were paused to protect server data.');
   }
-  const ready = await restoreAuthenticatedThoughts();
-  if (ready) await loadBoards();
-  if (ready) announce('Signed in.');
-  return ready;
+  const [thoughtsReady] = await Promise.all([
+    restoreAuthenticatedThoughts(),
+    loadBoards(),
+  ]);
+  if (thoughtsReady) announce('Signed in.');
+  return thoughtsReady;
 }
 
 async function restoreTokenSession() {
@@ -7034,9 +7068,18 @@ async function restoreTokenSession() {
 }
 
 async function initializeApplication() {
-  await restoreTokenSession();
-  restoreSpaceNavigation();
-  window.addEventListener('popstate', restoreSpaceNavigation);
+  setApplicationReady(false);
+
+  try {
+    await restoreTokenSession();
+    restoreSpaceNavigation();
+    window.addEventListener('popstate', restoreSpaceNavigation);
+  } finally {
+    setApplicationReady(true);
+    updateUi();
+    startAnimationOnce();
+    if (isSpatialSpace(activeSpaceId)) void activateSpatialView();
+  }
 }
 
 function clearAuthenticatedState(message) {
@@ -7056,9 +7099,9 @@ function clearAuthenticatedState(message) {
   syncInFlight = false;
   localStorage.removeItem(AUTH_STORAGE_KEY);
   sessionStorage.removeItem(AUTH_STORAGE_KEY);
-  applyBoardRecords([]);
   updateAccountControl();
   replaceThoughts(loadStoredThoughts(STORAGE_KEY));
+  applyBoardRecords([]);
   if (message) announce(message);
 }
 
@@ -7633,10 +7676,8 @@ systemThemeQuery.addEventListener('change', () => {
 
 renderSpatialLayoutPicker();
 applyTheme();
-replaceThoughts(thoughts);
 renderCanvasCamera();
 void loadBoardGeometry();
-if (isSpatialSpace(activeSpaceId)) void activateSpatialView();
 updateAccountControl();
 void initializeApplication();
 window.addEventListener('online', () => {
@@ -7655,4 +7696,3 @@ window.addEventListener('online', () => {
   }
 });
 window.addEventListener('offline', renderBoardArrangeControl);
-window.requestAnimationFrame(animate);

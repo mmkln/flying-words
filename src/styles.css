@@ -144,6 +144,15 @@ button { -webkit-tap-highlight-color: transparent; }
   overflow: hidden;
 }
 
+html[data-app-ready="false"] #canvas {
+  visibility: hidden;
+}
+
+html[data-app-ready="false"] .composer-wrap {
+  opacity: .72;
+  pointer-events: none;
+}
+
 .canvas-world {
   position: absolute;
   inset: 0;
