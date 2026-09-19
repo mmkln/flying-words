@@ -6368,7 +6368,7 @@ function createBoardActions(space) {
 
   actions.className = 'space-board-actions';
   trigger.type = 'button';
-  trigger.className = 'space-board-actions-trigger';
+  trigger.className = 'icon-button space-board-actions-trigger';
   trigger.dataset.boardActions = space.id;
   trigger.setAttribute('aria-label', `Board actions for ${space.label}`);
   trigger.setAttribute('aria-expanded', 'false');
