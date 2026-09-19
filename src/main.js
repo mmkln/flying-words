@@ -226,6 +226,7 @@ const deleteThoughtCancel = document.querySelector('#delete-thought-cancel');
 const deleteThoughtConfirm = document.querySelector('#delete-thought-confirm');
 const deleteBoardDialog = document.querySelector('#delete-board-dialog');
 const deleteBoardMessage = document.querySelector('#delete-board-message');
+const deleteBoardError = document.querySelector('#delete-board-error');
 const deleteBoardCancel = document.querySelector('#delete-board-cancel');
 const deleteBoardConfirm = document.querySelector('#delete-board-confirm');
 const connectionMapDialog = document.querySelector('#connection-map-dialog');
@@ -4035,24 +4036,43 @@ function openBoardDeleteConfirmation(boardId) {
     `Delete “${board.title}”? Its card positions on this Board will be removed. `
     + 'The thoughts and their connections will remain.'
   );
+  deleteBoardError.textContent = '';
+  deleteBoardError.hidden = true;
   deleteBoardDialog.showModal();
+}
+
+function showBoardDeleteError(message) {
+  deleteBoardError.textContent = message;
+  deleteBoardError.hidden = false;
+  announce(message);
 }
 
 async function deleteBoard(boardId) {
   if (boardDeleteInFlight || pendingBoardDeletionId !== boardId || !auth) return;
-  if (blockEditsDuringAccountSync()) return;
-  if (outboxFlushInFlight || loadOutbox(auth.id).length) {
-    announce('Wait until pending thought changes finish syncing before deleting a Board.');
-    return;
-  }
 
   const accountId = auth.id;
   const title = boards.find((board) => board.id === boardId)?.title || 'Board';
   boardDeleteInFlight = true;
   deleteBoardCancel.disabled = true;
   deleteBoardConfirm.disabled = true;
+  deleteBoardConfirm.textContent = 'Deleting…';
+  deleteBoardError.textContent = '';
+  deleteBoardError.hidden = true;
 
   try {
+    if (!isCloudMode()) {
+      throw new Error('Wait until your saved thoughts finish loading, then try again.');
+    }
+    if (!navigator.onLine) {
+      throw new Error('Connect to the internet before deleting this Board.');
+    }
+    const remainingOperations = await flushAndWaitForOutbox(accountId);
+    if (remainingOperations.length) {
+      throw new Error(
+        'Some thought changes are paused. Resolve or refresh them before deleting this Board.',
+      );
+    }
+
     await requestApi(`/boards/${boardId}/`, { method: 'DELETE' });
     deleteBoardDialog.close();
     if (auth?.id !== accountId) return;
@@ -4068,11 +4088,14 @@ async function deleteBoard(boardId) {
       announce('Board deleted, but thoughts could not be refreshed. Reload to sync.');
     }
   } catch (error) {
-    announce(`Could not delete Board: ${error.message}`);
+    if (auth?.id === accountId) {
+      showBoardDeleteError(`Could not delete Board: ${error.message}`);
+    }
   } finally {
     boardDeleteInFlight = false;
     deleteBoardCancel.disabled = false;
     deleteBoardConfirm.disabled = false;
+    deleteBoardConfirm.textContent = 'Delete Board';
   }
 }
 
@@ -4479,7 +4502,7 @@ function stageBoardPositions(positions, records = null) {
   return staged;
 }
 
-async function waitForOutboxToSettle(accountId) {
+async function flushAndWaitForOutbox(accountId) {
   await flushOutbox();
   for (let attempt = 0; outboxFlushInFlight && attempt < 600; attempt += 1) {
     await new Promise((resolve) => window.setTimeout(resolve, 30));
@@ -4490,7 +4513,12 @@ async function waitForOutboxToSettle(accountId) {
     throw new Error('Cloud changes are still syncing. Try again in a moment.');
   }
 
-  const pausedOperations = loadOutbox(accountId);
+  return loadOutbox(accountId);
+}
+
+async function waitForOutboxToSettle(accountId) {
+  const pausedOperations = await flushAndWaitForOutbox(accountId);
+
   if (!pausedOperations.length) return;
 
   if (pausedOperations.every(isPausedBoardPlacementOnlyOperation)) {
