@@ -7281,7 +7281,9 @@ spatialFocusButton.addEventListener('click', () => {
 });
 spatialBackButton.addEventListener('click', navigateSpatialBack);
 spatialContextButton.addEventListener('click', () => {
-  if (!showSpatialContext(selectedThoughtId)) {
+  const contextShown = showSpatialContext(selectedThoughtId);
+  closeSpatialLayoutMenu();
+  if (!contextShown) {
     announce('Select a thought to show its context.');
   }
 });

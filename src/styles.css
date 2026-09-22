@@ -421,6 +421,17 @@ html[data-app-ready="false"] .composer-wrap {
   background: rgba(112, 85, 197, .1);
 }
 
+.spatial-layout-menu-divider {
+  height: 1px;
+  margin: 4px 5px;
+  background: var(--border-subtle);
+}
+
+.spatial-layout-menu .spatial-layout-context {
+  color: var(--accent);
+  font-weight: 650;
+}
+
 .spatial-toolbar p {
   margin: 0;
   color: rgba(78, 70, 103, .66);
@@ -813,35 +824,6 @@ html[data-app-ready="false"] .composer-wrap {
   font: inherit;
   font-size: 10px;
   font-weight: 600;
-}
-
-.spatial-inspector-context {
-  width: 100%;
-  min-height: 36px;
-  margin: 0 0 14px;
-  padding: 7px 11px;
-  border: 1px solid var(--border-subtle);
-  border-radius: 10px;
-  color: var(--accent);
-  cursor: pointer;
-  background: var(--surface-tint);
-  font: inherit;
-  font-size: 12px;
-  font-weight: 650;
-}
-
-.spatial-inspector-context:hover:not(:disabled) {
-  background: rgba(112, 85, 197, .15);
-}
-
-.spatial-inspector-context:focus-visible {
-  outline: 2px solid var(--focus-ring);
-  outline-offset: 2px;
-}
-
-.spatial-inspector-context:disabled {
-  cursor: default;
-  opacity: .42;
 }
 
 @media (hover: none) and (pointer: coarse) {
