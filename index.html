@@ -247,6 +247,15 @@
               <button id="spatial-reset" type="button">Reset</button>
             </div>
             <p>Drag a node · Drag the background to rotate · Scroll to zoom</p>
+            <div
+              class="spatial-scope-status"
+              id="spatial-scope-status"
+              role="status"
+              hidden
+            >
+              <span id="spatial-scope-summary">Context</span>
+              <button id="spatial-show-all" type="button">Show all</button>
+            </div>
           </div>
         </div>
 
@@ -349,6 +358,11 @@
                   <kbd aria-hidden="true">F</kbd>
                 </button>
               </div>
+              <button
+                class="spatial-inspector-context spatial-only"
+                id="spatial-context"
+                type="button"
+              >Show context</button>
               <section
                 class="spatial-inspector-suggestions spatial-only"
                 id="spatial-inspector-suggestions"

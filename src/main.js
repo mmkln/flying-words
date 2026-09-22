@@ -116,6 +116,13 @@ import {
 } from './spatial-layout-mode.js';
 import { SpatialGraphTransitionKind } from './spatial-graph-transition.js';
 import {
+  SpatialScopeMode,
+  applySpatialScope,
+  createAllSpatialScope,
+  createContextSpatialScope,
+  getSpatialScopeIds,
+} from './spatial-scope.js';
+import {
   buildBearerHeaders,
   parseIdentityResponse,
   parseRefreshResponse,
@@ -191,6 +198,10 @@ const spatialWorld = document.querySelector('#spatial-world');
 const spatialFitButton = document.querySelector('#spatial-fit');
 const spatialFocusButton = document.querySelector('#spatial-focus');
 const spatialBackButton = document.querySelector('#spatial-back');
+const spatialContextButton = document.querySelector('#spatial-context');
+const spatialScopeStatus = document.querySelector('#spatial-scope-status');
+const spatialScopeSummary = document.querySelector('#spatial-scope-summary');
+const spatialShowAll = document.querySelector('#spatial-show-all');
 const spatialLayoutButton = document.querySelector('#spatial-layout');
 const spatialLayoutMenu = document.querySelector('#spatial-layout-menu');
 const spatialLayoutOptions = [...spatialLayoutMenu.querySelectorAll('[data-spatial-layout]')];
@@ -376,6 +387,8 @@ let spatialViewPromise = null;
 let themeMode = normalizeThemeMode(document.documentElement.dataset.themeMode);
 let resolvedTheme = resolveTheme(themeMode, systemThemeQuery.matches);
 let spatialLayoutMode = loadSpatialLayoutMode();
+let spatialScope = createAllSpatialScope();
+let spatialScopeVisibleCount = 0;
 let viewMode = 'canvas';
 const initiallyRequestedSpaceId = readSpaceIdFromSearch(window.location.search);
 let activeSpaceId = (
@@ -675,7 +688,7 @@ function setSpatialLayoutMode(mode) {
   announce(`Spatial layout changed to ${spatialLayoutLabel()}.`);
 }
 
-function buildSpatialGraph() {
+function buildSpatialSourceGraph() {
   const availableIds = new Set(thoughts.map((thought) => thought.id));
   const links = flattenConnections(thoughts).filter(({ sourceId, targetId }) => (
     availableIds.has(sourceId) && availableIds.has(targetId)
@@ -698,6 +711,75 @@ function buildSpatialGraph() {
     };
   });
   return { nodes, links, layoutMode: spatialLayoutMode };
+}
+
+function buildSpatialGraph() {
+  const graph = buildSpatialSourceGraph();
+  if (
+    spatialScope.mode === SpatialScopeMode.CONTEXT
+    && !graph.nodes.some(({ id }) => id === spatialScope.rootId)
+  ) {
+    spatialScope = createAllSpatialScope();
+    clearSpatialNavigationHistory();
+  }
+  const scopedGraph = applySpatialScope(graph, spatialScope);
+  spatialScopeVisibleCount = scopedGraph.nodes.length;
+  return scopedGraph;
+}
+
+function isThoughtInSpatialScope(thoughtId, graph = buildSpatialSourceGraph()) {
+  return getSpatialScopeIds(graph, spatialScope).has(thoughtId);
+}
+
+function renderSpatialScopeControls() {
+  const spatialActive = isSpatialSpace(activeSpaceId) && viewMode !== 'spaces';
+  const contextActive = spatialScope.mode === SpatialScopeMode.CONTEXT;
+  spatialScopeStatus.hidden = !spatialActive || !contextActive;
+
+  if (contextActive) {
+    spatialScopeSummary.textContent = `Context · ${spatialScopeVisibleCount} ${spatialScopeVisibleCount === 1 ? 'thought' : 'thoughts'}`;
+  }
+
+  const canUseSelectedThought = Boolean(
+    spatialActive
+    && selectedThoughtId
+    && getThoughtById(selectedThoughtId)
+    && !connectionEditor
+    && !magnetEditor,
+  );
+  spatialContextButton.disabled = !canUseSelectedThought;
+  spatialContextButton.textContent = contextActive
+    ? (spatialScope.rootId === selectedThoughtId ? 'Refresh context' : 'Use as context')
+    : 'Show context';
+  spatialContextButton.setAttribute('aria-label', spatialContextButton.textContent);
+}
+
+function showSpatialContext(rootId) {
+  if (!isSpatialSpace(activeSpaceId) || !rootId) return false;
+
+  const nextScope = createContextSpatialScope(buildSpatialSourceGraph(), rootId);
+  if (nextScope.mode !== SpatialScopeMode.CONTEXT) return false;
+
+  spatialScope = nextScope;
+  clearSpatialNavigationHistory();
+  refreshSpatialGraph({
+    fitAfterLayout: true,
+    transition: { kind: SpatialGraphTransitionKind.REBUILD },
+  });
+  announce(`Showing context with ${buildSpatialGraph().nodes.length} thoughts.`);
+  return true;
+}
+
+function showAllSpatialThoughts() {
+  if (spatialScope.mode === SpatialScopeMode.ALL) return;
+
+  spatialScope = createAllSpatialScope();
+  clearSpatialNavigationHistory();
+  refreshSpatialGraph({
+    fitAfterLayout: true,
+    transition: { kind: SpatialGraphTransitionKind.REBUILD },
+  });
+  announce('Showing all thoughts in Spatial.');
 }
 
 async function ensureSpatialView() {
@@ -786,6 +868,7 @@ function deactivateSpatialView() {
   spatialInspector.hidden = true;
   spatialWorld.hidden = true;
   canvasWorld.hidden = false;
+  renderSpatialScopeControls();
 }
 
 const knowledgeKindPicker = createKnowledgeKindPicker({
@@ -1632,6 +1715,7 @@ function renderSpatialLinkSuggestions(thought, connectionIndex) {
 }
 
 function renderThoughtInspector() {
+  renderSpatialScopeControls();
   const thought = selectedThoughtId ? getThoughtById(selectedThoughtId) : null;
   const boardMode = isCanvasSpace(activeSpaceId);
   const spatialMode = isSpatialSpace(activeSpaceId);
@@ -5219,6 +5303,13 @@ async function addThought(draft, { relationTargetId = null } = {}) {
   updateUi();
   saveThoughts();
   if (addingToSpatial && activeSpaceId === targetSpaceId) {
+    if (
+      spatialScope.mode === SpatialScopeMode.CONTEXT
+      && !isThoughtInSpatialScope(thought.id)
+    ) {
+      spatialScope = createContextSpatialScope(buildSpatialSourceGraph(), thought.id);
+      clearSpatialNavigationHistory();
+    }
     refreshSpatialGraph({
       transition: relationTarget
         ? {
@@ -5432,6 +5523,7 @@ function removeThoughtElement(thought) {
     rebuildMagnetComponents();
     renderRelationshipUi();
     rebuildConnectionLayer();
+    if (isSpatialSpace(activeSpaceId)) refreshSpatialGraph();
     updateUi();
     saveThoughts();
     announce('Thought deleted.');
@@ -5907,10 +5999,17 @@ async function navigateToSpatialThought(
     !thought
     || thought.element?.classList.contains('is-removing')
   ) return false;
+  let scopeChanged = false;
+  if (
+    spatialScope.mode === SpatialScopeMode.CONTEXT
+    && !isThoughtInSpatialScope(thoughtId)
+  ) {
+    scopeChanged = showSpatialContext(thoughtId);
+  }
   if (!view.getThoughtPosition(thoughtId)) refreshSpatialGraph();
   if (!view.getThoughtPosition(thoughtId)) return false;
 
-  if (remember && !connectionEditor && !magnetEditor) {
+  if (remember && !scopeChanged && !connectionEditor && !magnetEditor) {
     spatialNavigationHistory.record({
       thoughtId: selectedThoughtId,
       camera: view.getCameraState({ settled: true }),
@@ -7181,6 +7280,12 @@ spatialFocusButton.addEventListener('click', () => {
   }
 });
 spatialBackButton.addEventListener('click', navigateSpatialBack);
+spatialContextButton.addEventListener('click', () => {
+  if (!showSpatialContext(selectedThoughtId)) {
+    announce('Select a thought to show its context.');
+  }
+});
+spatialShowAll.addEventListener('click', showAllSpatialThoughts);
 spatialLayoutButton.addEventListener('click', () => {
   const willOpen = spatialLayoutMenu.hidden;
   spatialLayoutMenu.hidden = !willOpen;

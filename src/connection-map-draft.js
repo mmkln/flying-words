@@ -2,6 +2,11 @@ import {
   MAX_CONNECTIONS_PER_THOUGHT,
   getOutgoingConnections,
 } from './connections.js';
+import {
+  buildUndirectedAdjacency,
+  collectHiddenNeighbourIds,
+  collectNeighbourhoodIds,
+} from './graph-neighbourhood.js';
 
 export const ConnectionRelation = Object.freeze({
   NONE: 'none',
@@ -124,53 +129,39 @@ export function createConnectionMapDraft(thoughts, rootId) {
   }
 
   function buildNeighbourMap() {
-    const neighbours = new Map([...knownIds].map((id) => [id, new Set()]));
+    const links = [];
     working.forEach((targetIds, sourceId) => {
       targetIds.forEach((targetId) => {
-        if (!knownIds.has(targetId) || sourceId === targetId) return;
-        neighbours.get(sourceId).add(targetId);
-        neighbours.get(targetId).add(sourceId);
+        links.push({ sourceId, targetId });
       });
     });
 
-    return neighbours;
+    return buildUndirectedAdjacency([...knownIds], links);
   }
 
   function getNeighbourhoodIds(startId = rootId, maxDepth = 2) {
     if (!knownIds.has(startId)) return [];
 
-    const depthLimit = Number.isFinite(maxDepth)
-      ? Math.max(0, Math.floor(maxDepth))
-      : 0;
-    const neighbours = buildNeighbourMap();
-    const depths = new Map([[startId, 0]]);
-    const queue = [startId];
+    const visibleIds = collectNeighbourhoodIds(
+      buildNeighbourMap(),
+      startId,
+      maxDepth,
+    );
 
-    for (let index = 0; index < queue.length; index += 1) {
-      const thoughtId = queue[index];
-      const depth = depths.get(thoughtId);
-      if (depth >= depthLimit) continue;
-
-      neighbours.get(thoughtId)?.forEach((neighbourId) => {
-        if (depths.has(neighbourId)) return;
-        depths.set(neighbourId, depth + 1);
-        queue.push(neighbourId);
-      });
-    }
-
-    return orderedIds.filter((id) => depths.has(id));
+    return orderedIds.filter((id) => visibleIds.has(id));
   }
 
   function getHiddenNeighbourIds(thoughtId, visibleIds) {
     if (!knownIds.has(thoughtId)) return [];
 
-    const visible = visibleIds instanceof Set
-      ? visibleIds
-      : new Set(visibleIds);
-    const neighbours = buildNeighbourMap().get(thoughtId) || new Set();
+    const hiddenIds = collectHiddenNeighbourIds(
+      buildNeighbourMap(),
+      thoughtId,
+      visibleIds,
+    );
 
     return orderedIds
-      .filter((id) => neighbours.has(id) && !visible.has(id));
+      .filter((id) => hiddenIds.has(id));
   }
 
   function getOutgoingTargetIds(sourceId) {
