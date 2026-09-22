@@ -38,8 +38,8 @@
           : '#f9f8fe';
       })();
     </script>
-    <script type="module" crossorigin src="/assets/index-BiGACLxB.js"></script>
-    <link rel="stylesheet" crossorigin href="/assets/index-Dxg9Dyvo.css">
+    <script type="module" crossorigin src="/assets/index-DaWu8u-Z.js"></script>
+    <link rel="stylesheet" crossorigin href="/assets/index-CkbMXMTq.css">
   </head>
   <body>
     <main class="app-shell">
@@ -248,6 +248,15 @@
               <button id="spatial-reset" type="button">Reset</button>
             </div>
             <p>Drag a node · Drag the background to rotate · Scroll to zoom</p>
+            <div
+              class="spatial-scope-status"
+              id="spatial-scope-status"
+              role="status"
+              hidden
+            >
+              <span id="spatial-scope-summary">Context</span>
+              <button id="spatial-show-all" type="button">Show all</button>
+            </div>
           </div>
         </div>
 
@@ -350,6 +359,11 @@
                   <kbd aria-hidden="true">F</kbd>
                 </button>
               </div>
+              <button
+                class="spatial-inspector-context spatial-only"
+                id="spatial-context"
+                type="button"
+              >Show context</button>
               <section
                 class="spatial-inspector-suggestions spatial-only"
                 id="spatial-inspector-suggestions"
