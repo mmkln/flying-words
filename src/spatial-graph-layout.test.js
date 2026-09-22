@@ -98,7 +98,7 @@ test('inserts a linked node beside its anchor without moving existing nodes', ()
     { x: child.x, y: child.y, z: child.z },
     { x: parentBefore.x + 72, y: parentBefore.y - 36, z: parentBefore.z + 48 },
   );
-  assert.equal(child.clusterId, parentAfter.clusterId);
+  assert.equal(child.groupId, parentAfter.groupId);
   layout.dispose();
 });
 
@@ -187,7 +187,7 @@ test('filters invalid links and resolves valid source and target nodes', () => {
   layout.dispose();
 });
 
-test('adds cluster anchors to Spatial nodes without changing semantic links', () => {
+test('adds layout anchors to Spatial nodes without changing semantic links', () => {
   const layout = createSpatialGraphLayout();
   layout.setGraph({
     nodes: [
@@ -211,11 +211,11 @@ test('adds cluster anchors to Spatial nodes without changing semantic links', ()
   layout.stop();
 
   assert.equal(layout.getLinks().length, 7);
-  assert.equal(layout.getNode('a').clusterId, 'cluster:a');
-  assert.equal(layout.getNode('d').clusterId, 'cluster:d');
+  assert.equal(layout.getNode('a').groupId, 'cluster:a');
+  assert.equal(layout.getNode('d').groupId, 'cluster:d');
   assert.notDeepEqual(
-    layout.getNode('a').clusterAnchor,
-    layout.getNode('d').clusterAnchor,
+    layout.getNode('a').layoutAnchor,
+    layout.getNode('d').layoutAnchor,
   );
   layout.dispose();
 });
@@ -232,8 +232,8 @@ test('uses kind depth as a visual-only anchor in the Knowledge layers mode', () 
   });
   layout.stop();
 
-  assert.equal(layout.getNode('question').clusterAnchor.z, -360);
-  assert.equal(layout.getNode('hypothesis').clusterAnchor.z, 120);
+  assert.equal(layout.getNode('question').layoutAnchor.z, -360);
+  assert.equal(layout.getNode('hypothesis').layoutAnchor.z, 120);
   layout.dispose();
 });
 

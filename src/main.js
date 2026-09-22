@@ -112,6 +112,7 @@ import {
 } from './theme.js';
 import {
   SpatialLayoutMode,
+  getSpatialLayoutLabel,
   normalizeSpatialLayoutMode,
 } from './spatial-layout-mode.js';
 import { SpatialGraphTransitionKind } from './spatial-graph-transition.js';
@@ -635,9 +636,7 @@ function storeSpatialLayoutMode() {
 }
 
 function spatialLayoutLabel(mode = spatialLayoutMode) {
-  return mode === SpatialLayoutMode.KNOWLEDGE_LAYERS
-    ? 'Knowledge layers'
-    : 'Constellations';
+  return getSpatialLayoutLabel(mode);
 }
 
 function closeSpatialLayoutMenu() {
@@ -705,6 +704,7 @@ function buildSpatialSourceGraph() {
       id: thought.id,
       text: getThoughtPresentation(thought).primaryText,
       kind: getThoughtKnowledgeKind(thought),
+      createdAt: Number.isFinite(thought.createdAt) ? thought.createdAt : null,
       radius: Math.min(13, 5 + Math.sqrt(connectionCount) * 1.6),
       connectionCount,
       pinnedPosition: getSpatialPlacement(thought, activeSpaceId),
