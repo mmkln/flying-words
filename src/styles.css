@@ -1770,6 +1770,57 @@ html[data-app-ready="false"] .composer-wrap {
 
 .spaces-button svg { width: 17px; height: 17px; }
 
+.board-context {
+  position: fixed;
+  z-index: 30;
+  top: 18px;
+  left: 50%;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  max-width: min(360px, calc(100vw - 460px));
+  min-height: 38px;
+  padding: 8px 12px;
+  transform: translateX(-50%);
+  overflow: hidden;
+  border: 1px solid var(--border-subtle);
+  border-radius: 12px;
+  color: var(--text-primary);
+  background: var(--surface-translucent);
+  box-shadow: var(--shadow-control);
+  backdrop-filter: blur(14px);
+  cursor: pointer;
+  font: inherit;
+  font-size: 14px;
+  font-weight: 650;
+}
+
+.board-context[hidden] { display: none; }
+
+.board-context span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.board-context svg {
+  width: 13px;
+  height: 13px;
+  flex: 0 0 auto;
+  color: var(--text-tertiary);
+}
+
+.board-context:hover {
+  color: var(--accent);
+  background: var(--surface-hover);
+}
+
+.board-context:focus-visible {
+  outline: 3px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+
 .anchors-button {
   position: fixed;
   z-index: 30;
@@ -3948,6 +3999,12 @@ kbd {
   .spaces-button { top: 12px; left: 60px; }
   .anchors-button { top: 12px; left: 108px; }
   .theme-button { top: 12px; left: 156px; }
+  .board-context {
+    top: 62px;
+    left: 12px;
+    max-width: calc(100vw - 88px);
+    transform: none;
+  }
   .canvas-controls { top: 58px; right: 12px; bottom: auto; }
   .board-minimap {
     right: 12px;

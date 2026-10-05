@@ -81,6 +81,7 @@ import {
 import {
   DEFAULT_SPACE_ID,
   getBoardSpaces,
+  getSpace,
   getSpaces,
   getSpaceCapabilities,
   getThoughtSpaceId,
@@ -270,6 +271,8 @@ const anchorsDialog = document.querySelector('#anchors-dialog');
 const anchorsClose = document.querySelector('#anchors-close');
 const anchorsList = document.querySelector('#anchors-list');
 const spacesButton = document.querySelector('#spaces-button');
+const boardContext = document.querySelector('#board-context');
+const boardContextTitle = document.querySelector('#board-context-title');
 const canvasControls = document.querySelector('#canvas-controls');
 const canvasZoomIn = document.querySelector('#canvas-zoom-in');
 const canvasZoomOut = document.querySelector('#canvas-zoom-out');
@@ -391,6 +394,7 @@ let spatialLayoutMode = loadSpatialLayoutMode();
 let spatialScope = createAllSpatialScope();
 let spatialScopeVisibleCount = 0;
 let viewMode = 'canvas';
+let spacesOverviewReturnFocus = spacesButton;
 const initiallyRequestedSpaceId = readSpaceIdFromSearch(window.location.search);
 let activeSpaceId = (
   initiallyRequestedSpaceId
@@ -6750,12 +6754,24 @@ function findSpaceTileInDirection(tiles, currentTile, key) {
 
 function closeSpacesOverview({ restoreFocus = true } = {}) {
   if (viewMode !== 'spaces') return;
+  const focusTarget = spacesOverviewReturnFocus;
+  spacesOverviewReturnFocus = spacesButton;
   viewMode = 'canvas';
+  renderBoardContext();
   renderCanvasCamera();
   spacesOverview.hidden = true;
   if (isSpatialSpace(activeSpaceId)) void activateSpatialView();
   else renderThoughtInspector();
-  if (restoreFocus) spacesButton.focus();
+  if (restoreFocus) {
+    const target = (
+      focusTarget?.isConnected
+      && !focusTarget.hidden
+      && !focusTarget.disabled
+    )
+      ? focusTarget
+      : spacesButton;
+    target.focus();
+  }
 }
 
 function navigateToSpace(
@@ -6856,7 +6872,7 @@ function activateSpace(spaceId) {
   announce(`${label || 'Space'} opened.`);
 }
 
-function openSpacesOverview() {
+function openSpacesOverview({ returnFocus = spacesButton } = {}) {
   if (boardArrangeInFlight) {
     announce('Wait until the Board finishes arranging.');
     return;
@@ -6875,7 +6891,11 @@ function openSpacesOverview() {
   }
   saveThoughts();
 
+  spacesOverviewReturnFocus = returnFocus instanceof HTMLElement
+    ? returnFocus
+    : spacesButton;
   viewMode = 'spaces';
+  renderBoardContext();
   renderCanvasCamera();
   renderThoughtInspector();
   renderSpacesOverview();
@@ -6887,9 +6907,34 @@ function openSpacesOverview() {
   else if (isSpatialSpace(activeSpaceId)) spacesSpatialAction.focus();
 }
 
+function renderBoardContext() {
+  const visible = (
+    applicationReady
+    && viewMode === 'canvas'
+    && isCanvasSpace(activeSpaceId)
+  );
+
+  boardContext.hidden = !visible;
+  if (!visible) {
+    boardContextTitle.textContent = '';
+    boardContext.removeAttribute('title');
+    boardContext.removeAttribute('aria-label');
+    return;
+  }
+
+  const { label } = getSpace(activeSpaceId);
+  boardContextTitle.textContent = label;
+  boardContext.title = `Open Boards · ${label}`;
+  boardContext.setAttribute(
+    'aria-label',
+    `Open Boards. Current Board: ${label}`,
+  );
+}
+
 function updateUi() {
   const boardActive = isCanvasSpace(activeSpaceId);
   const spatialActive = isSpatialSpace(activeSpaceId);
+  renderBoardContext();
   const anchorsAvailable = boardActive || spatialActive;
   anchorsButton.hidden = !anchorsAvailable;
   if (!anchorsAvailable && anchorsDialog.open) anchorsDialog.close();
@@ -7400,7 +7445,12 @@ historyButton.addEventListener('click', () => {
   openHistory();
 });
 anchorsButton.addEventListener('click', openAnchors);
-spacesButton.addEventListener('click', openSpacesOverview);
+spacesButton.addEventListener('click', () => {
+  openSpacesOverview({ returnFocus: spacesButton });
+});
+boardContext.addEventListener('click', () => {
+  openSpacesOverview({ returnFocus: boardContext });
+});
 spacesSpatialAction.addEventListener('click', () => {
   const spatialSpace = getSpaces().find(({ id }) => isSpatialSpace(id));
   if (spatialSpace) navigateToSpace(spatialSpace.id);

@@ -78,6 +78,26 @@
           <path d="M20 15.5A8.5 8.5 0 0 1 8.5 4 8.5 8.5 0 1 0 20 15.5Z"></path>
         </svg>
       </button>
+      <button
+        class="board-context"
+        id="board-context"
+        type="button"
+        aria-controls="spaces-overview"
+        hidden
+      >
+        <span id="board-context-title"></span>
+        <svg
+          viewBox="0 0 16 16"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="1.7"
+          stroke-linecap="round"
+          stroke-linejoin="round"
+          aria-hidden="true"
+        >
+          <path d="m4 6 4 4 4-4"></path>
+        </svg>
+      </button>
       <div class="canvas-controls" id="canvas-controls" role="group" aria-label="Board zoom" hidden>
         <button class="canvas-zoom-step" id="canvas-zoom-in" type="button" aria-label="Zoom in" title="Zoom in">+</button>
         <button class="canvas-zoom-reset" id="canvas-reset-zoom" type="button" aria-label="Reset zoom" title="Reset zoom">100%</button>
