@@ -131,6 +131,11 @@ import {
   parseSsoFragment,
   parseTokenSession,
 } from './browser-session.js';
+import {
+  isTrustedTelegramConnectUrl,
+  normalizeTelegramConnection,
+  shouldRefreshTelegramConnection,
+} from './telegram-settings.js';
 import { MAX_THOUGHTS } from './app-limits.js';
 import {
   buildThoughtListPath,
@@ -290,8 +295,18 @@ const accountChevron = document.querySelector('#account-chevron');
 const accountPopover = document.querySelector('#account-popover');
 const accountMenuAvatar = document.querySelector('#account-menu-avatar');
 const accountEmail = document.querySelector('#account-email');
+const telegramSettingsMenuItem = document.querySelector('#telegram-settings');
 const switchAccountMenuItem = document.querySelector('#switch-account');
 const signOutMenuItem = document.querySelector('#sign-out');
+const telegramSettingsDialog = document.querySelector('#telegram-settings-dialog');
+const telegramSettingsClose = document.querySelector('#telegram-settings-close');
+const telegramSettingsStatus = document.querySelector('#telegram-settings-status');
+const telegramSettingsStatusLabel = document.querySelector('#telegram-settings-status-label');
+const telegramSettingsDescription = document.querySelector('#telegram-settings-description');
+const telegramSettingsError = document.querySelector('#telegram-settings-error');
+const telegramConnect = document.querySelector('#telegram-connect');
+const telegramCheckStatus = document.querySelector('#telegram-check-status');
+const telegramDisconnect = document.querySelector('#telegram-disconnect');
 const selectionToolbar = document.querySelector('#selection-toolbar');
 const selectionCount = document.querySelector('#selection-count');
 const selectionCancel = document.querySelector('#selection-cancel');
@@ -329,6 +344,11 @@ let syncOperationId = 0;
 let manualRefreshInFlight = null;
 let manualRefreshStatus = 'idle';
 let manualRefreshTimer = null;
+let telegramSettingsView = 'idle';
+let telegramSettingsErrorMessage = '';
+let telegramSettingsConnectUrl = null;
+let telegramSettingsRequest = null;
+let telegramSettingsActionInFlight = false;
 let serverThoughtsNextCursor = null;
 let serverThoughtsRequestId = 0;
 let historyThoughtIds = [];
@@ -7060,11 +7080,165 @@ function closeAccountMenu({ restoreFocus = false } = {}) {
   if (restoreFocus) accountTrigger.focus();
 }
 
+function renderTelegramSettings() {
+  const states = {
+    idle: {
+      label: 'Checking…',
+      description: 'Checking your Telegram connection.',
+    },
+    disconnected: {
+      label: 'Not connected',
+      description: (
+        'Connect once, then every private text message you send to the bot '
+        + 'can become a thought.'
+      ),
+    },
+    waiting: {
+      label: 'Waiting for Telegram',
+      description: (
+        'Press Start in Telegram, then return here. The connection link '
+        + 'expires after 10 minutes.'
+      ),
+    },
+    connected: {
+      label: 'Connected',
+      description: 'Messages sent to the bot are saved to this account.',
+    },
+  };
+  const view = states[telegramSettingsView] || states.idle;
+  const isLoading = telegramSettingsView === 'idle';
+  const isWaiting = telegramSettingsView === 'waiting';
+  const isConnected = telegramSettingsView === 'connected';
+
+  telegramSettingsStatus.dataset.state = telegramSettingsView;
+  telegramSettingsStatusLabel.textContent = view.label;
+  telegramSettingsDescription.textContent = view.description;
+  telegramSettingsError.textContent = telegramSettingsErrorMessage;
+  telegramSettingsError.hidden = !telegramSettingsErrorMessage;
+
+  telegramConnect.hidden = isLoading || isConnected;
+  telegramConnect.textContent = isWaiting ? 'Open Telegram' : 'Connect Telegram';
+  telegramCheckStatus.hidden = !isWaiting;
+  telegramDisconnect.hidden = !isConnected;
+
+  const disabled = telegramSettingsActionInFlight || Boolean(telegramSettingsRequest);
+  telegramConnect.disabled = disabled;
+  telegramCheckStatus.disabled = disabled;
+  telegramDisconnect.disabled = disabled;
+}
+
+async function loadTelegramConnection({ preserveWaiting = false } = {}) {
+  if (telegramSettingsRequest) return telegramSettingsRequest;
+
+  const keepWaiting = (
+    preserveWaiting
+    && telegramSettingsView === 'waiting'
+    && isTrustedTelegramConnectUrl(telegramSettingsConnectUrl)
+  );
+  telegramSettingsErrorMessage = '';
+  if (!keepWaiting) telegramSettingsView = 'idle';
+  renderTelegramSettings();
+
+  telegramSettingsRequest = requestApi('/integrations/telegram/account/')
+    .then((payload) => {
+      const connection = normalizeTelegramConnection(payload);
+      if (connection.connected) {
+        telegramSettingsView = 'connected';
+        telegramSettingsConnectUrl = null;
+      } else if (keepWaiting) {
+        telegramSettingsView = 'waiting';
+      } else {
+        telegramSettingsView = 'disconnected';
+        telegramSettingsConnectUrl = null;
+      }
+    })
+    .catch((error) => {
+      telegramSettingsView = keepWaiting ? 'waiting' : 'disconnected';
+      telegramSettingsErrorMessage = `Could not check Telegram: ${error.message}`;
+    })
+    .finally(() => {
+      telegramSettingsRequest = null;
+      renderTelegramSettings();
+    });
+
+  return telegramSettingsRequest;
+}
+
+function openTelegramSettings() {
+  if (!auth || telegramSettingsDialog.open) return;
+  closeAccountMenu();
+  telegramSettingsView = 'idle';
+  telegramSettingsErrorMessage = '';
+  telegramSettingsConnectUrl = null;
+  renderTelegramSettings();
+  telegramSettingsDialog.showModal();
+  void loadTelegramConnection();
+}
+
+async function connectTelegram() {
+  if (telegramSettingsActionInFlight) return;
+  if (
+    telegramSettingsView === 'waiting'
+    && isTrustedTelegramConnectUrl(telegramSettingsConnectUrl)
+  ) {
+    window.location.assign(telegramSettingsConnectUrl);
+    return;
+  }
+
+  telegramSettingsActionInFlight = true;
+  telegramSettingsErrorMessage = '';
+  renderTelegramSettings();
+  let connectUrl = null;
+
+  try {
+    const connection = normalizeTelegramConnection(await requestApi(
+      '/integrations/telegram/account/',
+      { method: 'POST', body: {} },
+    ));
+    if (connection.connected) {
+      telegramSettingsView = 'connected';
+      telegramSettingsConnectUrl = null;
+    } else if (isTrustedTelegramConnectUrl(connection.connectUrl)) {
+      telegramSettingsView = 'waiting';
+      telegramSettingsConnectUrl = connection.connectUrl;
+      connectUrl = connection.connectUrl;
+    } else {
+      throw new Error('The server returned an invalid Telegram link.');
+    }
+  } catch (error) {
+    telegramSettingsView = 'disconnected';
+    telegramSettingsErrorMessage = `Could not connect Telegram: ${error.message}`;
+  } finally {
+    telegramSettingsActionInFlight = false;
+    renderTelegramSettings();
+  }
+
+  if (connectUrl) window.location.assign(connectUrl);
+}
+
+async function disconnectTelegram() {
+  if (telegramSettingsActionInFlight) return;
+  telegramSettingsActionInFlight = true;
+  telegramSettingsErrorMessage = '';
+  renderTelegramSettings();
+
+  try {
+    await requestApi('/integrations/telegram/account/', { method: 'DELETE' });
+    telegramSettingsView = 'disconnected';
+    telegramSettingsConnectUrl = null;
+  } catch (error) {
+    telegramSettingsErrorMessage = `Could not disconnect Telegram: ${error.message}`;
+  } finally {
+    telegramSettingsActionInFlight = false;
+    renderTelegramSettings();
+  }
+}
+
 function toggleAccountMenu() {
   const willOpen = accountPopover.hidden;
   accountPopover.hidden = !willOpen;
   accountTrigger.setAttribute('aria-expanded', String(willOpen));
-  if (willOpen) switchAccountMenuItem.focus();
+  if (willOpen) telegramSettingsMenuItem.focus();
 }
 
 function updateAccountControl() {
@@ -7088,6 +7262,7 @@ function updateAccountControl() {
     accountTriggerLabel.textContent = 'Sign in';
     accountTrigger.title = 'Sign in';
     closeAccountMenu();
+    if (telegramSettingsDialog.open) telegramSettingsDialog.close();
     return;
   }
 
@@ -7417,6 +7592,7 @@ accountTrigger.addEventListener('click', () => {
   if (auth) toggleAccountMenu();
   else startLogin();
 });
+telegramSettingsMenuItem.addEventListener('click', openTelegramSettings);
 switchAccountMenuItem.addEventListener('click', () => {
   switchAccount();
 });
@@ -7432,6 +7608,31 @@ accountMenu.addEventListener('keydown', (event) => {
   if (event.key !== 'Escape') return;
   event.preventDefault();
   closeAccountMenu({ restoreFocus: true });
+});
+telegramSettingsClose.addEventListener('click', () => {
+  telegramSettingsDialog.close();
+});
+telegramSettingsDialog.addEventListener('click', (event) => {
+  if (event.target === telegramSettingsDialog) telegramSettingsDialog.close();
+});
+telegramSettingsDialog.addEventListener('close', () => {
+  telegramSettingsErrorMessage = '';
+  telegramSettingsConnectUrl = null;
+  telegramSettingsView = 'idle';
+});
+telegramConnect.addEventListener('click', () => void connectTelegram());
+telegramCheckStatus.addEventListener('click', () => {
+  void loadTelegramConnection({ preserveWaiting: true });
+});
+telegramDisconnect.addEventListener('click', () => void disconnectTelegram());
+document.addEventListener('visibilitychange', () => {
+  if (!shouldRefreshTelegramConnection({
+    dialogOpen: telegramSettingsDialog.open,
+    awaitingConnection: telegramSettingsView === 'waiting',
+    visibilityState: document.visibilityState,
+  })) return;
+
+  void loadTelegramConnection({ preserveWaiting: true });
 });
 historyButton.addEventListener('click', () => {
   if (connectionEditor && isSpatialSpace(activeSpaceId)) {

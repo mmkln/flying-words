@@ -127,6 +127,7 @@
             </span>
           </div>
           <div class="account-menu-divider" role="separator"></div>
+          <button id="telegram-settings" role="menuitem" type="button">Telegram…</button>
           <button id="switch-account" role="menuitem" type="button">Switch Account…</button>
           <div class="account-menu-divider" role="separator"></div>
           <button class="account-destructive" id="sign-out" role="menuitem" type="button">Sign Out</button>
@@ -507,6 +508,59 @@
           <footer>
             <button id="delete-board-cancel" type="button">Cancel</button>
             <button id="delete-board-confirm" type="button">Delete Board</button>
+          </footer>
+        </section>
+      </dialog>
+
+      <dialog
+        class="telegram-settings-dialog"
+        id="telegram-settings-dialog"
+        aria-labelledby="telegram-settings-title"
+      >
+        <section>
+          <header>
+            <span class="telegram-settings-icon" aria-hidden="true">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                <path d="m21 3-7.6 18-3.15-7.25L3 10.6 21 3Z"></path>
+                <path d="M10.25 13.75 21 3"></path>
+              </svg>
+            </span>
+            <div>
+              <h2 id="telegram-settings-title">Telegram</h2>
+              <p>Capture thoughts without opening the app.</p>
+            </div>
+            <button
+              class="telegram-settings-close"
+              id="telegram-settings-close"
+              type="button"
+              aria-label="Close Telegram settings"
+            >×</button>
+          </header>
+
+          <div
+            class="telegram-settings-status"
+            id="telegram-settings-status"
+            data-state="loading"
+            role="status"
+            aria-live="polite"
+          >
+            <span aria-hidden="true"></span>
+            <strong id="telegram-settings-status-label">Checking…</strong>
+          </div>
+          <p class="telegram-settings-description" id="telegram-settings-description">
+            Checking your Telegram connection.
+          </p>
+          <p
+            class="telegram-settings-error"
+            id="telegram-settings-error"
+            role="alert"
+            hidden
+          ></p>
+
+          <footer>
+            <button id="telegram-check-status" type="button" hidden>Check status</button>
+            <button class="telegram-disconnect" id="telegram-disconnect" type="button" hidden>Disconnect</button>
+            <button class="telegram-connect" id="telegram-connect" type="button" hidden>Connect Telegram</button>
           </footer>
         </section>
       </dialog>
