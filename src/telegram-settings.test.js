@@ -2,10 +2,17 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import {
+  getTelegramMenuLabel,
   isTrustedTelegramConnectUrl,
   normalizeTelegramConnection,
   shouldRefreshTelegramConnection,
 } from './telegram-settings.js';
+
+test('Telegram menu label describes the available action', () => {
+  assert.equal(getTelegramMenuLabel(null), 'Telegram Bot');
+  assert.equal(getTelegramMenuLabel(false), 'Connect Telegram Bot');
+  assert.equal(getTelegramMenuLabel(true), 'Telegram Bot');
+});
 
 test('Telegram connection response exposes only the supported state', () => {
   assert.deepEqual(normalizeTelegramConnection({ connected: true }), {

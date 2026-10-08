@@ -132,6 +132,7 @@ import {
   parseTokenSession,
 } from './browser-session.js';
 import {
+  getTelegramMenuLabel,
   isTrustedTelegramConnectUrl,
   normalizeTelegramConnection,
   shouldRefreshTelegramConnection,
@@ -344,6 +345,7 @@ let syncOperationId = 0;
 let manualRefreshInFlight = null;
 let manualRefreshStatus = 'idle';
 let manualRefreshTimer = null;
+let telegramAccountConnected = null;
 let telegramSettingsView = 'idle';
 let telegramSettingsErrorMessage = '';
 let telegramSettingsConnectUrl = null;
@@ -7080,6 +7082,12 @@ function closeAccountMenu({ restoreFocus = false } = {}) {
   if (restoreFocus) accountTrigger.focus();
 }
 
+function updateTelegramMenuItem() {
+  telegramSettingsMenuItem.textContent = getTelegramMenuLabel(
+    telegramAccountConnected,
+  );
+}
+
 function renderTelegramSettings() {
   const states = {
     idle: {
@@ -7142,6 +7150,8 @@ async function loadTelegramConnection({ preserveWaiting = false } = {}) {
   telegramSettingsRequest = requestApi('/integrations/telegram/account/')
     .then((payload) => {
       const connection = normalizeTelegramConnection(payload);
+      telegramAccountConnected = connection.connected;
+      updateTelegramMenuItem();
       if (connection.connected) {
         telegramSettingsView = 'connected';
         telegramSettingsConnectUrl = null;
@@ -7196,6 +7206,8 @@ async function connectTelegram() {
       { method: 'POST', body: {} },
     ));
     if (connection.connected) {
+      telegramAccountConnected = true;
+      updateTelegramMenuItem();
       telegramSettingsView = 'connected';
       telegramSettingsConnectUrl = null;
     } else if (isTrustedTelegramConnectUrl(connection.connectUrl)) {
@@ -7224,6 +7236,8 @@ async function disconnectTelegram() {
 
   try {
     await requestApi('/integrations/telegram/account/', { method: 'DELETE' });
+    telegramAccountConnected = false;
+    updateTelegramMenuItem();
     telegramSettingsView = 'disconnected';
     telegramSettingsConnectUrl = null;
   } catch (error) {
@@ -7345,6 +7359,7 @@ async function activateAuthenticatedAccount() {
   }
   replaceThoughts(mergeThoughts(cachedAccountThoughts, thoughtsToSync));
   updateAccountControl();
+  void loadTelegramConnection();
   if (legacyOutboxQuarantined) {
     announce('Older unsynced changes were paused to protect server data.');
   }
@@ -7409,6 +7424,8 @@ function clearAuthenticatedState(message) {
   window.clearTimeout(outboxRetryTimer);
   outboxRetryDelay = 2000;
   auth = null;
+  telegramAccountConnected = null;
+  updateTelegramMenuItem();
   accessToken = null;
   storeRefreshToken(null);
   sessionValidated = true;

@@ -11,6 +11,10 @@ export function normalizeTelegramConnection(payload) {
   };
 }
 
+export function getTelegramMenuLabel(connected) {
+  return connected === false ? 'Connect Telegram Bot' : 'Telegram Bot';
+}
+
 export function isTrustedTelegramConnectUrl(value) {
   try {
     const url = new URL(value);
