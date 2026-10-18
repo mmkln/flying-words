@@ -40,6 +40,7 @@ function createConnectionRow(item, group, disabled) {
 
   kind.className = 'spatial-connection-kind';
   kind.append(createKnowledgeKindIcon(item.kind));
+  kind.dataset.resolved = String(item.resolved === true);
   kind.setAttribute('aria-hidden', 'true');
 
   text.className = 'spatial-connection-text';

@@ -7,6 +7,7 @@ import {
   createThoughtDraft,
   getThoughtPresentation,
   getThoughtSearchText,
+  isThoughtResolved,
   normalizeHttpUrl,
   normalizeLinkInput,
   validateThoughtDraft,
@@ -24,6 +25,7 @@ test('link metadata stays separate from user-authored thought text', () => {
     text: 'My note about the source',
     meta_patch: {
       knowledge: { version: 1, kind: KnowledgeKind.LINK },
+      resolved: null,
       link: {
         version: 1,
         url: 'https://example.com/article',
@@ -45,6 +47,7 @@ test('draft restores link metadata without using the thought text as its title',
   assert.deepEqual(createThoughtDraft(thought), {
     kind: KnowledgeKind.LINK,
     text: 'Personal note',
+    resolved: false,
     linkUrl: 'https://example.com/',
     linkTitle: 'Example title',
   });
@@ -135,6 +138,7 @@ test('an attachment is preserved when the knowledge kind changes', () => {
     text: 'What follows from this?',
     meta_patch: {
       knowledge: { version: 1, kind: KnowledgeKind.QUESTION },
+      resolved: null,
       link: {
         version: 1,
         url: 'https://example.com/',
@@ -154,6 +158,7 @@ test('clearing an attachment removes only its metadata namespace', () => {
     text: 'Keep this authored observation',
     meta_patch: {
       knowledge: { version: 1, kind: KnowledgeKind.OBSERVATION },
+      resolved: null,
       link: null,
     },
   });
@@ -181,4 +186,24 @@ test('search corpus includes the note, page title, and URL', () => {
       link: { version: 1, url: 'https://example.com/economy', title: 'Page title' },
     },
   }), 'Personal note Page title https://example.com/economy');
+});
+
+test('resolved is an optional kind-independent thought state', () => {
+  assert.equal(isThoughtResolved({ meta: {} }), false);
+  assert.equal(isThoughtResolved({ meta: { resolved: false } }), false);
+  assert.equal(isThoughtResolved({ meta: { resolved: true } }), true);
+
+  const thought = {
+    text: 'A settled observation',
+    meta: {
+      knowledge: { version: 1, kind: KnowledgeKind.OBSERVATION },
+      resolved: true,
+    },
+  };
+
+  assert.equal(createThoughtDraft(thought).resolved, true);
+  assert.equal(createThoughtContentPatch({
+    ...createThoughtDraft(thought),
+    resolved: true,
+  }).meta_patch.resolved, true);
 });

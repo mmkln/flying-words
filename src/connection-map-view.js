@@ -3,7 +3,10 @@ import {
   renderKnowledgeKindTrigger,
 } from './knowledge-kind-picker.js';
 import { getThoughtKnowledgeKind } from './knowledge-kinds.js';
-import { getThoughtPresentation } from './thought-content.js';
+import {
+  getThoughtPresentation,
+  isThoughtResolved,
+} from './thought-content.js';
 import { zoomBoardCameraAtClientPoint } from './board-coordinate-space.js';
 import { getConnectionPathData } from './connection-map-edge-geometry.js';
 
@@ -57,7 +60,9 @@ function createThoughtCard(
   icon.className = 'connection-map-card-kind';
   icon.setAttribute('aria-haspopup', 'listbox');
   icon.setAttribute('aria-expanded', 'false');
-  renderKnowledgeKindTrigger(icon, getThoughtKnowledgeKind(thought));
+  renderKnowledgeKindTrigger(icon, getThoughtKnowledgeKind(thought), {
+    resolved: isThoughtResolved(thought),
+  });
   icon.addEventListener('click', () => onEditKind(thought.id, icon));
 
   text.className = 'connection-map-card-text';
@@ -161,6 +166,7 @@ function createSearchResult({ thought, selected }, onSelect) {
 
   icon.className = 'connection-map-result-kind';
   icon.append(createKnowledgeKindIcon(getThoughtKnowledgeKind(thought)));
+  icon.dataset.resolved = String(isThoughtResolved(thought));
   icon.setAttribute('aria-hidden', 'true');
   text.textContent = presentation.primaryText;
   direction.textContent = selected ? 'Selected' : '';

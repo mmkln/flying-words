@@ -74,15 +74,24 @@ export function createKnowledgeKindIcon(kind) {
   return createIcon(option.icon);
 }
 
-export function renderKnowledgeKindTrigger(trigger, kind) {
+export function renderKnowledgeKindTrigger(
+  trigger,
+  kind,
+  { resolved = false } = {},
+) {
   const normalizedKind = normalizeKnowledgeKind(kind);
   const option = KnowledgeKindOptions.find(
     ({ value }) => value === normalizedKind,
   );
   trigger.replaceChildren(createKnowledgeKindIcon(normalizedKind));
   trigger.dataset.kind = normalizedKind;
-  trigger.setAttribute('aria-label', `Knowledge type: ${option.label}`);
-  trigger.title = option.label;
+  trigger.dataset.resolved = String(resolved);
+  const resolvedLabel = resolved ? ', resolved' : '';
+  trigger.setAttribute(
+    'aria-label',
+    `Knowledge type: ${option.label}${resolvedLabel}`,
+  );
+  trigger.title = resolved ? `${option.label} · Resolved` : option.label;
 }
 
 export function createKnowledgeKindPicker({

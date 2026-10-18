@@ -3176,6 +3176,35 @@ kbd { padding: 1px 4px; border: 1px solid rgba(114,104,143,.25); border-bottom-w
 
 .thought-focus-kind-icon { flex: 0 0 auto; }
 
+.thought-focus-resolve {
+  min-height: 34px;
+  padding: 0 12px;
+  border: 1px solid var(--border-subtle);
+  border-radius: 10px;
+  color: var(--text-secondary);
+  cursor: pointer;
+  background: var(--surface-muted);
+  font: inherit;
+  font-size: 13px;
+  font-weight: 620;
+  transition: border-color .15s ease, color .15s ease, background .15s ease;
+}
+
+.thought-focus-resolve:hover {
+  border-color: var(--border-hover);
+  background: var(--surface-tint);
+}
+
+.thought-focus-resolve.is-active {
+  color: var(--text-secondary);
+  background: var(--surface-tint);
+}
+
+.thought-focus-resolve:focus-visible {
+  outline: 3px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+
 #thought-focus-editor {
   box-sizing: border-box;
   width: 100%;
@@ -4120,6 +4149,32 @@ kbd {
 :root[data-theme="dark"] .history-kind-icon[data-kind="research_result"] { --kind-color: #76b895; color: #76b895; }
 
 :root[data-theme="dark"] .knowledge-picker-option.is-selected { color: #fff; }
+
+.thought-card[data-resolved="true"] .thought-kind-icon,
+.history-kind-icon[data-resolved="true"],
+.connection-map-card-kind[data-resolved="true"],
+.connection-map-result-kind[data-resolved="true"],
+.connection-search-kind-icon[data-resolved="true"],
+.spatial-inspector-kind[data-resolved="true"],
+.spatial-connection-kind[data-resolved="true"],
+.thought-focus-kind-icon[data-resolved="true"] {
+  --kind-color: var(--text-tertiary);
+  color: var(--text-tertiary);
+  background: var(--surface-muted);
+}
+
+:root[data-theme="dark"] .thought-card[data-resolved="true"] .thought-kind-icon,
+:root[data-theme="dark"] .history-kind-icon[data-resolved="true"],
+:root[data-theme="dark"] .connection-map-card-kind[data-resolved="true"],
+:root[data-theme="dark"] .connection-map-result-kind[data-resolved="true"],
+:root[data-theme="dark"] .connection-search-kind-icon[data-resolved="true"],
+:root[data-theme="dark"] .spatial-inspector-kind[data-resolved="true"],
+:root[data-theme="dark"] .spatial-connection-kind[data-resolved="true"],
+:root[data-theme="dark"] .thought-focus-kind-icon[data-resolved="true"] {
+  --kind-color: var(--text-tertiary);
+  color: var(--text-tertiary);
+  background: var(--surface-muted);
+}
 
 .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
 

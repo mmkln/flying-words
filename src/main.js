@@ -23,6 +23,7 @@ import {
   createThoughtDraft,
   getThoughtPresentation,
   getThoughtSearchText,
+  isThoughtResolved,
   validateThoughtDraft,
 } from './thought-content.js';
 import {
@@ -324,6 +325,7 @@ const thoughtFocusForm = document.querySelector('#thought-focus-form');
 const thoughtFocusEditor = document.querySelector('#thought-focus-editor');
 const thoughtFocusCount = document.querySelector('#thought-focus-count');
 const thoughtFocusKind = document.querySelector('#thought-focus-kind');
+const thoughtFocusResolve = document.querySelector('#thought-focus-resolve');
 const thoughtFocusDiscard = document.querySelector('#thought-focus-discard');
 const linkFieldsTemplate = document.querySelector('#link-fields-template');
 const composerLinkFieldsRoot = document.querySelector('#composer-link-fields');
@@ -935,8 +937,16 @@ const thoughtEditor = createThoughtEditor({
   linkFields: editorLinkFields,
   counter: thoughtFocusCount,
   discardButton: thoughtFocusDiscard,
+  resolveButton: thoughtFocusResolve,
   maximum: MAX_THOUGHT_TEXT_LENGTH,
   warningThreshold: THOUGHT_TEXT_WARNING_THRESHOLD,
+  onResolvedChange(resolved) {
+    renderKnowledgeKindTrigger(
+      thoughtFocusKind,
+      thoughtEditor.getKind(),
+      { resolved },
+    );
+  },
   onSave({ thoughtId, draft }) {
     const thought = getThoughtById(thoughtId);
     if (!thought) return false;
@@ -1119,7 +1129,9 @@ function openThoughtKnowledgeKindPicker(
     onSelect(kind) {
       if (thoughtEditor.isOpen() && thoughtEditor.getThoughtId() === thought.id) {
         thoughtEditor.setKind(kind);
-        renderKnowledgeKindTrigger(thoughtFocusKind, kind);
+        renderKnowledgeKindTrigger(thoughtFocusKind, kind, {
+          resolved: thoughtEditor.getResolved(),
+        });
         window.requestAnimationFrame(() => {
           thoughtFocusEditor.focus({ preventScroll: true });
         });
@@ -1148,7 +1160,9 @@ function updateThoughtKnowledgeKind(thought, kind) {
 
   setThoughtKnowledgeKind(thought, kind);
   if (thoughtEditor.isOpen() && thoughtEditor.getThoughtId() === thought.id) {
-    renderKnowledgeKindTrigger(thoughtFocusKind, kind);
+    renderKnowledgeKindTrigger(thoughtFocusKind, kind, {
+      resolved: thoughtEditor.getResolved(),
+    });
     window.requestAnimationFrame(() => {
       thoughtFocusEditor.focus({ preventScroll: true });
     });
@@ -1668,6 +1682,7 @@ function renderSpatialConnections(thought, connectionIndex) {
         direction,
         text: getThoughtPresentation(connectedThought).primaryText,
         kind: getThoughtKnowledgeKind(connectedThought),
+        resolved: isThoughtResolved(connectedThought),
       };
     })
     .filter(Boolean);
@@ -1765,7 +1780,9 @@ function renderThoughtInspector() {
 
   const kind = getThoughtKnowledgeKind(thought);
   const presentation = getThoughtPresentation(thought);
-  renderKnowledgeKindTrigger(spatialInspectorKind, kind);
+  renderKnowledgeKindTrigger(spatialInspectorKind, kind, {
+    resolved: isThoughtResolved(thought),
+  });
   spatialInspectorKindLabel.textContent = getKnowledgeKindLabel(kind);
   spatialInspectorText.textContent = thought.text;
   spatialInspectorResource.hidden = !presentation.href;
@@ -3507,7 +3524,9 @@ function renderConnectionSearchResults() {
     });
 
     kindIcon.className = 'connection-search-kind-icon';
-    renderKnowledgeKindTrigger(kindIcon, getThoughtKnowledgeKind(thought));
+    renderKnowledgeKindTrigger(kindIcon, getThoughtKnowledgeKind(thought), {
+      resolved: isThoughtResolved(thought),
+    });
     text.className = 'connection-search-text';
     text.textContent = presentation.primaryText;
     state.className = 'connection-search-state';
@@ -5821,14 +5840,16 @@ function startThoughtTextEditing(thought, { kind, origin = 'space' } = {}) {
 
   knowledgeKindPicker.close();
   if (origin !== 'connection-map') selectThought(thought);
+  const draft = createThoughtDraft(thought, { kind });
   renderKnowledgeKindTrigger(
     thoughtFocusKind,
-    kind || getThoughtKnowledgeKind(thought),
+    draft.kind,
+    { resolved: draft.resolved },
   );
   thoughtEditor.open({
     thoughtId: thought.id,
     origin,
-    draft: createThoughtDraft(thought, { kind }),
+    draft,
   });
 }
 
@@ -5857,10 +5878,15 @@ function renderThought(thought) {
     );
   }
   const kind = getThoughtKnowledgeKind(thought);
-  if (thought.element.dataset.knowledgeKind !== kind) {
-    const kindButton = thought.element.querySelector('.thought-kind-button');
+  const resolved = isThoughtResolved(thought);
+  const kindButton = thought.element.querySelector('.thought-kind-button');
+  thought.element.dataset.resolved = String(resolved);
+  if (
+    thought.element.dataset.knowledgeKind !== kind
+    || kindButton.dataset.resolved !== String(resolved)
+  ) {
     thought.element.dataset.knowledgeKind = kind;
-    renderKnowledgeKindTrigger(kindButton, kind);
+    renderKnowledgeKindTrigger(kindButton, kind, { resolved });
   }
   thought.element.style.transform = `translate3d(${thought.x}px, ${thought.y}px, 0) rotate(${canvasThought ? 0 : thought.rotation}deg)`;
   const pinButton = thought.element.querySelector('.pin-button');
@@ -6326,7 +6352,9 @@ function renderHistory() {
       kindButton.className = 'history-kind-icon history-kind-button';
       kindButton.setAttribute('aria-haspopup', 'listbox');
       kindButton.setAttribute('aria-expanded', 'false');
-      renderKnowledgeKindTrigger(kindButton, kind);
+      renderKnowledgeKindTrigger(kindButton, kind, {
+        resolved: isThoughtResolved(thought),
+      });
       contentButton.type = 'button';
       contentButton.className = 'history-item-content';
       text.className = 'history-item-text';
@@ -6402,7 +6430,9 @@ function renderAnchors() {
 
     row.className = 'history-item anchor-item';
     kindIcon.className = 'history-kind-icon anchor-kind-icon';
-    renderKnowledgeKindTrigger(kindIcon, getThoughtKnowledgeKind(thought));
+    renderKnowledgeKindTrigger(kindIcon, getThoughtKnowledgeKind(thought), {
+      resolved: isThoughtResolved(thought),
+    });
 
     contentButton.type = 'button';
     contentButton.className = 'history-item-content';

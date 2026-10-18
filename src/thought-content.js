@@ -65,11 +65,16 @@ export function createLinkMeta({ url, title = '' }) {
   };
 }
 
+export function isThoughtResolved(thought) {
+  return thought?.meta?.resolved === true;
+}
+
 export function createThoughtDraft(thought = null, { kind } = {}) {
   const link = getThoughtLink(thought);
   return {
     kind: normalizeKnowledgeKind(kind ?? getThoughtKnowledgeKind(thought)),
     text: typeof thought?.text === 'string' ? thought.text : '',
+    resolved: isThoughtResolved(thought),
     linkUrl: link?.url || '',
     linkTitle: link?.title || '',
   };
@@ -121,6 +126,7 @@ export function createThoughtContentPatch(draft) {
   const normalizedUrl = normalizeHttpUrl(draft?.linkUrl);
   const metaPatch = {
     knowledge: createKnowledgeMeta(kind),
+    resolved: draft?.resolved === true ? true : null,
     link: normalizedUrl
       ? createLinkMeta({
           url: normalizedUrl,

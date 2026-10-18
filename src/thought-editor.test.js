@@ -16,22 +16,39 @@ function createEditorHarness({ onSave = () => true, onClose = () => {} } = {}) {
   textarea.setSelectionRange = () => {};
 
   const discardButton = new EventTarget();
+  const resolveButton = new EventTarget();
+  const activeClasses = new Set();
+  resolveButton.textContent = '';
+  resolveButton.attributes = new Map();
+  resolveButton.setAttribute = (name, value) => {
+    resolveButton.attributes.set(name, value);
+  };
+  resolveButton.classList = {
+    contains: (name) => activeClasses.has(name),
+    toggle: (name, force) => {
+      if (force) activeClasses.add(name);
+      else activeClasses.delete(name);
+    },
+  };
   const counter = { hidden: true, textContent: '' };
   const linkFields = {
     getValue: () => ({ url: '', title: '' }),
     setValue: () => {},
   };
 
-  return createThoughtEditor({
+  const editor = createThoughtEditor({
     dialog,
     form,
     textarea,
     linkFields,
     counter,
     discardButton,
+    resolveButton,
     onSave,
     onClose,
   });
+  editor.resolveButton = resolveButton;
+  return editor;
 }
 
 test('one editor keeps its explicit thought and origin for Connections', () => {
@@ -64,6 +81,39 @@ test('one editor keeps its explicit thought and origin for Connections', () => {
   }
 });
 
+test('resolved changes stay in the draft until the editor is saved', () => {
+  const previousAnimationFrame = globalThis.requestAnimationFrame;
+  globalThis.requestAnimationFrame = (callback) => callback();
+  try {
+    let saved = null;
+    const editor = createEditorHarness({
+      onSave: (value) => { saved = value; return true; },
+    });
+
+    editor.open({
+      thoughtId: 'thought-resolved',
+      draft: {
+        kind: 'observation',
+        text: 'Settled',
+        resolved: false,
+        linkUrl: '',
+        linkTitle: '',
+      },
+    });
+    editor.resolveButton.dispatchEvent(new Event('click'));
+
+    assert.equal(editor.getResolved(), true);
+    assert.equal(editor.resolveButton.textContent, 'Resolved');
+    assert.equal(editor.resolveButton.attributes.get('aria-pressed'), 'true');
+    assert.equal(saved, null);
+
+    editor.save();
+    assert.equal(saved.draft.resolved, true);
+  } finally {
+    globalThis.requestAnimationFrame = previousAnimationFrame;
+  }
+});
+
 test('discarding a Connections edit closes without saving', () => {
   const previousAnimationFrame = globalThis.requestAnimationFrame;
   globalThis.requestAnimationFrame = (callback) => callback();
@@ -80,6 +130,8 @@ test('discarding a Connections edit closes without saving', () => {
       origin: 'connection-map',
       draft: { kind: 'thought', text: 'Draft', linkUrl: '', linkTitle: '' },
     });
+    editor.resolveButton.dispatchEvent(new Event('click'));
+    assert.equal(editor.getResolved(), true);
     editor.discard();
 
     assert.equal(saveCount, 0);
