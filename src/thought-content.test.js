@@ -5,6 +5,7 @@ import { KnowledgeKind } from './knowledge-kinds.js';
 import {
   createThoughtContentPatch,
   createThoughtDraft,
+  getThoughtCardPreviewText,
   getThoughtPresentation,
   getThoughtSearchText,
   isThoughtResolved,
@@ -12,6 +13,29 @@ import {
   normalizeLinkInput,
   validateThoughtDraft,
 } from './thought-content.js';
+
+test('card preview stops at the first explicit line break', () => {
+  assert.equal(
+    getThoughtCardPreviewText('Title\nDescription'),
+    'Title',
+  );
+  assert.equal(
+    getThoughtCardPreviewText('Title\n\nDescription'),
+    'Title',
+  );
+  assert.equal(
+    getThoughtCardPreviewText('Title\r\nDescription'),
+    'Title',
+  );
+  assert.equal(
+    getThoughtCardPreviewText('\n\nTitle\nDescription'),
+    'Title',
+  );
+  assert.equal(
+    getThoughtCardPreviewText('A title without explicit line breaks'),
+    'A title without explicit line breaks',
+  );
+});
 
 test('link metadata stays separate from user-authored thought text', () => {
   const draft = {

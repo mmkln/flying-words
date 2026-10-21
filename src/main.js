@@ -21,6 +21,7 @@ import { createLinkFields } from './link-fields.js';
 import {
   createThoughtContentPatch,
   createThoughtDraft,
+  getThoughtCardPreviewText,
   getThoughtPresentation,
   getThoughtSearchText,
   isThoughtResolved,
@@ -3699,7 +3700,7 @@ function makeThought(
     height: 0,
   };
 
-  textElement.textContent = text;
+  textElement.textContent = getThoughtCardPreviewText(text);
   if (deferReveal) {
     element.style.visibility = 'hidden';
   }
@@ -5858,7 +5859,9 @@ function renderThought(thought) {
   const textElement = thought.element.querySelector('.thought-text');
   const resourceHost = thought.element.querySelector('.thought-resource-host');
   const presentation = getThoughtPresentation(thought);
-  textElement.textContent = presentation.primaryText;
+  textElement.textContent = getThoughtCardPreviewText(
+    presentation.primaryText,
+  );
   resourceHost.hidden = !presentation.hostname;
   resourceHost.textContent = presentation.hostname;
 

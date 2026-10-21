@@ -12,6 +12,11 @@ function cleanString(value) {
   return typeof value === 'string' ? value.trim() : '';
 }
 
+export function getThoughtCardPreviewText(value) {
+  const text = typeof value === 'string' ? value.trimStart() : '';
+  return text.split(/\r?\n/, 1)[0].trimEnd();
+}
+
 export function normalizeHttpUrl(value) {
   const rawUrl = cleanString(value);
   if (!rawUrl || rawUrl.length > MAX_LINK_URL_LENGTH) return null;
