@@ -15,6 +15,31 @@ export function clientPointToBoardWorld(point, bounds, camera) {
 }
 
 /**
+ * Convert a visible browser rectangle into stable Board world bounds. The
+ * placement layer can then prefer what the user can currently see without
+ * depending on DOM APIs or camera implementation details.
+ */
+export function clientRectToBoardWorldBounds(rect, canvasBounds, camera) {
+  const topLeft = clientPointToBoardWorld(
+    { x: rect.left, y: rect.top },
+    canvasBounds,
+    camera,
+  );
+  const bottomRight = clientPointToBoardWorld(
+    { x: rect.right, y: rect.bottom },
+    canvasBounds,
+    camera,
+  );
+
+  return {
+    left: topLeft.x,
+    top: topLeft.y,
+    right: bottomRight.x,
+    bottom: bottomRight.y,
+  };
+}
+
+/**
  * Keep a manually dragged card exactly under the pointer. This intentionally
  * has no bounds, snapping, gap, or collision policy: Board is unbounded and
  * the user's chosen position wins.

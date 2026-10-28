@@ -4,6 +4,7 @@ import test from 'node:test';
 import {
   boardWorldToClientPoint,
   clientPointToBoardWorld,
+  clientRectToBoardWorldBounds,
   getManualBoardDragPosition,
   getBoardSpawnGap,
   zoomBoardCameraAtClientPoint,
@@ -33,6 +34,17 @@ test('converts Board pointer coordinates correctly at every supported zoom', () 
     assert.ok(Math.abs(restored.x - worldPoint.x) < 0.000001);
     assert.ok(Math.abs(restored.y - worldPoint.y) < 0.000001);
   });
+});
+
+test('converts visible client bounds into stable Board coordinates', () => {
+  assert.deepEqual(
+    clientRectToBoardWorldBounds(
+      { left: 100, top: 80, right: 900, bottom: 600 },
+      { left: 20, top: 10 },
+      { x: -200, y: 100, scale: 0.5 },
+    ),
+    { left: 560, top: -60, right: 2160, bottom: 980 },
+  );
 });
 
 test('keeps the Board spawn gap in world coordinates at every zoom', () => {

@@ -1,0 +1,392 @@
+<!doctype html>
+<html lang="uk">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Карта розуміння</title>
+  <style>
+    :root {
+      color-scheme: light dark;
+      --bg: light-dark(#f5f5f7, #101012);
+      --surface: light-dark(rgba(255,255,255,.86), rgba(30,30,33,.88));
+      --surface-solid: light-dark(#ffffff, #1e1e21);
+      --text: light-dark(#1d1d1f, #f5f5f7);
+      --muted: light-dark(#6e6e73, #a1a1a6);
+      --line: light-dark(rgba(60,60,67,.17), rgba(235,235,245,.16));
+      --soft: light-dark(#ececf2, #29292d);
+      --accent: #6e5ad7;
+      --accent-soft: light-dark(#eeebff, #2b2545);
+      --blue: #377cf6;
+      --green: #2f9f68;
+      --orange: #d97820;
+      --red: #d74848;
+      --radius: 18px;
+      --shadow: 0 18px 45px rgba(0,0,0,.08);
+    }
+    * { box-sizing: border-box; }
+    html { background: var(--bg); }
+    body {
+      margin: 0;
+      min-width: 320px;
+      color: var(--text);
+      background:
+        radial-gradient(circle at 15% 4%, color-mix(in srgb, var(--accent) 8%, transparent), transparent 34rem),
+        var(--bg);
+      font: 15px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+    button, input, select { font: inherit; }
+    button { color: inherit; }
+    .app { max-width: 1540px; margin: 0 auto; padding: 28px; }
+    .topbar { display: flex; align-items: flex-start; justify-content: space-between; gap: 24px; }
+    h1 { margin: 0; font-size: clamp(28px, 4vw, 46px); line-height: 1.03; letter-spacing: -.035em; font-weight: 600; }
+    h2, h3 { margin: 0; font-weight: 600; letter-spacing: -.015em; }
+    h2 { font-size: 22px; }
+    h3 { font-size: 16px; }
+    p { margin: 0; }
+    .eyebrow { margin-bottom: 7px; color: var(--accent); font-size: 12px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; }
+    .subtitle { max-width: 720px; margin-top: 11px; color: var(--muted); }
+    .snapshot { color: var(--muted); text-align: right; white-space: nowrap; }
+    .snapshot strong { display: block; color: var(--text); font-size: 22px; font-weight: 600; }
+    .toolbar { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin: 26px 0 18px; }
+    .tabs { display: inline-flex; gap: 4px; padding: 4px; border: 1px solid var(--line); border-radius: 12px; background: var(--surface); }
+    .tab { border: 0; border-radius: 9px; padding: 8px 13px; background: transparent; cursor: pointer; }
+    .tab[aria-selected="true"] { color: white; background: var(--accent); }
+    .search { width: min(420px, 48vw); border: 1px solid var(--line); border-radius: 12px; padding: 10px 13px; color: var(--text); background: var(--surface); outline: none; }
+    .search:focus { border-color: color-mix(in srgb, var(--accent) 60%, var(--line)); box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 15%, transparent); }
+    .view[hidden] { display: none; }
+    .map-layout { display: grid; grid-template-columns: 250px minmax(420px, 1fr) 360px; gap: 14px; align-items: stretch; }
+    .surface { border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface); backdrop-filter: blur(24px); box-shadow: var(--shadow); }
+    .theme-nav { padding: 10px; }
+    .theme-nav button { width: 100%; display: grid; grid-template-columns: 8px 1fr auto; align-items: center; gap: 10px; border: 0; border-radius: 11px; padding: 10px; text-align: left; background: transparent; cursor: pointer; }
+    .theme-nav button:hover { background: var(--soft); }
+    .theme-nav button[aria-current="true"] { background: var(--accent-soft); }
+    .theme-nav .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--theme-color, var(--accent)); }
+    .theme-nav .count { color: var(--muted); font-variant-numeric: tabular-nums; }
+    .graph-wrap { min-height: 680px; overflow: hidden; position: relative; }
+    #theme-graph { width: 100%; height: 680px; display: block; }
+    .graph-edge { stroke: var(--line); stroke-width: 1.2; }
+    .graph-edge.is-related { stroke: color-mix(in srgb, var(--accent) 48%, var(--line)); stroke-width: 2; }
+    .graph-node { cursor: pointer; }
+    .graph-node circle { fill: var(--surface-solid); stroke: var(--node-color); stroke-width: 2; transition: transform .15s ease, fill .15s ease; transform-box: fill-box; transform-origin: center; }
+    .graph-node:hover circle, .graph-node.is-selected circle { transform: scale(1.05); fill: var(--accent-soft); }
+    .graph-node text { fill: var(--text); pointer-events: none; text-anchor: middle; font-size: 12px; font-weight: 600; }
+    .graph-node .node-count { fill: var(--muted); font-size: 11px; font-weight: 500; }
+    .legend { position: absolute; left: 16px; bottom: 14px; color: var(--muted); font-size: 12px; }
+    .inspector { padding: 20px; overflow: hidden; }
+    .inspector .summary { margin-top: 10px; color: var(--muted); }
+    .meta-row { display: flex; flex-wrap: wrap; gap: 7px; margin-top: 14px; }
+    .tag { border-radius: 999px; padding: 5px 8px; color: var(--muted); background: var(--soft); font-size: 12px; }
+    .section-title { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; margin: 22px 0 8px; }
+    .section-title span { color: var(--muted); font-size: 12px; }
+    .subthemes, .source-list, .conclusion-list { display: grid; gap: 8px; }
+    .row-button { width: 100%; border: 0; border-radius: 12px; padding: 10px 11px; text-align: left; color: var(--text); background: var(--soft); cursor: pointer; }
+    .row-button:hover { background: var(--accent-soft); }
+    .row-title { display: flex; justify-content: space-between; gap: 12px; font-weight: 600; }
+    .row-title span:last-child { color: var(--muted); font-weight: 500; }
+    .row-preview { display: -webkit-box; margin-top: 4px; overflow: hidden; color: var(--muted); font-size: 13px; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
+    .empty { padding: 36px; color: var(--muted); text-align: center; }
+    .conclusions { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
+    .conclusion { padding: 21px; }
+    .conclusion p { margin-top: 10px; color: var(--muted); }
+    .conclusion footer { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-top: 16px; }
+    .status { color: var(--accent); font-size: 12px; font-weight: 600; }
+    .source-links { display: flex; gap: 4px; }
+    .source-link { width: 27px; height: 27px; border: 0; border-radius: 50%; color: var(--muted); background: var(--soft); cursor: pointer; }
+    .source-link:hover { color: white; background: var(--accent); }
+    .sources-toolbar { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; margin-bottom: 12px; }
+    .kind-filter { border: 1px solid var(--line); border-radius: 12px; padding: 9px 12px; color: var(--text); background: var(--surface); }
+    .filter-button { border: 1px solid var(--line); border-radius: 12px; padding: 9px 12px; color: var(--text); background: var(--surface); cursor: pointer; }
+    .filter-button[aria-pressed="true"] { color: white; border-color: var(--accent); background: var(--accent); }
+    .semantic-filter { display: inline-flex; align-items: center; gap: 8px; min-width: 0; padding: 7px 8px 7px 11px; border-radius: 12px; color: var(--muted); background: var(--soft); }
+    .semantic-filter[hidden] { display: none; }
+    .semantic-filter span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .clear-filter { width: 26px; height: 26px; flex: 0 0 auto; border: 0; border-radius: 50%; color: var(--muted); background: var(--surface-solid); cursor: pointer; }
+    .sources { padding: 12px; }
+    .source-list { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .source-item { padding: 13px; border-bottom: 1px solid var(--line); }
+    .source-item header { display: flex; align-items: center; gap: 8px; color: var(--muted); font-size: 12px; }
+    .source-item p { margin-top: 7px; white-space: pre-wrap; }
+    .source-item code { margin-left: auto; color: var(--muted); font: 11px ui-monospace, SFMono-Regular, Consolas, monospace; }
+    dialog { width: min(680px, calc(100vw - 32px)); max-height: min(760px, calc(100vh - 32px)); border: 1px solid var(--line); border-radius: 20px; padding: 0; color: var(--text); background: var(--surface-solid); box-shadow: 0 30px 90px rgba(0,0,0,.28); }
+    dialog::backdrop { background: rgba(0,0,0,.32); backdrop-filter: blur(8px); }
+    .dialog-head { display: flex; justify-content: space-between; gap: 16px; padding: 18px 20px; border-bottom: 1px solid var(--line); }
+    .dialog-body { padding: 20px; overflow: auto; }
+    .dialog-body p { white-space: pre-wrap; }
+    .close { width: 32px; height: 32px; border: 0; border-radius: 50%; background: var(--soft); cursor: pointer; }
+    .provenance { margin-top: 18px; padding-top: 14px; border-top: 1px solid var(--line); color: var(--muted); font-size: 12px; white-space: pre-line; }
+    @media (max-width: 1120px) {
+      .map-layout { grid-template-columns: 220px 1fr; }
+      .inspector { grid-column: 1 / -1; }
+      .graph-wrap, #theme-graph { min-height: 600px; height: 600px; }
+    }
+    @media (max-width: 720px) {
+      .app { padding: 18px 12px; }
+      .topbar, .toolbar { align-items: stretch; flex-direction: column; }
+      .snapshot { text-align: left; }
+      .search { width: 100%; }
+      .map-layout { grid-template-columns: 1fr; }
+      .theme-nav { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      .graph-wrap, #theme-graph { min-height: 500px; height: 500px; }
+      .conclusions, .source-list { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body>
+  <main class="app">
+    <header class="topbar">
+      <div>
+        <div class="eyebrow">Flying Thoughts · local synthesis</div>
+        <h1>Карта розуміння</h1>
+        <p class="subtitle" id="scope"></p>
+      </div>
+      <div class="snapshot"><strong id="source-count"></strong><span id="source-coverage">оригінальних думок</span></div>
+    </header>
+
+    <div class="toolbar">
+      <nav class="tabs" aria-label="Режим карти">
+        <button class="tab" type="button" data-view="map" aria-selected="true">Карта</button>
+        <button class="tab" type="button" data-view="conclusions" aria-selected="false">Висновки</button>
+        <button class="tab" type="button" data-view="sources" aria-selected="false">Джерела</button>
+      </nav>
+      <input class="search" id="global-search" type="search" placeholder="Знайти думку, тему або UUID…" aria-label="Пошук по карті">
+    </div>
+
+    <section class="view" id="view-map">
+      <div class="map-layout">
+        <nav class="surface theme-nav" id="theme-nav" aria-label="Теми"></nav>
+        <div class="surface graph-wrap">
+          <svg id="theme-graph" role="img" aria-label="Граф основних тем"></svg>
+          <div class="legend">Розмір вузла = кількість джерел · лінія = синтезований зв'язок</div>
+        </div>
+        <aside class="surface inspector" id="inspector"></aside>
+      </div>
+    </section>
+
+    <section class="view" id="view-conclusions" hidden>
+      <div class="conclusions" id="conclusions"></div>
+    </section>
+
+    <section class="view" id="view-sources" hidden>
+      <div class="sources-toolbar">
+        <select class="kind-filter" id="kind-filter" aria-label="Тип думки"><option value="">Усі типи</option></select>
+        <button class="filter-button" id="review-filter" type="button" aria-pressed="false">Потребує перегляду</button>
+        <div class="semantic-filter" id="semantic-filter" hidden><span id="semantic-filter-label"></span><button class="clear-filter" id="clear-semantic-filter" type="button" aria-label="Очистити фільтр">×</button></div>
+      </div>
+      <div class="surface sources"><div class="source-list" id="source-list"></div><div class="empty" id="source-empty" hidden>Нічого не знайдено</div></div>
+    </section>
+  </main>
+
+  <dialog id="source-dialog">
+    <div class="dialog-head"><div><div class="eyebrow" id="dialog-kind"></div><h2 id="dialog-title"></h2></div><button class="close" type="button" aria-label="Закрити">×</button></div>
+    <div class="dialog-body"><p id="dialog-text"></p><div class="provenance" id="dialog-provenance"></div></div>
+  </dialog>
+
+  <script>
+    const DATA = __KNOWLEDGE_MAP_DATA__;
+    const COLORS = ["#6e5ad7", "#377cf6", "#2f9f68", "#d97820", "#c34fa0", "#1f9aa7", "#d74848"];
+    const themeById = new Map(DATA.themes.map((theme, index) => [theme.id, {...theme, color: COLORS[index % COLORS.length]}]));
+    const subthemeById = new Map(DATA.themes.flatMap(theme => theme.subthemes.map(subtheme => [subtheme.id, {...subtheme, theme_id: theme.id}])));
+    const sourceById = new Map(DATA.sources.map(source => [source.id, source]));
+    let selectedThemeId = DATA.themes[0]?.id;
+    let selectedSubthemeId = null;
+    let reviewOnly = false;
+    let activeView = "map";
+    let query = "";
+
+    document.getElementById("scope").textContent = DATA.scope;
+    document.getElementById("source-count").textContent = DATA.coverage.thought_count.toLocaleString("uk-UA");
+    document.getElementById("source-coverage").textContent = `${DATA.coverage.semantic_assigned_count.toLocaleString("uk-UA")} класифіковано · ${DATA.coverage.semantic_needs_review_count.toLocaleString("uk-UA")} потребують перегляду`;
+
+    function normalize(value) {
+      return String(value || "").toLocaleLowerCase("uk-UA").normalize("NFKC");
+    }
+
+    function matches(value) {
+      if (!query) return true;
+      const haystack = normalize(value);
+      return query.split(/\s+/).filter(Boolean).every(token => haystack.includes(token));
+    }
+
+    function escapeHtml(value) {
+      return String(value).replace(/[&<>"]/g, char => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[char]));
+    }
+
+    function openSource(id) {
+      const source = sourceById.get(id);
+      if (!source) return;
+      document.getElementById("dialog-kind").textContent = source.kind.replaceAll("_", " ");
+      document.getElementById("dialog-title").textContent = source.id;
+      document.getElementById("dialog-text").textContent = source.text;
+      const p = source.provenance || {};
+      const classification = subthemeById.get(source.subtheme_id);
+      const semantic = classification ? `${themeById.get(source.theme_id)?.title} → ${classification.title} · ${source.semantic_confidence}` : "Потребує семантичного перегляду";
+      document.getElementById("dialog-provenance").textContent = `${semantic}\n${p.origin || "unknown"} · ${p.actor || "unknown"} · ${p.channel || "unknown"} · ${source.created_at}`;
+      document.getElementById("source-dialog").showModal();
+    }
+
+    function renderThemeNav() {
+      const nav = document.getElementById("theme-nav");
+      nav.innerHTML = DATA.themes.map((raw, index) => {
+        const theme = themeById.get(raw.id);
+        return `<button type="button" data-theme="${theme.id}" aria-current="${theme.id === selectedThemeId}">
+          <span class="dot" style="--theme-color:${theme.color}"></span><span>${escapeHtml(theme.title)}</span><span class="count">${theme.size}</span>
+        </button>`;
+      }).join("");
+      nav.querySelectorAll("button").forEach(button => button.addEventListener("click", () => selectTheme(button.dataset.theme)));
+    }
+
+    function graphPositions() {
+      const width = 1000, height = 680, cx = width / 2, cy = height / 2;
+      const nodes = DATA.themes.map((theme, index) => ({
+        id: theme.id,
+        x: cx + Math.cos(index / DATA.themes.length * Math.PI * 2) * 335,
+        y: cy + Math.sin(index / DATA.themes.length * Math.PI * 2) * 250,
+        vx: 0, vy: 0,
+      }));
+      const byId = new Map(nodes.map(node => [node.id, node]));
+      for (let tick = 0; tick < 280; tick += 1) {
+        for (let i = 0; i < nodes.length; i += 1) for (let j = i + 1; j < nodes.length; j += 1) {
+          const a = nodes[i], b = nodes[j], dx = b.x - a.x || .1, dy = b.y - a.y || .1;
+          const distance2 = dx * dx + dy * dy, force = 9000 / Math.max(distance2, 2500);
+          const distance = Math.sqrt(distance2);
+          a.vx -= dx / distance * force; a.vy -= dy / distance * force;
+          b.vx += dx / distance * force; b.vy += dy / distance * force;
+        }
+        for (const relation of DATA.relations) {
+          const a = byId.get(relation.source), b = byId.get(relation.target);
+          const dx = b.x - a.x, dy = b.y - a.y, distance = Math.sqrt(dx * dx + dy * dy) || 1;
+          const force = (distance - 235) * .0034;
+          a.vx += dx / distance * force; a.vy += dy / distance * force;
+          b.vx -= dx / distance * force; b.vy -= dy / distance * force;
+        }
+        for (const node of nodes) {
+          node.vx += (cx - node.x) * .0008; node.vy += (cy - node.y) * .0008;
+          node.vx *= .82; node.vy *= .82; node.x += node.vx; node.y += node.vy;
+          node.x = Math.max(95, Math.min(width - 95, node.x)); node.y = Math.max(70, Math.min(height - 70, node.y));
+        }
+      }
+      return {nodes, byId};
+    }
+
+    function renderGraph() {
+      const svg = document.getElementById("theme-graph");
+      svg.setAttribute("viewBox", "0 0 1000 680");
+      const {nodes, byId} = graphPositions();
+      const selectedRelations = new Set(DATA.relations.filter(r => r.source === selectedThemeId || r.target === selectedThemeId).map(r => `${r.source}:${r.target}`));
+      const edges = DATA.relations.map(relation => {
+        const a = byId.get(relation.source), b = byId.get(relation.target);
+        const related = selectedRelations.has(`${relation.source}:${relation.target}`);
+        return `<line class="graph-edge ${related ? "is-related" : ""}" x1="${a.x}" y1="${a.y}" x2="${b.x}" y2="${b.y}"><title>${escapeHtml(relation.label)}</title></line>`;
+      }).join("");
+      const nodeMarkup = nodes.map(node => {
+        const theme = themeById.get(node.id);
+        const radius = 28 + Math.sqrt(theme.size) * 1.55;
+        const words = theme.title.split(" ");
+        const lines = [];
+        let line = "";
+        for (const word of words) {
+          if ((line + " " + word).trim().length > 23 && line) { lines.push(line); line = word; } else line = (line + " " + word).trim();
+        }
+        if (line) lines.push(line);
+        return `<g class="graph-node ${theme.id === selectedThemeId ? "is-selected" : ""}" data-theme="${theme.id}" transform="translate(${node.x} ${node.y})" style="--node-color:${theme.color}">
+          <circle r="${radius}"></circle>
+          ${lines.slice(0, 3).map((text, index) => `<text y="${(index - (Math.min(lines.length,3)-1)/2) * 15 - 4}">${escapeHtml(text)}</text>`).join("")}
+          <text class="node-count" y="${Math.min(lines.length,3) * 15 + 7}">${theme.size}</text>
+        </g>`;
+      }).join("");
+      svg.innerHTML = edges + nodeMarkup;
+      svg.querySelectorAll(".graph-node").forEach(node => node.addEventListener("click", () => selectTheme(node.dataset.theme)));
+    }
+
+    function renderInspector() {
+      const theme = themeById.get(selectedThemeId);
+      const inspector = document.getElementById("inspector");
+      const connected = DATA.relations.filter(r => r.source === theme.id || r.target === theme.id);
+      inspector.innerHTML = `<div class="eyebrow">${theme.size} джерел · ${theme.subthemes.length} підтем</div>
+        <h2>${escapeHtml(theme.title)}</h2><p class="summary">${escapeHtml(theme.summary)}</p>
+        <div class="section-title"><h3>Смислові переходи</h3><span>${connected.length}</span></div>
+        <div class="subthemes">${connected.map(relation => {
+          const otherId = relation.source === theme.id ? relation.target : relation.source;
+          const arrow = relation.source === theme.id ? "→" : "←";
+          return `<button class="row-button" type="button" data-theme="${otherId}"><div class="row-title"><span>${escapeHtml(themeById.get(otherId).title)}</span><span>${arrow}</span></div><div class="row-preview">${escapeHtml(relation.label)} · ${Math.round(relation.confidence * 100)}%</div></button>`;
+        }).join("") || '<div class="empty">Немає синтезованих переходів</div>'}</div>
+        <div class="section-title"><h3>Підтеми</h3><span>${theme.subthemes.length}</span></div>
+        <div class="subthemes">${theme.subthemes.map(sub => `<button class="row-button" type="button" data-subtheme="${sub.id}"><div class="row-title"><span>${escapeHtml(sub.title)}</span><span>${sub.size}</span></div><div class="row-preview">${escapeHtml(sub.description)}</div></button>`).join("")}</div>`;
+      inspector.querySelectorAll("[data-theme]").forEach(button => button.addEventListener("click", () => selectTheme(button.dataset.theme)));
+      inspector.querySelectorAll("[data-subtheme]").forEach(button => button.addEventListener("click", () => {
+        selectedSubthemeId = button.dataset.subtheme;
+        reviewOnly = false;
+        document.getElementById("review-filter").setAttribute("aria-pressed", "false");
+        setView("sources");
+      }));
+    }
+
+    function selectTheme(id) {
+      selectedThemeId = id;
+      renderThemeNav(); renderGraph(); renderInspector();
+    }
+
+    function renderConclusions() {
+      const container = document.getElementById("conclusions");
+      const results = DATA.conclusions.filter(item => matches(`${item.title} ${item.statement}`));
+      container.innerHTML = results.map(item => `<article class="surface conclusion"><div class="eyebrow">${escapeHtml(item.status.replaceAll("_", " "))}</div><h2>${escapeHtml(item.title)}</h2><p>${escapeHtml(item.statement)}</p><footer><span class="status">confidence ${Math.round(item.confidence * 100)}%</span><div class="source-links">${item.source_ids.map((id, i) => `<button class="source-link" type="button" data-source="${id}" aria-label="Відкрити джерело ${i + 1}">${i + 1}</button>`).join("")}</div></footer></article>`).join("");
+      container.querySelectorAll("[data-source]").forEach(button => button.addEventListener("click", () => openSource(button.dataset.source)));
+    }
+
+    function renderSources() {
+      const kind = document.getElementById("kind-filter").value;
+      const semanticFilter = document.getElementById("semantic-filter");
+      const selectedSubtheme = subthemeById.get(selectedSubthemeId);
+      semanticFilter.hidden = !selectedSubtheme;
+      document.getElementById("semantic-filter-label").textContent = selectedSubtheme ? selectedSubtheme.title : "";
+      const results = DATA.sources.filter(source =>
+        (!kind || source.kind === kind) &&
+        (!selectedSubthemeId || source.subtheme_id === selectedSubthemeId) &&
+        (!reviewOnly || source.semantic_confidence === "needs_review") &&
+        matches(`${source.id} ${source.text}`)
+      ).slice(0, query || selectedSubthemeId || reviewOnly ? 240 : 80);
+      document.getElementById("source-empty").hidden = results.length > 0;
+      const container = document.getElementById("source-list");
+      container.innerHTML = results.map(source => {
+        const subtheme = subthemeById.get(source.subtheme_id);
+        const classification = subtheme ? `${themeById.get(source.theme_id)?.title} · ${subtheme.title}` : "Потребує семантичного перегляду";
+        return `<article class="source-item"><header><span>${escapeHtml(source.kind.replaceAll("_", " "))}</span><span>·</span><span>${escapeHtml(classification)}</span><code>${source.id.slice(0, 8)}</code></header><p>${escapeHtml(source.text)}</p><button class="row-button" type="button" data-source="${source.id}" style="margin-top:10px">Відкрити першоджерело</button></article>`;
+      }).join("");
+      container.querySelectorAll("[data-source]").forEach(button => button.addEventListener("click", () => openSource(button.dataset.source)));
+    }
+
+    function setView(view) {
+      activeView = view;
+      document.querySelectorAll(".view").forEach(section => section.hidden = section.id !== `view-${view}`);
+      document.querySelectorAll(".tab").forEach(tab => tab.setAttribute("aria-selected", String(tab.dataset.view === view)));
+      if (view === "conclusions") renderConclusions();
+      if (view === "sources") renderSources();
+    }
+
+    const kinds = [...new Set(DATA.sources.map(source => source.kind))].sort();
+    document.getElementById("kind-filter").insertAdjacentHTML("beforeend", kinds.map(kind => `<option value="${kind}">${kind.replaceAll("_", " ")} · ${DATA.sources.filter(source => source.kind === kind).length}</option>`).join(""));
+    document.getElementById("kind-filter").addEventListener("change", renderSources);
+    document.getElementById("review-filter").addEventListener("click", event => {
+      reviewOnly = !reviewOnly;
+      selectedSubthemeId = null;
+      event.currentTarget.setAttribute("aria-pressed", String(reviewOnly));
+      renderSources();
+    });
+    document.getElementById("clear-semantic-filter").addEventListener("click", () => {
+      selectedSubthemeId = null;
+      renderSources();
+    });
+    document.querySelectorAll(".tab").forEach(tab => tab.addEventListener("click", () => setView(tab.dataset.view)));
+    document.getElementById("global-search").addEventListener("input", event => {
+      query = normalize(event.target.value.trim());
+      if (query && activeView === "map") setView("sources");
+      else if (activeView === "sources") renderSources();
+      else if (activeView === "conclusions") renderConclusions();
+    });
+    document.querySelector("dialog .close").addEventListener("click", () => document.getElementById("source-dialog").close());
+    document.getElementById("source-dialog").addEventListener("click", event => { if (event.target === event.currentTarget) event.currentTarget.close(); });
+
+    renderThemeNav(); renderGraph(); renderInspector(); renderConclusions(); renderSources();
+  </script>
+</body>
+</html>

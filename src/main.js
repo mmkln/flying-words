@@ -67,6 +67,7 @@ import {
 import { createBoardConnectionsPopover } from './board-connections-popover.js';
 import {
   clientPointToBoardWorld,
+  clientRectToBoardWorldBounds,
   getManualBoardDragPosition,
   getBoardSpawnGap,
   zoomBoardCameraAtClientPoint,
@@ -6375,11 +6376,17 @@ function addThoughtsToBoardNear(sourceId, requestedIds) {
     width: boardGeometry.cardWidth,
     height: boardGeometry.cardHeight,
   }));
+  const visibleBounds = clientRectToBoardWorldBounds(
+    getCanvasSpawnSafeArea(),
+    canvas.getBoundingClientRect(),
+    canvasCamera,
+  );
   const placements = planBoardConnectionExpansion({
     source: sourcePlacement,
     missingIds: targetIds,
     obstacles,
     geometry: boardGeometry,
+    visibleBounds,
   });
 
   const addedThoughts = placements.map(({ id, x, y }) => {

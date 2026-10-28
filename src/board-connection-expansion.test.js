@@ -83,3 +83,91 @@ test('places every connected card without moving or overlapping existing cards',
     });
   });
 });
+
+test('places a connected card inside the visible Board area when space exists', () => {
+  const source = { id: 'source', x: 304, y: 120, width: 280, height: 96 };
+  const obstacles = [
+    source,
+    { id: 'blocked-right', x: 608, y: 120, width: 280, height: 96 },
+  ];
+  const visibleBounds = { left: 0, top: 0, right: 1000, bottom: 700 };
+  const [placement] = planBoardConnectionExpansion({
+    source,
+    missingIds: ['target'],
+    obstacles,
+    geometry,
+    visibleBounds,
+  });
+
+  assert.ok(placement);
+  const card = {
+    ...placement,
+    width: geometry.cardWidth,
+    height: geometry.cardHeight,
+  };
+  assert.ok(card.x >= visibleBounds.left);
+  assert.ok(card.y >= visibleBounds.top);
+  assert.ok(card.x + card.width <= visibleBounds.right);
+  assert.ok(card.y + card.height <= visibleBounds.bottom);
+  obstacles.forEach((obstacle) => {
+    assert.equal(rectanglesOverlap(card, obstacle, geometry.gap), false);
+  });
+});
+
+test('does not jump behind a distant globally rightmost Board card', () => {
+  const source = { id: 'source', x: 0, y: 0, width: 280, height: 96 };
+  const [placement] = planBoardConnectionExpansion({
+    source,
+    missingIds: ['target'],
+    obstacles: [
+      source,
+      { id: 'distant', x: 100000, y: 0, width: 280, height: 96 },
+    ],
+    geometry,
+    visibleBounds: { left: -700, top: -500, right: 700, bottom: 500 },
+  });
+
+  assert.ok(placement);
+  assert.ok(Math.abs(placement.x) < 1000);
+  assert.ok(Math.abs(placement.y) < 1000);
+});
+
+test('uses the nearest local ring when every visible slot is occupied', () => {
+  const source = { id: 'source', x: 0, y: 0, width: 280, height: 96 };
+  const obstacles = [source];
+  for (let column = -1; column <= 1; column += 1) {
+    for (let row = -1; row <= 1; row += 1) {
+      if (column === 0 && row === 0) continue;
+      obstacles.push({
+        id: `${column}:${row}`,
+        x: column * (geometry.cardWidth + geometry.gap),
+        y: row * (geometry.cardHeight + geometry.gap),
+        width: geometry.cardWidth,
+        height: geometry.cardHeight,
+      });
+    }
+  }
+  const [placement] = planBoardConnectionExpansion({
+    source,
+    missingIds: ['target'],
+    obstacles,
+    geometry,
+    visibleBounds: { left: -304, top: -120, right: 584, bottom: 216 },
+  });
+
+  assert.ok(placement);
+  assert.ok(Math.max(
+    Math.abs(placement.x / (geometry.cardWidth + geometry.gap)),
+    Math.abs(placement.y / (geometry.cardHeight + geometry.gap)),
+  ) <= 2);
+  obstacles.forEach((obstacle) => {
+    assert.equal(
+      rectanglesOverlap(
+        { ...placement, width: geometry.cardWidth, height: geometry.cardHeight },
+        obstacle,
+        geometry.gap,
+      ),
+      false,
+    );
+  });
+});

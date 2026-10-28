@@ -1,0 +1,5 @@
+{
+  "model": "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2",
+  "snapshot_sha256": "77537954cf5896c3d184eca6ac34bf90d4bf36f7d25200d43efcc4be32b098c5",
+  "thought_count": 2438
+}

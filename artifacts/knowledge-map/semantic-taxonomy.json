@@ -1,0 +1,123 @@
+{
+  "schema_version": 1,
+  "method": "Human-defined semantic taxonomy. Source assignment is embedding-assisted and preserves confidence, alternatives, and provenance.",
+  "themes": {
+    "theme-01": [
+      {"id": "sem-01-01", "title": "Свобода, подорожі та бажаний спосіб життя", "description": "Де і як жити, подорожувати, досліджувати світ, свобода пересування, житло, країни, Севілья та особистий lifestyle."},
+      {"id": "sem-01-02", "title": "Стосунки, відповідальність і межі", "description": "Партнерство, відповідальність за іншу людину, близькість, конфлікти, особисті межі, залежність та взаємні очікування."},
+      {"id": "sem-01-03", "title": "Самодовіра, сумнів і внутрішня опора", "description": "Довіра власному мисленню, страх помилки, потреба в зовнішній правді, самооцінка, внутрішня впевненість та прийняття рішень про себе."},
+      {"id": "sem-01-04", "title": "Емоційна регуляція та реакції", "description": "Тривожність, гнів, різкі реакції, кортизол, захисна поведінка, толерантність до критики, емоційний стан і способи його регулювання."},
+      {"id": "sem-01-05", "title": "Ідентичність, амбіція та бажана версія себе", "description": "Ким стати, сила, інтелектуальний розвиток, образ себе, роль, амбіція, трансформація, особисті стандарти та самореалізація."},
+      {"id": "sem-01-06", "title": "Середовище та соціальний тиск", "description": "Вплив оточення, прийняття іншими, соціальні норми, поведінкові блоки, страх негативної реакції та можливість бути собою."},
+      {"id": "sem-01-07", "title": "Енергія, тіло та повсякденні умови", "description": "Сон, здоров'я, харчування, фізичний стан, когнітивна енергія, побут, рутини та тілесні сигнали."}
+    ],
+    "theme-02": [
+      {"id": "sem-02-01", "title": "Соціальні системи та функціональний статус", "description": "Соціологія систем, Луман, множинні статуси, коди підсистем, інституції та положення людини в різних соціальних системах."},
+      {"id": "sem-02-02", "title": "Влада, ієрархія та контроль шлюзів", "description": "Влада, контроль доступу, ієрархія, горизонти управління, правила, інформаційна перевага та вплив на поведінку інших."},
+      {"id": "sem-02-03", "title": "Нерівність, гроші та розподіл ресурсів", "description": "Грошова система, активи, праця, зарплати, багатство, нерівність, інфляція, перерозподіл і системні механізми накопичення капіталу."},
+      {"id": "sem-02-04", "title": "Кібернетика та життєздатні системи", "description": "VSM Стаффорда Біра, автономія, координація, контроль, адаптація, рекурсивність і організаційний дизайн життєздатних систем."},
+      {"id": "sem-02-05", "title": "Цінність, ціна та дефіцит", "description": "Що створює економічну цінність, willingness to pay, дефіцит, ціноутворення, обмін, попит і те, за що люди платять."},
+      {"id": "sem-02-06", "title": "Містки між системами", "description": "Structural coupling, переклад між технікою, бізнесом, правом, медіа та іншими системами як джерело leverage, статусу й можливостей."}
+    ],
+    "theme-03": [
+      {"id": "sem-03-01", "title": "Decision-driven research", "description": "Дослідження, яке починається з конкретного рішення, критичної невідомості й evidence, що здатне змінити вибір."},
+      {"id": "sem-03-02", "title": "Гіпотези, прогнози та falsification", "description": "Формування перевірюваних гіпотез, припущень, прогнозів, stopping rules, критеріїв підтвердження і спростування."},
+      {"id": "sem-03-03", "title": "Workflow discovery", "description": "Відновлення реального процесу, walkthrough конкретних випадків, дії, передачі, очікування, винятки, ручні обходи та джерела стану."},
+      {"id": "sem-03-04", "title": "Експертні рішення та cognitive task analysis", "description": "CDM, ACTA, decision requirements, cues, приховані експертні правила, нетипові ситуації та когнітивна робота в процесах."},
+      {"id": "sem-03-05", "title": "Domain analysis і стандартизація", "description": "Порівняння кількох процесів, common core, параметри, optional modules, інтеграції, межі продукту та відділення standard від custom."},
+      {"id": "sem-03-06", "title": "Knowledge management і Noesis", "description": "База знань, декомпозиція тексту на сутності, типи знань, прогалини, граф знань, питання та управління накопиченим розумінням."},
+      {"id": "sem-03-07", "title": "Від аналізу до наступної дії", "description": "Пріоритизація, decision funnel, завершення дослідження дією, вибір найдешевшого тесту, оновлення впевненості та execution."}
+    ],
+    "theme-04": [
+      {"id": "sem-04-01", "title": "Borrowed Distribution", "description": "Доступ до buyers через чужий канал, аудиторію, marketplace, vendor ecosystem, agency, community або іншу relationship."},
+      {"id": "sem-04-02", "title": "Hub-over-Spoke prospecting", "description": "Пріоритизація hubs, які можуть дати багато downstream opportunities, замість однакового prospecting окремих покупців."},
+      {"id": "sem-04-03", "title": "Intent і problem timing", "description": "Ознаки need-now, trigger events, existing buying intent, актуальна проблема, urgency та момент, коли buyer готовий діяти."},
+      {"id": "sem-04-04", "title": "Proof і зниження ризику", "description": "Proof before sale, diagnosis, demo, case study, audit, pilot, bounded paid entry та інші способи скоротити trust gap і downside."},
+      {"id": "sem-04-05", "title": "Referrals і trust transfer", "description": "Рекомендації, репутаційний ризик referrer, перенесення довіри, referral quality та еволюція рекомендації у повторюваний канал."},
+      {"id": "sem-04-06", "title": "Partnership mechanics", "description": "Referral partnership, co-sell, reseller, white-label, embedded fulfillment, розподіл ролей, incentives і правила активації партнерства."},
+      {"id": "sem-04-07", "title": "Opportunity architecture і measurement", "description": "Distribution × Intent × Proof, opportunity cards, routing, conversion, revenue per relationship і вимірювання якості acquisition system."}
+    ],
+    "theme-05": [
+      {"id": "sem-05-01", "title": "Evolutionary POD system", "description": "Print on demand, футболки, дизайн, trend hunting, product evolution, Printify, Shopify, analytics і автоматизована еволюція продуктів."},
+      {"id": "sem-05-02", "title": "AI-агенти та автономні workflows", "description": "Системи AI-агентів, ролі агентів, orchestration, автоматичні рішення, генерація, QA, аналітика та автономне виконання процесів."},
+      {"id": "sem-05-03", "title": "AI-контент, відео та зображення", "description": "Генеративні відео, зображення, персонажі, медіа, рекламні креативи та автоматизоване виробництво контенту."},
+      {"id": "sem-05-04", "title": "Shopify та автоматизована commerce-інфраструктура", "description": "Генерація Shopify themes, storefront, listings, publishing, commerce workflows, каталоги й технічна автоматизація магазину."},
+      {"id": "sem-05-05", "title": "Портфель бізнес-ідей", "description": "Списки бізнес-ідей і проблем, фільтрування можливостей, fake products, експериментальні сторінки, Instagram-концепти та вибір напряму."},
+      {"id": "sem-05-06", "title": "Локальні, творчі та physical-product експерименти", "description": "Севілья, ферма, картини, фігурки, фізичні товари, локальні теми та нестандартні малі підприємницькі експерименти."}
+    ],
+    "theme-06": [
+      {"id": "sem-06-01", "title": "Пошук сегмента й ринкової проблеми", "description": "Вибір ніші, ICP, сегмента, проблеми, ринкових сигналів, pain і пріоритетної області для automation business."},
+      {"id": "sem-06-02", "title": "Productized automation offer", "description": "Формування повторюваного офера, scope, ціни, deliverables, standard core, custom work, economics і межі automation service."},
+      {"id": "sem-06-03", "title": "Пошук і кваліфікація клієнтів", "description": "Prospecting, фільтри, списки компаній, outbound, B2B-постачальники, lead qualification і конкретні способи знайти перших клієнтів."},
+      {"id": "sem-06-04", "title": "Market research та UMRE", "description": "UMRE, аналіз ринку, збір кейсів, проблем, jobs, Reddit, інтерв'ю, research workflow і використання результатів дослідження."},
+      {"id": "sem-06-05", "title": "Delivery, команда та партнери", "description": "Виконання automation projects, technical specialists, друзі й партнери, delegation, QA, SOP та операційна модель delivery."},
+      {"id": "sem-06-06", "title": "Execution gap і перший комерційний цикл", "description": "Чому навчання не стало проектами, страх або невизначеність перед стартом, перший кейс, перший продаж і перехід від знання до практики."}
+    ],
+    "theme-07": [
+      {"id": "sem-07-01", "title": "Customer-state transitions", "description": "Стани stranger, lead, contacted, qualified, booked, customer, dormant та переходи між ними як одиниця revenue system."},
+      {"id": "sem-07-02", "title": "CRM і sales automation", "description": "Lead routing, pipeline, follow-up, qualification, sales tasks, deal velocity, CRM updates і автоматизація роботи sales-команди."},
+      {"id": "sem-07-03", "title": "Marketing automation та lifecycle communication", "description": "Email, SMS, lead nurture, campaigns, sequences, content marketing і комунікація з потенційними та існуючими клієнтами."},
+      {"id": "sem-07-04", "title": "Revenue leakage і conversion", "description": "Втрачений revenue, speed-to-lead, CRO, booking, response SLA, throughput і точки, де комерційний намір не стає грошима."},
+      {"id": "sem-07-05", "title": "Customer data, identity та attribution", "description": "Identity resolution, customer data, source of truth, attribution, enrichment, tracking, data ownership і узгодження записів між системами."},
+      {"id": "sem-07-06", "title": "Retention, reactivation і customer success", "description": "Onboarding, retention, churn, dormant customers, win-back, reactivation, support і повторна цінність для існуючого клієнта."}
+    ],
+    "theme-08": [
+      {"id": "sem-08-01", "title": "Інверсія та негативне проєктування", "description": "Принцип інверсії, уникнення провалу, думати від небажаного результату, premortem і пошук того, що точно не треба робити."},
+      {"id": "sem-08-02", "title": "Стимули та Lollapalooza", "description": "Комбінації психологічних тенденцій, incentives, social proof, scarcity, commitment та ефекти, що спільно посилюють поведінку."},
+      {"id": "sem-08-03", "title": "Когнітивні упередження", "description": "First impression, confirmation bias, anchoring, availability, помилки судження та систематичні викривлення сприйняття."},
+      {"id": "sem-08-04", "title": "Системне мислення та feedback loops", "description": "Причинні петлі, leverage points, bottlenecks, emergence, delayed effects, stocks and flows і поведінка складних систем."},
+      {"id": "sem-08-05", "title": "Ґратка ментальних моделей", "description": "Latticework of mental models, Charlie Munger, великі ідеї дисциплін, поєднання моделей та вибір адекватної рамки."},
+      {"id": "sem-08-06", "title": "Decision frameworks і критерії", "description": "Фреймворки вибору, оцінка альтернатив, критерії, trade-offs, expected value, пріоритети та механізми ухвалення рішень."}
+    ],
+    "theme-09": [
+      {"id": "sem-09-01", "title": "Практичні рівні мислення L1–L7", "description": "Операційне, тактичне, стратегічне, системне та архітектурне мислення, їх ознаки, переходи й практичне застосування."},
+      {"id": "sem-09-02", "title": "Розширені рівні мислення L8+", "description": "Цивілізаційне, історичне, онтологічне, космологічне, модальне, аксіологічне та інші граничні масштаби мислення."},
+      {"id": "sem-09-03", "title": "Багатовимірний профіль мислення", "description": "Причинність, часовий горизонт, масштаб суб'єкта, генеративність, епістемічна зрілість та відмова від однієї лінійної шкали."},
+      {"id": "sem-09-04", "title": "Продуктивне мислення та румінація", "description": "Коли повторюване мислення допомагає планувати й діяти, а коли стає абстрактним зацикленням, тривогою або уникненням досвіду."},
+      {"id": "sem-09-05", "title": "Метапізнання та межі розуму", "description": "Спостереження за власним мисленням, межі пізнання, інтелектуальна скромність, мислення про мислення та розвиток epistemic agency."},
+      {"id": "sem-09-06", "title": "Методології й інструменти мислення", "description": "Практики аналізу, схеми, записи, карти, дослідницькі інструменти, навчання мислити й систематизація reasoning process."}
+    ],
+    "theme-10": [
+      {"id": "sem-10-01", "title": "Storytelling", "description": "Побудова історій, narrative structure, переконливе пояснення, драматургія та розвиток навички storytelling."},
+      {"id": "sem-10-02", "title": "Публічний спікінг і пояснення", "description": "Говорити перед людьми й камерою, презентації, чітке пояснення складного, впевнена мова та комунікація ідей."},
+      {"id": "sem-10-03", "title": "Content making і відео", "description": "Створення контенту, зйомка Loom і YouTube, монтаж, камера, контентні формати, production workflow та регулярна публікація."},
+      {"id": "sem-10-04", "title": "Продажі, маркетинг і persuasion", "description": "Здатність продавати себе, товари, послуги й ідеї, маркетингові навички, переговори та переконання."},
+      {"id": "sem-10-05", "title": "Фасилітація та робота з групами", "description": "Фасилітація розмов, зустрічей і спільного мислення, постановка питань, групова динаміка та допомога людям ухвалювати рішення."},
+      {"id": "sem-10-06", "title": "Meta-skills і система розвитку", "description": "Які навички дають найбільший leverage, як їх обирати, набувати, практикувати й поєднувати з мотивацією та можливостями."}
+    ],
+    "theme-11": [
+      {"id": "sem-11-01", "title": "Hormozi: офер, швидкість і пріоритети", "description": "Цитати Alex Hormozi про market, offer, speed, priorities, courage, team, wealth та побудову бізнесу."},
+      {"id": "sem-11-02", "title": "Контент і природний demand", "description": "Евристики про корисний контент, CTA, пояснення ситуації buyer, organic demand capture та перехід аудиторії до пропозиції."},
+      {"id": "sem-11-03", "title": "Переконання та людська поведінка", "description": "Persuasion, immediate reward, довіра, мотивація, сприйняття цінності й прикладні спостереження про поведінку людей."},
+      {"id": "sem-11-04", "title": "Стосунки як довгостроковий актив", "description": "Інвестування у людей, networking, weak ties, passive contacts, довіра, репутація та довгострокова цінність relationships."},
+      {"id": "sem-11-05", "title": "Короткі евристики для ручної перевірки", "description": "Окремі цитати й афоризми, що можуть бути корисними нагадуваннями, але не утворюють доведену модель без контексту."}
+    ],
+    "theme-12": [
+      {"id": "sem-12-01", "title": "Outcome-based positioning", "description": "Позиціонування через business problem, revenue outcome, avoided loss і decision ownership замість назви AI або automation technology."},
+      {"id": "sem-12-02", "title": "Commoditization технологічного офера", "description": "AI receptionist, chatbot, n8n та інші technology artifacts, які стають bundled features і втрачають диференціацію."},
+      {"id": "sem-12-03", "title": "Adoption, trust і human service", "description": "Чому працівники або клієнти не використовують AI, роль довіри, людського сервісу, change management і доступу до людини."},
+      {"id": "sem-12-04", "title": "Reliability і state ownership", "description": "Помилки агентів, конфлікти workflows, єдине джерело стану, QA, recovery, observability та надійність production automation."},
+      {"id": "sem-12-05", "title": "Business value проти локальної ефективності", "description": "Saved hours, handle time і технічний output проти revenue, customer happiness, deal velocity, adoption та реального економічного ефекту."},
+      {"id": "sem-12-06", "title": "Consulting models і bounded entry", "description": "Audit, roadmap, custom solution, productized consulting, pilot і способи продати структуроване рішення до повної реалізації."}
+    ],
+    "theme-13": [
+      {"id": "sem-13-01", "title": "$0 → $1k: завершити й показати результат", "description": "Перший рівень доходу, здатність створити, завершити, показати й продати конкретний результат."},
+      {"id": "sem-13-02", "title": "$1k → $5k: стабільний попит", "description": "Недостатній дохід, перші регулярні клієнти, повторюваний попит і базова комерційна стабільність."},
+      {"id": "sem-13-03", "title": "$5k → $10k: обмеження власного часу", "description": "Власний час як bottleneck, ціна, продуктивність, delegation, productization і перший операційний leverage."},
+      {"id": "sem-13-04", "title": "$10k → $15k: залежність від власника", "description": "Система залежить від особистої участі, потрібні процеси, команда, ownership, SOP та передача виконання."},
+      {"id": "sem-13-05", "title": "$15k → $25k: стабільність під навантаженням", "description": "Нестабільність і крихкість системи, capacity, quality, coordination, reliability та витримування більшого обсягу."},
+      {"id": "sem-13-06", "title": "$25k → $30k: межа бізнес-моделі", "description": "Поточна модель може бути тупиковою; потрібні нова economics, channel, offer, market або архітектура бізнесу."},
+      {"id": "sem-13-07", "title": "$30k → $50k: фокус", "description": "Розфокус, надлишок напрямів, стратегічна концентрація, відмова від альтернатив і посилення одного двигуна росту."},
+      {"id": "sem-13-08", "title": "$50k+: якість стратегічного вибору", "description": "Великі ставки, allocation ресурсів, довгий горизонт, стратегічні рішення та ціна помилки на масштабі."}
+    ],
+    "theme-14": [
+      {"id": "sem-14-01", "title": "Reality signal", "description": "Зовнішній доказ про те, що відбувається насправді, перевірка внутрішньої моделі реальними результатами й поведінкою."},
+      {"id": "sem-14-02", "title": "Body і life signals", "description": "Сигнали тіла, здоров'я, енергії, емоцій, якості життя й повсякденного досвіду, які впливають на рішення."},
+      {"id": "sem-14-03", "title": "Resource і constraint signals", "description": "Гроші, час, capacity, доступ, обмеження, запаси та інші сигнали реальної ресурсної ситуації."},
+      {"id": "sem-14-04", "title": "Technical signal", "description": "Нові технологічні можливості, releases, tools, implementation patterns і те, що щойно стало технічно можливим."},
+      {"id": "sem-14-05", "title": "Operator signal", "description": "Повторювані проблеми, винятки, ручна робота, скарги й реальна поведінка людей, які безпосередньо виконують процес."},
+      {"id": "sem-14-06", "title": "Market і business signal", "description": "Попит, бюджети, індустріальні зміни, buyer behavior, GTM, economics і підтвердження того, що компанії реально купують або впроваджують."},
+      {"id": "sem-14-07", "title": "Capture і feedback architecture", "description": "Як збирати сигнали, підтримувати feed, оновлювати модель, замикати feedback loop і перетворювати спостереження на рішення."}
+    ]
+  }
+}
