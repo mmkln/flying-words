@@ -2188,11 +2188,17 @@ html[data-app-ready="false"] .composer-wrap {
 
 .spaces-overview[hidden] { display: none; }
 
+.spaces-overview-actions {
+  position: fixed;
+  z-index: 3;
+  top: max(20px, env(safe-area-inset-top));
+  right: max(20px, env(safe-area-inset-right));
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
 .spaces-close {
-  position: absolute;
-  z-index: 2;
-  top: 20px;
-  right: 20px;
   display: grid;
   width: 36px;
   height: 36px;
@@ -2210,10 +2216,6 @@ html[data-app-ready="false"] .composer-wrap {
 .spaces-close svg { width: 16px; height: 16px; }
 
 .spaces-spatial-action {
-  position: absolute;
-  z-index: 2;
-  top: 20px;
-  right: 68px;
   min-height: 36px;
   padding: 0 14px;
   border: 1px solid var(--border-subtle);
@@ -4443,8 +4445,11 @@ kbd {
   }
   .spatial-connections-island { max-height: min(30dvh, 250px); }
   .spaces-overview { padding: 48px 16px 22px; }
-  .spaces-close { top: 10px; right: 10px; }
-  .spaces-spatial-action { top: 10px; right: 56px; }
+  .spaces-overview-actions {
+    top: max(10px, env(safe-area-inset-top));
+    right: max(10px, env(safe-area-inset-right));
+    gap: 8px;
+  }
   .spaces-content {
     grid-template-columns: minmax(0, 1fr);
     gap: 30px;
