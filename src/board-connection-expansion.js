@@ -1,9 +1,13 @@
 import { resolveCollisionFreeBoardPosition } from './board-manual-placement.js';
 
-export function getMissingBoardConnectionIds(sourceId, connectionIndex, boardIds) {
+export function getMissingBoardConnections(sourceId, connectionIndex, boardIds) {
   return connectionIndex.getNeighbours(sourceId)
-    .map(({ thoughtId }) => thoughtId)
-    .filter((thoughtId) => !boardIds.has(thoughtId));
+    .filter(({ thoughtId }) => !boardIds.has(thoughtId));
+}
+
+export function getMissingBoardConnectionIds(sourceId, connectionIndex, boardIds) {
+  return getMissingBoardConnections(sourceId, connectionIndex, boardIds)
+    .map(({ thoughtId }) => thoughtId);
 }
 
 export function planBoardConnectionExpansion({

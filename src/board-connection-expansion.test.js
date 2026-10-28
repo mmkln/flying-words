@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import {
+  getMissingBoardConnections,
   getMissingBoardConnectionIds,
   planBoardConnectionExpansion,
 } from './board-connection-expansion.js';
@@ -33,6 +34,28 @@ test('counts incoming, outgoing, and reciprocal neighbours missing from this Boa
   boardIds.add(reciprocal.id);
   boardIds.add(incoming.id);
   assert.deepEqual(getMissingBoardConnectionIds(source.id, index, boardIds), []);
+});
+
+test('preserves connection direction for missing Board neighbours', () => {
+  const source = thought('source');
+  const incoming = thought('incoming');
+  const outgoing = thought('outgoing');
+  const reciprocal = thought('reciprocal');
+  reconcileConnections(source, [outgoing.id, reciprocal.id]);
+  reconcileConnections(incoming, [source.id]);
+  reconcileConnections(reciprocal, [source.id]);
+
+  const index = buildConnectionIndex([source, incoming, outgoing, reciprocal]);
+  assert.deepEqual(
+    getMissingBoardConnections(source.id, index, new Set([source.id])).map(
+      ({ thoughtId, direction }) => ({ thoughtId, direction }),
+    ),
+    [
+      { thoughtId: outgoing.id, direction: 'outgoing' },
+      { thoughtId: reciprocal.id, direction: 'both' },
+      { thoughtId: incoming.id, direction: 'incoming' },
+    ],
+  );
 });
 
 test('places every connected card without moving or overlapping existing cards', () => {

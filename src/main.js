@@ -60,9 +60,11 @@ import {
 } from './board-geometry.js';
 import { planBoardInsertion } from './board-insertion.js';
 import {
+  getMissingBoardConnections,
   getMissingBoardConnectionIds,
   planBoardConnectionExpansion,
 } from './board-connection-expansion.js';
+import { createBoardConnectionsPopover } from './board-connections-popover.js';
 import {
   clientPointToBoardWorld,
   getManualBoardDragPosition,
@@ -204,6 +206,10 @@ const boardArrangeButton = document.querySelector('#board-arrange-button');
 const boardActionToast = document.querySelector('#board-action-toast');
 const boardActionToastMessage = boardActionToast.querySelector('span');
 const boardActionUndo = document.querySelector('#board-action-undo');
+const boardConnectionsPopoverElement = document.querySelector('#board-connections-popover');
+const boardConnectionsList = document.querySelector('#board-connections-list');
+const boardConnectionsCount = document.querySelector('#board-connections-count');
+const boardConnectionsAddAll = document.querySelector('#board-connections-add-all');
 const spatialWorld = document.querySelector('#spatial-world');
 const spatialFitButton = document.querySelector('#spatial-fit');
 const spatialFocusButton = document.querySelector('#spatial-focus');
@@ -479,6 +485,19 @@ const canvasMinimap = createCanvasMinimap({
   },
 });
 
+const boardConnectionsPopover = createBoardConnectionsPopover({
+  element: boardConnectionsPopoverElement,
+  list: boardConnectionsList,
+  count: boardConnectionsCount,
+  addAllButton: boardConnectionsAddAll,
+  onAdd(sourceId, targetId) {
+    addOneConnectedThoughtToBoard(sourceId, targetId);
+  },
+  onAddAll(sourceId) {
+    addAllConnectedThoughtsToBoard(sourceId);
+  },
+});
+
 function getCanvasMinimapSnapshot() {
   const bounds = canvas.getBoundingClientRect();
   const cards = thoughts
@@ -533,6 +552,41 @@ function getBoardThoughts() {
   return thoughts.filter((thought) => hasCanvasPlacement(thought, activeSpaceId));
 }
 
+function getMissingBoardConnectionItems(sourceId) {
+  if (
+    !isCanvasSpace(activeSpaceId)
+    || (auth && serverThoughtsNextCursor)
+  ) return [];
+
+  const source = getThoughtById(sourceId);
+  if (!source || !hasCanvasPlacement(source, activeSpaceId)) return [];
+
+  const boardThoughts = getBoardThoughts();
+  const boardIds = new Set(boardThoughts.map(({ id }) => id));
+  const connectionIndex = buildConnectionIndex(thoughts);
+
+  return getMissingBoardConnections(sourceId, connectionIndex, boardIds)
+    .map(({ thoughtId, direction }) => {
+      const thought = getThoughtById(thoughtId);
+      if (!thought) return null;
+
+      return {
+        id: thought.id,
+        text: thought.text,
+        kind: getThoughtKnowledgeKind(thought),
+        resolved: isThoughtResolved(thought),
+        direction,
+      };
+    })
+    .filter(Boolean);
+}
+
+function refreshBoardConnectionsPopover() {
+  if (!boardConnectionsPopover.isOpen()) return;
+  const sourceId = boardConnectionsPopover.getSourceId();
+  boardConnectionsPopover.update(getMissingBoardConnectionItems(sourceId));
+}
+
 function renderBoardExpansionControls() {
   const boardActive = isCanvasSpace(activeSpaceId);
   const graphReady = !auth || (isCloudMode() && !serverThoughtsNextCursor);
@@ -553,7 +607,7 @@ function renderBoardExpansionControls() {
     if (!missingIds.length) return;
 
     button.textContent = `+${missingIds.length}`;
-    const label = `Add ${missingIds.length} connected ${missingIds.length === 1 ? 'thought' : 'thoughts'} to this Board`;
+    const label = `Show ${missingIds.length} connected ${missingIds.length === 1 ? 'thought' : 'thoughts'}`;
     button.title = label;
     button.setAttribute('aria-label', label);
   });
@@ -3315,6 +3369,7 @@ function openConnectionEditor(source) {
   if (blockEditsDuringAccountSync()) return;
 
   knowledgeKindPicker.close();
+  boardConnectionsPopover.close();
   connectionEditor = {
     sourceId: source.id,
     selectedTargetIds: new Set(
@@ -3626,6 +3681,7 @@ function persistConnectionChanges(changedThoughts) {
 
   rebuildConnectionLayer();
   renderBoardExpansionControls();
+  refreshBoardConnectionsPopover();
   saveThoughts();
   if (isCloudMode()) {
     changedThoughts.forEach((thought) => {
@@ -3730,9 +3786,18 @@ function makeThought(
   textElement.title = 'Click again to edit · Drag the card to move it';
   magnetButton.addEventListener('click', () => handleMagnetButton(thought));
   connectionButton.addEventListener('click', () => handleConnectionButton(thought));
+  boardExpandButton.setAttribute('aria-haspopup', 'dialog');
+  boardExpandButton.setAttribute('aria-expanded', 'false');
+  boardExpandButton.setAttribute('aria-controls', 'board-connections-popover');
   boardExpandButton.addEventListener('click', (event) => {
     event.stopPropagation();
-    addConnectedThoughtsToBoard(thought.id);
+    const items = getMissingBoardConnectionItems(thought.id);
+    if (!items.length) return;
+    boardConnectionsPopover.open({
+      sourceId: thought.id,
+      trigger: boardExpandButton,
+      items,
+    });
   });
   deleteButton.addEventListener('click', (event) => {
     if (isCanvasSpace(activeSpaceId)) {
@@ -5982,25 +6047,34 @@ function addOrFocusThoughtOnCanvas(thought) {
   announce('Thought added to Board.');
 }
 
-function addConnectedThoughtsToBoard(sourceId) {
-  if (!isCanvasSpace(activeSpaceId) || boardArrangeInFlight || connectionEditor || magnetEditor) return;
-  if (blockEditsDuringAccountSync()) return;
+function addThoughtsToBoardNear(sourceId, requestedIds) {
+  if (
+    !isCanvasSpace(activeSpaceId)
+    || boardArrangeInFlight
+    || connectionEditor
+    || magnetEditor
+  ) return [];
+  if (blockEditsDuringAccountSync()) return [];
   if (auth && serverThoughtsNextCursor) {
     announce('Wait until connected thoughts finish loading.');
-    return;
+    return [];
   }
 
   const source = getThoughtById(sourceId);
   const sourcePlacement = source && getCanvasPlacement(source, activeSpaceId);
-  if (!sourcePlacement) return;
+  if (!sourcePlacement) return [];
 
   const boardThoughts = getBoardThoughts();
   const boardIds = new Set(boardThoughts.map(({ id }) => id));
   const connectionIndex = buildConnectionIndex(thoughts);
-  const missingIds = getMissingBoardConnectionIds(sourceId, connectionIndex, boardIds);
-  if (!missingIds.length) {
+  const missingIds = new Set(
+    getMissingBoardConnectionIds(sourceId, connectionIndex, boardIds),
+  );
+  const targetIds = [...new Set(requestedIds)].filter((id) => missingIds.has(id));
+  if (!targetIds.length) {
     renderBoardExpansionControls();
-    return;
+    refreshBoardConnectionsPopover();
+    return [];
   }
 
   const obstacles = boardThoughts.map((thought) => ({
@@ -6011,7 +6085,7 @@ function addConnectedThoughtsToBoard(sourceId) {
   }));
   const placements = planBoardConnectionExpansion({
     source: sourcePlacement,
-    missingIds,
+    missingIds: targetIds,
     obstacles,
     geometry: boardGeometry,
   });
@@ -6032,6 +6106,19 @@ function addConnectedThoughtsToBoard(sourceId) {
   }
   rebuildConnectionLayer();
   updateUi();
+  return addedThoughts;
+}
+
+function addOneConnectedThoughtToBoard(sourceId, targetId) {
+  const addedThoughts = addThoughtsToBoardNear(sourceId, [targetId]);
+  if (addedThoughts.length) announce('Connected thought added to Board.');
+}
+
+function addAllConnectedThoughtsToBoard(sourceId) {
+  const targetIds = getMissingBoardConnectionItems(sourceId).map(({ id }) => id);
+  const addedThoughts = addThoughtsToBoardNear(sourceId, targetIds);
+  boardConnectionsPopover.close();
+  if (!addedThoughts.length) return;
   announce(`${addedThoughts.length} connected ${addedThoughts.length === 1 ? 'thought' : 'thoughts'} added to Board.`);
 }
 
@@ -6989,6 +7076,7 @@ function renderBoardContext() {
 function updateUi() {
   const boardActive = isCanvasSpace(activeSpaceId);
   const spatialActive = isSpatialSpace(activeSpaceId);
+  if (!boardActive) boardConnectionsPopover.close();
   renderBoardContext();
   const anchorsAvailable = boardActive || spatialActive;
   anchorsButton.hidden = !anchorsAvailable;
@@ -7022,6 +7110,7 @@ function updateUi() {
   updateManualRefreshControls();
   renderBoardArrangeControl();
   renderBoardExpansionControls();
+  refreshBoardConnectionsPopover();
 }
 
 function announce(message) {
@@ -7901,6 +7990,7 @@ canvasControls.addEventListener('focusout', () => {
 });
 window.addEventListener('resize', () => {
   knowledgeKindPicker.close();
+  refreshBoardConnectionsPopover();
   if (isSpatialSpace(activeSpaceId)) {
     spatialView?.resize();
     return;
