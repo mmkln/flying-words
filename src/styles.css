@@ -2079,11 +2079,20 @@ html[data-app-ready="false"] .composer-wrap {
   border-radius: 13px;
 }
 
-.board-arrange-button {
+.board-tools {
   position: fixed;
   z-index: 30;
   right: 264px;
   bottom: 24px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.board-tools[hidden] { display: none; }
+
+.board-tools .icon-button {
+  position: static;
   width: 40px;
   height: 40px;
   border-radius: 50%;
@@ -2093,6 +2102,30 @@ html[data-app-ready="false"] .composer-wrap {
 .board-arrange-button svg { width: 19px; height: 19px; }
 .board-arrange-button:hover:not(:disabled) { color: var(--accent); }
 .board-arrange-button.is-working svg { animation: board-arrange-pulse .9s ease-in-out infinite alternate; }
+
+.board-select-button svg { width: 19px; height: 19px; }
+.board-select-button:hover:not(:disabled) { color: var(--accent); }
+.board-select-button[aria-pressed="true"] {
+  color: #fff;
+  border-color: transparent;
+  background: var(--accent);
+}
+
+.board-select-button[aria-pressed="true"]:hover:not(:disabled) {
+  color: #fff;
+  background: var(--accent-hover);
+}
+
+.board-selection-marquee {
+  position: absolute;
+  z-index: 4;
+  pointer-events: none;
+  border: 1px solid rgba(112, 85, 197, .7);
+  border-radius: 8px;
+  background: rgba(112, 85, 197, .09);
+}
+
+.board-selection-marquee[hidden] { display: none; }
 
 .board-action-toast {
   position: fixed;
@@ -3135,6 +3168,54 @@ kbd { padding: 1px 4px; border: 1px solid rgba(114,104,143,.25); border-bottom-w
 .thought-card.is-removing { opacity: 0; pointer-events: none; }
 .thought-card.is-history-focused { border-color: rgba(108, 79, 204, .6); box-shadow: 0 0 0 4px rgba(126, 95, 215, .12), 0 15px 32px rgba(68, 50, 124, .15); }
 .thought-card.is-selected { border-color: rgba(112, 85, 197, .34); box-shadow: 0 0 0 3px rgba(112, 85, 197, .08), 0 15px 32px rgba(68, 50, 124, .15); }
+.thought-space.is-board-selecting .thought-card.is-canvas-card:not(.is-board-selected) {
+  opacity: .72;
+}
+
+.thought-card.is-board-selected {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--surface-tint), var(--shadow-card-hover);
+}
+
+.thought-card.is-board-selected::after {
+  content: "✓";
+  position: absolute;
+  z-index: 4;
+  top: -9px;
+  right: -9px;
+  display: grid;
+  width: 22px;
+  height: 22px;
+  place-items: center;
+  border: 2px solid var(--surface);
+  border-radius: 50%;
+  color: #fff;
+  background: var(--accent);
+  box-shadow: var(--shadow-control);
+  font-size: 12px;
+  font-weight: 750;
+  line-height: 1;
+}
+
+.thought-card.is-board-selection-dragging {
+  z-index: 100 !important;
+  cursor: grabbing;
+  box-shadow: var(--shadow-panel);
+  transition: none;
+}
+
+.thought-space.is-board-selecting { cursor: crosshair; }
+.thought-space.is-board-selecting.is-panning { cursor: grabbing; }
+.thought-space.is-board-selecting .thought-card { cursor: pointer; }
+.thought-space.is-board-selecting .thought-card.is-board-selected { cursor: grab; }
+.thought-space.is-board-selecting .thought-card.is-board-selection-dragging { cursor: grabbing; }
+.thought-space.is-board-selecting .thought-card * { cursor: inherit; }
+.thought-space.is-board-selecting .thought-kind-button { pointer-events: none; }
+
+.thought-space.is-board-selecting
+:is(.connection-btn, .magnet-btn, .anchor-btn, .delete-btn, .board-expand-button) {
+  display: none;
+}
 .thought-copy { display: grid; min-width: 0; gap: 3px; }
 .thought-text { display: -webkit-box; min-width: 0; margin: 1px 0; overflow: hidden; overflow-wrap: anywhere; cursor: text; -webkit-box-orient: vertical; -webkit-line-clamp: 3; white-space: pre-wrap; font-size: 14px; line-height: 1.45; }
 .thought-resource-host {
@@ -4339,7 +4420,7 @@ kbd {
     height: 78px;
     border-radius: 12px;
   }
-  .board-arrange-button { right: 140px; bottom: 92px; }
+  .board-tools { right: 140px; bottom: 92px; }
   .spatial-world { --spatial-composer-bottom: 16px; }
   .spatial-toolbar {
     top: 58px;

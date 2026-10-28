@@ -202,6 +202,12 @@
       >
         <div class="canvas-world" id="canvas-world">
           <svg class="connection-layer" id="connection-layer" aria-hidden="true"></svg>
+          <div
+            class="board-selection-marquee"
+            id="board-selection-marquee"
+            aria-hidden="true"
+            hidden
+          ></div>
         </div>
         <aside class="board-minimap" id="board-minimap" aria-label="Board minimap" hidden>
           <canvas
@@ -210,22 +216,37 @@
             aria-label="Board minimap. Click or drag to navigate. Use arrow keys to pan."
           ></canvas>
         </aside>
-        <button
-          class="icon-button board-arrange-button"
-          id="board-arrange-button"
-          type="button"
-          aria-label="Arrange Board by connections"
-          title="Arrange Board by connections"
-          hidden
-        >
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-            <circle cx="6" cy="7" r="2.25"></circle>
-            <circle cx="18" cy="6" r="2.25"></circle>
-            <circle cx="16" cy="18" r="2.25"></circle>
-            <circle cx="5" cy="17" r="2.25"></circle>
-            <path d="m8.2 6.8 7.6-.6M17.4 8.2l-1 7.6M13.9 18l-6.7-.7M6.4 9.1l-.9 5.7"></path>
-          </svg>
-        </button>
+        <div class="board-tools" id="board-tools" role="toolbar" aria-label="Board tools" hidden>
+          <button
+            class="icon-button board-select-button"
+            id="board-select-button"
+            type="button"
+            aria-label="Select cards"
+            aria-pressed="false"
+            title="Select cards"
+          >
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <rect x="4" y="4" width="16" height="16" rx="3" stroke-dasharray="2.5 3"></rect>
+              <path d="m9 12 2 2 4-5"></path>
+            </svg>
+          </button>
+          <button
+            class="icon-button board-arrange-button"
+            id="board-arrange-button"
+            type="button"
+            aria-label="Arrange Board by connections"
+            title="Arrange Board by connections"
+            hidden
+          >
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <circle cx="6" cy="7" r="2.25"></circle>
+              <circle cx="18" cy="6" r="2.25"></circle>
+              <circle cx="16" cy="18" r="2.25"></circle>
+              <circle cx="5" cy="17" r="2.25"></circle>
+              <path d="m8.2 6.8 7.6-.6M17.4 8.2l-1 7.6M13.9 18l-6.7-.7M6.4 9.1l-.9 5.7"></path>
+            </svg>
+          </button>
+        </div>
         <div class="board-action-toast" id="board-action-toast" role="status" hidden>
           <span>Board arranged</span>
           <button id="board-action-undo" type="button">Undo</button>

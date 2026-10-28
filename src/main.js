@@ -72,6 +72,13 @@ import {
   zoomBoardCameraAtClientPoint,
 } from './board-coordinate-space.js';
 import {
+  boardSelectionRectangle,
+  captureBoardSelectionOrigins,
+  selectBoardCardsInRectangle,
+  toggleBoardSelection,
+  translateBoardSelectionOrigins,
+} from './board-selection.js';
+import {
   getSpatialPlacement,
   withSpatialPlacement,
   withoutSpatialPlacement,
@@ -202,7 +209,10 @@ const canvas = document.querySelector('#canvas');
 const canvasWorld = document.querySelector('#canvas-world');
 const boardMinimap = document.querySelector('#board-minimap');
 const boardMinimapCanvas = document.querySelector('#board-minimap-canvas');
+const boardTools = document.querySelector('#board-tools');
+const boardSelectButton = document.querySelector('#board-select-button');
 const boardArrangeButton = document.querySelector('#board-arrange-button');
+const boardSelectionMarqueeElement = document.querySelector('#board-selection-marquee');
 const boardActionToast = document.querySelector('#board-action-toast');
 const boardActionToastMessage = boardActionToast.querySelector('span');
 const boardActionUndo = document.querySelector('#board-action-undo');
@@ -382,6 +392,10 @@ const DRAG_THRESHOLD_PX = 6;
 let draggedThought = null;
 let dragCandidate = null;
 let dragOffset = { x: 0, y: 0 };
+let boardSelection = null;
+let boardSelectionDrag = null;
+let boardSelectionMarquee = null;
+let boardSpacePressed = false;
 let canvasPan = null;
 let canvasScaleAnimationId = null;
 let canvasMinimapFrame = null;
@@ -614,13 +628,22 @@ function renderBoardExpansionControls() {
 }
 
 function renderBoardArrangeControl() {
-  const visible = (
+  const boardVisible = (
     isCanvasSpace(activeSpaceId)
     && viewMode !== 'spaces'
-    && getBoardThoughts().length > 1
   );
-  boardArrangeButton.hidden = !visible;
-  if (!visible) return;
+  const boardThoughtCount = boardVisible ? getBoardThoughts().length : 0;
+  boardTools.hidden = !boardVisible || boardThoughtCount === 0;
+  boardSelectButton.hidden = !boardVisible || boardThoughtCount === 0;
+  boardArrangeButton.hidden = !boardVisible || boardThoughtCount < 2;
+  boardSelectButton.setAttribute('aria-pressed', String(Boolean(boardSelection)));
+  boardSelectButton.title = boardSelection ? 'Finish selecting cards' : 'Select cards';
+  boardSelectButton.setAttribute('aria-label', boardSelectButton.title);
+  boardSelectButton.disabled = (
+    boardArrangeInFlight
+    || Boolean(magnetEditor || connectionEditor)
+  );
+  if (!boardVisible || boardThoughtCount < 2) return;
 
   const cloudUnavailable = Boolean(auth) && (
     !isCloudMode()
@@ -628,7 +651,7 @@ function renderBoardArrangeControl() {
   );
   boardArrangeButton.disabled = (
     boardArrangeInFlight
-    || Boolean(magnetEditor || connectionEditor)
+    || Boolean(magnetEditor || connectionEditor || boardSelection)
   );
   boardArrangeButton.classList.toggle('is-working', boardArrangeInFlight);
 
@@ -1507,6 +1530,85 @@ function clientPointToCanvasWorld(clientX, clientY) {
 
 function pointerToCanvasWorld(event) {
   return clientPointToCanvasWorld(event.clientX, event.clientY);
+}
+
+function isBoardSelectionActive() {
+  return Boolean(boardSelection && isCanvasSpace(activeSpaceId));
+}
+
+function renderBoardThoughtSelectionState(thought) {
+  const selected = Boolean(boardSelection?.selectedIds.has(thought.id));
+  const dragging = Boolean(boardSelectionDrag?.origins.has(thought.id));
+  thought.element.classList.toggle('is-board-selected', selected);
+  thought.element.classList.toggle('is-board-selection-dragging', dragging);
+}
+
+function renderBoardSelectionUi() {
+  const active = isBoardSelectionActive();
+  canvas.classList.toggle('is-board-selecting', active);
+  thoughts.forEach(renderBoardThoughtSelectionState);
+  renderRelationshipUi();
+  renderBoardArrangeControl();
+}
+
+function openBoardSelection() {
+  if (!isCanvasSpace(activeSpaceId) || boardArrangeInFlight) return false;
+  if (magnetEditor || connectionEditor || thoughtEditor.isOpen()) {
+    announce('Finish editing the current card first.');
+    return false;
+  }
+
+  clearThoughtSelection();
+  boardConnectionsPopover.close();
+  knowledgeKindPicker.close();
+  boardSelection = { selectedIds: new Set() };
+  renderBoardSelectionUi();
+  announce('Select cards to move together.');
+  return true;
+}
+
+function clearBoardSelection() {
+  if (!boardSelection) return;
+  boardSelection.selectedIds = new Set();
+  renderBoardSelectionUi();
+  announce('Selection cleared.');
+}
+
+function closeBoardSelection({ restoreFocus = false } = {}) {
+  if (!boardSelection) return;
+  if (boardSelectionMarquee) finishBoardSelectionMarquee(null, { cancelled: true });
+  if (boardSelectionDrag || dragCandidate) stopDrag(null, { cancelled: true });
+
+  boardSelection = null;
+  boardSelectionDrag = null;
+  boardSelectionMarquee = null;
+  boardSelectionMarqueeElement.hidden = true;
+  renderBoardSelectionUi();
+  if (restoreFocus && !boardSelectButton.hidden) {
+    boardSelectButton.focus({ preventScroll: true });
+  }
+  announce('Card selection finished.');
+}
+
+function toggleBoardThoughtSelection(thought) {
+  if (!boardSelection || !thought) return;
+  boardSelection.selectedIds = toggleBoardSelection(
+    boardSelection.selectedIds,
+    thought.id,
+  );
+  renderBoardSelectionUi();
+  const count = boardSelection.selectedIds.size;
+  announce(`${count} ${count === 1 ? 'card' : 'cards'} selected.`);
+}
+
+function getBoardSelectionCards() {
+  return getBoardThoughts().map((thought) => ({
+    id: thought.id,
+    x: thought.x,
+    y: thought.y,
+    width: boardGeometry.cardWidth,
+    height: boardGeometry.cardHeight,
+  }));
 }
 
 function getCanvasSpawnSafeArea() {
@@ -3119,14 +3221,19 @@ function renderMagnetThoughtState(thought) {
 function renderRelationshipUi() {
   if (!getSpaceCapabilities(activeSpaceId).connections) connectionEditor = null;
 
+  const boardSelecting = isBoardSelectionActive();
   const canSearchConnectionTargets = Boolean(
     isSpatialSpace(activeSpaceId) && connectionEditor,
   );
-  const selectedTotal = magnetEditor
-    ? magnetEditor.selectedChildIds.size
-    : connectionEditor?.selectedTargetIds.size || 0;
+  const selectedTotal = boardSelecting
+    ? boardSelection.selectedIds.size
+    : magnetEditor
+      ? magnetEditor.selectedChildIds.size
+      : connectionEditor?.selectedTargetIds.size || 0;
   selectionCount.textContent = `${selectedTotal} selected`;
-  selectionToolbar.hidden = !magnetEditor && !connectionEditor;
+  selectionToolbar.hidden = !boardSelecting && !magnetEditor && !connectionEditor;
+  selectionCancel.textContent = boardSelecting ? 'Clear' : 'Cancel';
+  selectionCancel.hidden = boardSelecting && selectedTotal === 0;
   connectionSearchTrigger.hidden = !canSearchConnectionTargets;
   connectionSearchTrigger.setAttribute(
     'aria-expanded',
@@ -3144,7 +3251,11 @@ function renderRelationshipUi() {
   }
   selectionToolbar.setAttribute(
     'aria-label',
-    magnetEditor ? 'Edit magnetic group' : 'Edit thought connections',
+    boardSelecting
+      ? 'Select Board cards'
+      : magnetEditor
+        ? 'Edit magnetic group'
+        : 'Edit thought connections',
   );
   canvas.classList.toggle('is-magnet-editing', Boolean(magnetEditor));
   canvas.classList.toggle('is-connection-editing', Boolean(connectionEditor));
@@ -3156,12 +3267,14 @@ function renderRelationshipUi() {
         }
       : null,
   );
-  knowledgePickerTrigger.disabled = Boolean(magnetEditor || connectionEditor);
+  knowledgePickerTrigger.disabled = Boolean(
+    boardSelecting || magnetEditor || connectionEditor,
+  );
   thoughts.forEach((thought) => {
     renderMagnetThoughtState(thought);
     renderConnectionThoughtState(thought);
     thought.element.querySelector('.thought-kind-button').disabled = Boolean(
-      magnetEditor || connectionEditor,
+      boardSelecting || magnetEditor || connectionEditor,
     );
   });
 }
@@ -3810,12 +3923,22 @@ function makeThought(
   element.addEventListener('pointerdown', (event) => beginDrag(event, thought));
   element.addEventListener('keydown', (event) => {
     if (event.target !== element) return;
+    if (
+      isBoardSelectionActive()
+      && (event.key === 'Enter' || event.key === ' ')
+    ) {
+      event.preventDefault();
+      toggleBoardThoughtSelection(thought);
+      return;
+    }
     if (event.key !== 'Enter' && event.key !== 'F2') return;
 
     event.preventDefault();
     startThoughtTextEditing(thought);
   });
-  element.addEventListener('focus', () => selectThought(thought));
+  element.addEventListener('focus', () => {
+    if (!isBoardSelectionActive()) selectThought(thought);
+  });
   element.addEventListener('pointerenter', () => element.classList.add('is-hovered'));
   element.addEventListener('pointerleave', () => element.classList.remove('is-hovered'));
   return thought;
@@ -3829,9 +3952,14 @@ function replaceThoughts(nextThoughts) {
   knowledgeKindPicker.close();
   magnetEditor = null;
   connectionEditor = null;
+  boardSelection = null;
+  boardSelectionDrag = null;
+  boardSelectionMarquee = null;
+  boardSelectionMarqueeElement.hidden = true;
   selectionToolbar.hidden = true;
   canvas.classList.remove('is-magnet-editing');
   canvas.classList.remove('is-connection-editing');
+  canvas.classList.remove('is-board-selecting');
   stopDrag();
   thoughts.forEach((thought) => thought.element?.remove());
   thoughts = nextThoughts.map((thought) => makeThought(thought.text, thought));
@@ -5583,6 +5711,7 @@ function removeThoughtFromBoard(thought) {
   };
   thought.meta = withoutCanvasPlacement(thought.meta, snapshot.boardId);
   if (selectedThoughtId === thought.id) clearThoughtSelection();
+  if (boardSelection?.selectedIds.delete(thought.id)) renderBoardSelectionUi();
   syncThoughtElementVisibility(thought);
   rebuildConnectionLayer();
   updateUi();
@@ -5627,6 +5756,7 @@ function undoRemoveFromBoard({ thoughtId, boardId, position }) {
 
 function removeThoughtElement(thought) {
   if (draggedThought === thought) stopDrag();
+  if (boardSelection?.selectedIds.delete(thought.id)) renderBoardSelectionUi();
   thought.element.classList.add('is-removing');
   window.setTimeout(() => {
     thought.element.remove();
@@ -5691,6 +5821,22 @@ function activateDrag(candidate) {
   dragCandidate = null;
   dragOffset = candidate.dragOffset;
 
+  if (isBoardSelectionActive()) {
+    if (!boardSelection.selectedIds.has(draggedThought.id)) {
+      boardSelection.selectedIds = new Set([draggedThought.id]);
+    }
+    boardSelectionDrag = {
+      pointerId: candidate.pointerId,
+      startPointer: clientPointToCanvasWorld(candidate.startX, candidate.startY),
+      origins: captureBoardSelectionOrigins(
+        getBoardThoughts(),
+        boardSelection.selectedIds,
+      ),
+    };
+    renderBoardSelectionUi();
+    return;
+  }
+
   if (isCanvasSpace(activeSpaceId)) {
     measureThought(draggedThought);
   }
@@ -5717,6 +5863,27 @@ function moveDrag(event) {
   }
 
   if (!draggedThought) return;
+
+  if (boardSelectionDrag) {
+    if (event.pointerId !== boardSelectionDrag.pointerId) return;
+    const pointer = pointerToCanvasWorld(event);
+    const positions = translateBoardSelectionOrigins(
+      boardSelectionDrag.origins,
+      {
+        x: pointer.x - boardSelectionDrag.startPointer.x,
+        y: pointer.y - boardSelectionDrag.startPointer.y,
+      },
+    );
+    positions.forEach(({ id, x, y }) => {
+      const thought = getThoughtById(id);
+      if (!thought) return;
+      thought.x = x;
+      thought.y = y;
+      thought.rotation = 0;
+    });
+    scheduleCanvasMinimapRender();
+    return;
+  }
 
   if (isCanvasSpace(activeSpaceId)) {
     const pointer = pointerToCanvasWorld(event);
@@ -5758,11 +5925,16 @@ function stopDrag(event, { cancelled = !event } = {}) {
     dragCandidate = null;
 
     if (!draggedThought && !cancelled) {
-      if (isCanvasSpace(activeSpaceId)) selectThought(candidate.thought);
-      if (candidate.startedOnText && candidate.wasSelected) {
-        startThoughtTextEditing(candidate.thought);
-      } else {
+      if (isBoardSelectionActive()) {
+        toggleBoardThoughtSelection(candidate.thought);
         candidate.thought.element.focus({ preventScroll: true });
+      } else {
+        if (isCanvasSpace(activeSpaceId)) selectThought(candidate.thought);
+        if (candidate.startedOnText && candidate.wasSelected) {
+          startThoughtTextEditing(candidate.thought);
+        } else {
+          candidate.thought.element.focus({ preventScroll: true });
+        }
       }
     }
   }
@@ -5770,6 +5942,41 @@ function stopDrag(event, { cancelled = !event } = {}) {
   if (!draggedThought) return;
   const thought = draggedThought;
   thought.element.classList.remove('is-dragging');
+
+  if (boardSelectionDrag) {
+    const drag = boardSelectionDrag;
+    const movedThoughts = [...drag.origins.keys()]
+      .map(getThoughtById)
+      .filter(Boolean);
+
+    if (cancelled) {
+      drag.origins.forEach((origin, thoughtId) => {
+        const movedThought = getThoughtById(thoughtId);
+        if (!movedThought) return;
+        movedThought.x = origin.x;
+        movedThought.y = origin.y;
+      });
+    } else {
+      if (boardActionUndoKind === 'arrange') hideBoardActionMessage();
+      movedThoughts.forEach(updateCanvasPlacement);
+      saveThoughts();
+      if (isCloudMode()) {
+        movedThoughts.forEach((movedThought) => {
+          enqueueThoughtMetaPatch(movedThought, ['canvas']);
+        });
+      }
+    }
+
+    boardSelectionDrag = null;
+    draggedThought = null;
+    renderBoardSelectionUi();
+    connectionRenderer.update();
+    scheduleCanvasMinimapRender();
+    if (!cancelled) {
+      announce(`Moved ${movedThoughts.length} ${movedThoughts.length === 1 ? 'card' : 'cards'}.`);
+    }
+    return;
+  }
 
   if (isCanvasSpace(activeSpaceId)) {
     if (boardActionUndoKind === 'arrange') hideBoardActionMessage();
@@ -5787,6 +5994,90 @@ function stopDrag(event, { cancelled = !event } = {}) {
   }
   draggedThought = null;
   scheduleSave();
+}
+
+function renderBoardSelectionMarquee(rectangle) {
+  if (!rectangle) {
+    boardSelectionMarqueeElement.hidden = true;
+    return;
+  }
+  boardSelectionMarqueeElement.hidden = false;
+  boardSelectionMarqueeElement.style.left = `${rectangle.left}px`;
+  boardSelectionMarqueeElement.style.top = `${rectangle.top}px`;
+  boardSelectionMarqueeElement.style.width = `${rectangle.right - rectangle.left}px`;
+  boardSelectionMarqueeElement.style.height = `${rectangle.bottom - rectangle.top}px`;
+}
+
+function beginBoardSelectionMarquee(event) {
+  if (!isBoardSelectionActive() || event.button !== 0 || boardSpacePressed) return false;
+  if (event.target.closest('.thought-card, button, input, textarea, a')) return false;
+
+  const start = pointerToCanvasWorld(event);
+  const previousIds = new Set(boardSelection.selectedIds);
+  const additive = event.shiftKey || event.ctrlKey || event.metaKey;
+  const baseIds = additive ? previousIds : new Set();
+  boardSelection.selectedIds = new Set(baseIds);
+  boardSelectionMarquee = {
+    pointerId: event.pointerId,
+    start,
+    previousIds,
+    baseIds,
+  };
+  renderBoardSelectionMarquee(boardSelectionRectangle(start, start));
+  canvas.setPointerCapture(event.pointerId);
+  renderBoardSelectionUi();
+  event.preventDefault();
+  return true;
+}
+
+function moveBoardSelectionMarquee(event) {
+  if (
+    !boardSelectionMarquee
+    || !boardSelection
+    || event.pointerId !== boardSelectionMarquee.pointerId
+  ) return false;
+
+  const rectangle = boardSelectionRectangle(
+    boardSelectionMarquee.start,
+    pointerToCanvasWorld(event),
+  );
+  const intersectingIds = selectBoardCardsInRectangle(
+    getBoardSelectionCards(),
+    rectangle,
+  );
+  boardSelection.selectedIds = new Set([
+    ...boardSelectionMarquee.baseIds,
+    ...intersectingIds,
+  ]);
+  selectionCount.textContent = `${boardSelection.selectedIds.size} selected`;
+  selectionCancel.hidden = boardSelection.selectedIds.size === 0;
+  renderBoardSelectionMarquee(rectangle);
+  return true;
+}
+
+function finishBoardSelectionMarquee(event, { cancelled = false } = {}) {
+  if (
+    !boardSelectionMarquee
+    || (event && event.pointerId !== boardSelectionMarquee.pointerId)
+  ) return false;
+
+  const marquee = boardSelectionMarquee;
+  boardSelectionMarquee = null;
+  boardSelectionMarqueeElement.hidden = true;
+  if (cancelled && boardSelection) {
+    boardSelection.selectedIds = marquee.previousIds;
+  }
+  renderBoardSelectionUi();
+  if (!cancelled && boardSelection) {
+    const count = boardSelection.selectedIds.size;
+    announce(`${count} ${count === 1 ? 'card' : 'cards'} selected.`);
+  }
+  return true;
+}
+
+function beginCanvasPointerInteraction(event) {
+  if (beginBoardSelectionMarquee(event)) return;
+  beginCanvasPan(event);
 }
 
 function beginCanvasPan(event) {
@@ -5897,8 +6188,8 @@ function constrainThought(thought) {
 }
 
 function startThoughtTextEditing(thought, { kind, origin = 'space' } = {}) {
-  if (magnetEditor || connectionEditor) {
-    announce('Finish the current card relationship first.');
+  if (boardSelection || magnetEditor || connectionEditor) {
+    announce('Finish the current editing mode first.');
     return;
   }
   if (blockEditsDuringAccountSync() || thoughtEditor.isOpen()) return;
@@ -5933,6 +6224,7 @@ function renderThought(thought) {
   thought.element.classList.toggle('is-pinned', thought.pinned);
   thought.element.classList.toggle('is-canvas-card', canvasThought);
   thought.element.classList.toggle('is-selected', selectedThoughtId === thought.id);
+  renderBoardThoughtSelectionState(thought);
   const cardActionButton = thought.element.querySelector('.delete-button');
   const cardAction = canvasThought ? 'remove-board' : 'delete';
   if (cardActionButton.dataset.action !== cardAction) {
@@ -6958,6 +7250,7 @@ function activateSpace(spaceId) {
   clearComposerRelation();
   if (magnetEditor) closeMagnetEditor({ restoreMotion: true });
   if (connectionEditor) closeConnectionEditor();
+  if (boardSelection) closeBoardSelection();
   stopDrag();
   finishBoardArrangeAnimation();
   stopCanvasPan();
@@ -7021,6 +7314,7 @@ function openSpacesOverview({ returnFocus = spacesButton } = {}) {
   }
   if (magnetEditor) closeMagnetEditor({ restoreMotion: true });
   if (connectionEditor) closeConnectionEditor();
+  if (boardSelection) closeBoardSelection();
   stopDrag();
   finishBoardArrangeAnimation();
   spatialView?.deactivate();
@@ -7795,6 +8089,10 @@ spacesSpatialAction.addEventListener('click', () => {
   const spatialSpace = getSpaces().find(({ id }) => isSpatialSpace(id));
   if (spatialSpace) navigateToSpace(spatialSpace.id);
 });
+boardSelectButton.addEventListener('click', () => {
+  if (boardSelection) closeBoardSelection({ restoreFocus: true });
+  else openBoardSelection();
+});
 boardArrangeButton.addEventListener('click', () => void arrangeBoard());
 boardActionUndo.addEventListener('click', () => {
   const undo = boardActionUndoHandler;
@@ -7808,7 +8106,9 @@ spacesOverview.addEventListener('click', (event) => {
   if (event.target === spacesOverview) closeSpacesOverview();
 });
 selectionCancel.addEventListener('click', () => {
-  if (magnetEditor) {
+  if (boardSelection) {
+    clearBoardSelection();
+  } else if (magnetEditor) {
     closeMagnetEditor({ restoreMotion: true });
     announce('Magnetic group changes canceled.');
   } else if (connectionEditor) {
@@ -7817,7 +8117,8 @@ selectionCancel.addEventListener('click', () => {
   }
 });
 selectionDone.addEventListener('click', () => {
-  if (magnetEditor) commitMagnetEditor();
+  if (boardSelection) closeBoardSelection({ restoreFocus: true });
+  else if (magnetEditor) commitMagnetEditor();
   else if (connectionEditor) commitConnectionEditor();
 });
 connectionSearchTrigger.addEventListener('click', () => {
@@ -7926,16 +8227,19 @@ anchorsClose.addEventListener('click', () => anchorsDialog.close());
 anchorsDialog.addEventListener('click', (event) => {
   if (event.target === anchorsDialog) anchorsDialog.close();
 });
-canvas.addEventListener('pointerdown', beginCanvasPan);
+canvas.addEventListener('pointerdown', beginCanvasPointerInteraction);
 canvas.addEventListener('pointermove', (event) => {
+  if (moveBoardSelectionMarquee(event)) return;
   if (!moveCanvasPan(event)) moveDrag(event);
 });
 canvas.addEventListener('pointerup', (event) => {
+  if (finishBoardSelectionMarquee(event)) return;
   const wasPanning = Boolean(canvasPan);
   stopCanvasPan(event);
   if (!wasPanning) stopDrag(event);
 });
 canvas.addEventListener('pointercancel', (event) => {
+  if (finishBoardSelectionMarquee(event, { cancelled: true })) return;
   const wasPanning = Boolean(canvasPan);
   stopCanvasPan(event);
   if (!wasPanning) stopDrag(event, { cancelled: true });
@@ -8062,6 +8366,32 @@ window.addEventListener('keydown', (event) => {
     'input, textarea, [contenteditable="true"]',
   );
 
+  if (boardSelection && !typing && event.code === 'Space') {
+    event.preventDefault();
+    boardSpacePressed = true;
+    return;
+  }
+
+  if (boardSelection && !typing && (event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'a') {
+    event.preventDefault();
+    boardSelection.selectedIds = new Set(getBoardThoughts().map(({ id }) => id));
+    renderBoardSelectionUi();
+    announce(`${boardSelection.selectedIds.size} cards selected.`);
+    return;
+  }
+
+  if (boardSelection && !typing && event.key === 'Escape') {
+    event.preventDefault();
+    closeBoardSelection({ restoreFocus: true });
+    return;
+  }
+
+  if (boardSelection && !typing && event.key === 'Enter') {
+    event.preventDefault();
+    closeBoardSelection({ restoreFocus: true });
+    return;
+  }
+
   if (connectionMapSession) return;
 
   if (isConnectionSearchOpen() && event.key === 'Escape') {
@@ -8137,6 +8467,12 @@ window.addEventListener('keydown', (event) => {
     event.preventDefault();
     commitMagnetEditor();
   }
+});
+window.addEventListener('keyup', (event) => {
+  if (event.code === 'Space') boardSpacePressed = false;
+});
+window.addEventListener('blur', () => {
+  boardSpacePressed = false;
 });
 document.addEventListener('pointerdown', (event) => {
   if (!event.target.closest('#spatial-layout-picker')) closeSpatialLayoutMenu();
