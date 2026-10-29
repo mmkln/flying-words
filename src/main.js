@@ -1,3 +1,4 @@
+import { createPageLoadDiagnostics } from './page-load-diagnostics.js';
 import {
   buildHierarchyComponents,
   magnetMetaFromParents,
@@ -154,6 +155,17 @@ import {
   buildThoughtListPath,
   normalizeThoughtListResponse,
 } from './thought-list-api.js';
+
+const pageLoadDiagnostics = createPageLoadDiagnostics();
+pageLoadDiagnostics.mark('module:evaluated');
+
+function pageLoadErrorDetails(error) {
+  return {
+    errorName: error instanceof Error ? error.name : 'UnknownError',
+    errorStatus: Number.isInteger(error?.status) ? error.status : null,
+    errorMessage: error instanceof Error ? error.message : String(error),
+  };
+}
 
 const STORAGE_KEY = 'flying-thoughts:v1';
 const AUTH_STORAGE_KEY = 'flying-thoughts:auth:v1';
@@ -358,6 +370,7 @@ let applicationReady = false;
 let animationStarted = false;
 let legacyOutboxQuarantined = false;
 let thoughts = loadStoredThoughts(STORAGE_KEY);
+pageLoadDiagnostics.mark('cache:guest-read', { thoughtCount: thoughts.length });
 let syncPending = false;
 let syncInFlight = false;
 let serverStateReady = true;
@@ -958,14 +971,22 @@ function refreshSpatialGraph({ fitAfterLayout = false, transition = null } = {})
 }
 
 async function activateSpatialView() {
+  const finishDiagnostics = pageLoadDiagnostics.begin('spatial:activate', {
+    blocking: false,
+    thoughtCount: thoughts.length,
+  });
   canvasWorld.hidden = true;
   spatialWorld.hidden = false;
   const view = await ensureSpatialView();
-  if (!view || !isSpatialSpace(activeSpaceId)) return;
+  if (!view || !isSpatialSpace(activeSpaceId)) {
+    finishDiagnostics('skipped', { reason: view ? 'space-changed' : 'unavailable' });
+    return;
+  }
   view.setGraph(buildSpatialGraph());
   view.setSelectedThought(selectedThoughtId);
   view.activate();
   renderThoughtInspector();
+  finishDiagnostics('complete', { visibleThoughtCount: spatialScopeVisibleCount });
 }
 
 function deactivateSpatialView() {
@@ -1302,6 +1323,7 @@ function setApplicationReady(ready) {
   historyButton.disabled = !ready;
   spacesButton.disabled = !ready;
   anchorsButton.disabled = !ready;
+  pageLoadDiagnostics.mark(ready ? 'ui:unlocked' : 'ui:locked');
 }
 
 function startAnimationOnce() {
@@ -1401,13 +1423,38 @@ function loadOutbox(accountId) {
   }
 }
 
-function saveOutbox(accountId, operations) {
-  if (!operations.length) {
-    localStorage.removeItem(outboxStorageKey(accountId));
-    return;
-  }
+function summarizeOutbox(operations) {
+  return operations.reduce((summary, operation) => {
+    summary.operationCount += 1;
+    summary[`${operation.status}Count`] += 1;
+    summary[`${operation.type}Count`] += 1;
+    return summary;
+  }, {
+    operationCount: 0,
+    pendingCount: 0,
+    blockedCount: 0,
+    conflictCount: 0,
+    createCount: 0,
+    patchCount: 0,
+    deleteCount: 0,
+  });
+}
 
-  localStorage.setItem(outboxStorageKey(accountId), JSON.stringify(operations));
+function saveOutbox(accountId, operations) {
+  try {
+    if (!operations.length) {
+      localStorage.removeItem(outboxStorageKey(accountId));
+      return;
+    }
+
+    localStorage.setItem(outboxStorageKey(accountId), JSON.stringify(operations));
+  } catch (error) {
+    pageLoadDiagnostics.mark('outbox:write:failed', {
+      ...summarizeOutbox(operations),
+      ...pageLoadErrorDetails(error),
+    });
+    throw error;
+  }
 }
 
 function serializableThoughts(source = thoughts) {
@@ -2821,10 +2868,36 @@ function mergeThoughts(...groups) {
 }
 
 function saveThoughts() {
-  localStorage.setItem(
-    currentThoughtStorageKey(),
-    JSON.stringify(serializableThoughts()),
-  );
+  const storageScope = auth ? 'account' : 'guest';
+  const thoughtCount = thoughts.length;
+  const startedAt = performance.now();
+
+  try {
+    const serialized = JSON.stringify(serializableThoughts());
+    const serializedAt = performance.now();
+    localStorage.setItem(currentThoughtStorageKey(), serialized);
+    const finishedAt = performance.now();
+    const durationMs = finishedAt - startedAt;
+
+    if (!applicationReady || durationMs >= 16) {
+      pageLoadDiagnostics.mark('storage:thought-snapshot:write', {
+        storageScope,
+        thoughtCount,
+        characterCount: serialized.length,
+        serializeDurationMs: Math.round((serializedAt - startedAt) * 10) / 10,
+        writeDurationMs: Math.round((finishedAt - serializedAt) * 10) / 10,
+        durationMs: Math.round(durationMs * 10) / 10,
+        blocking: true,
+      });
+    }
+  } catch (error) {
+    pageLoadDiagnostics.mark('storage:thought-snapshot:failed', {
+      storageScope,
+      thoughtCount,
+      ...pageLoadErrorDetails(error),
+    });
+    throw error;
+  }
 }
 
 function scheduleSave() {
@@ -3946,31 +4019,42 @@ function makeThought(
 }
 
 function replaceThoughts(nextThoughts) {
-  thoughtEditor.discard({ restoreFocus: false });
-  selectedThoughtId = null;
-  composerRelationTargetId = null;
-  renderComposerRelation();
-  knowledgeKindPicker.close();
-  magnetEditor = null;
-  connectionEditor = null;
-  boardSelection = null;
-  boardSelectionDrag = null;
-  boardSelectionMarquee = null;
-  boardSelectionMarqueeElement.hidden = true;
-  selectionToolbar.hidden = true;
-  canvas.classList.remove('is-magnet-editing');
-  canvas.classList.remove('is-connection-editing');
-  canvas.classList.remove('is-board-selecting');
-  stopDrag();
-  thoughts.forEach((thought) => thought.element?.remove());
-  thoughts = nextThoughts.map((thought) => makeThought(thought.text, thought));
-  repairMagnetRelations();
-  rebuildMagnetComponents({ preserveVisibility: false });
-  initializeThoughtVisibility();
-  renderRelationshipUi();
-  rebuildConnectionLayer();
-  updateUi();
-  saveThoughts();
+  const finishDiagnostics = pageLoadDiagnostics.begin('thoughts:replace', {
+    previousThoughtCount: thoughts.length,
+    nextThoughtCount: nextThoughts.length,
+    storageScope: auth ? 'account' : 'guest',
+  });
+  try {
+    thoughtEditor.discard({ restoreFocus: false });
+    selectedThoughtId = null;
+    composerRelationTargetId = null;
+    renderComposerRelation();
+    knowledgeKindPicker.close();
+    magnetEditor = null;
+    connectionEditor = null;
+    boardSelection = null;
+    boardSelectionDrag = null;
+    boardSelectionMarquee = null;
+    boardSelectionMarqueeElement.hidden = true;
+    selectionToolbar.hidden = true;
+    canvas.classList.remove('is-magnet-editing');
+    canvas.classList.remove('is-connection-editing');
+    canvas.classList.remove('is-board-selecting');
+    stopDrag();
+    thoughts.forEach((thought) => thought.element?.remove());
+    thoughts = nextThoughts.map((thought) => makeThought(thought.text, thought));
+    repairMagnetRelations();
+    rebuildMagnetComponents({ preserveVisibility: false });
+    initializeThoughtVisibility();
+    renderRelationshipUi();
+    rebuildConnectionLayer();
+    updateUi();
+    saveThoughts();
+    finishDiagnostics('complete', { thoughtCount: thoughts.length });
+  } catch (error) {
+    finishDiagnostics('failed', pageLoadErrorDetails(error));
+    throw error;
+  }
 }
 
 function measureThought(thought) {
@@ -4184,11 +4268,16 @@ async function requestApi(path, {
 }
 
 async function loadBoardGeometry() {
+  const finishDiagnostics = pageLoadDiagnostics.begin('board-geometry:request', {
+    blocking: false,
+  });
   try {
     boardGeometry = applyBoardGeometryCss(
       normalizeBoardGeometry(await requestApi('/board-spec/', { authSnapshot: null })),
     );
-  } catch {
+    finishDiagnostics('complete', { version: boardGeometry.version });
+  } catch (error) {
+    finishDiagnostics('failed', pageLoadErrorDetails(error));
     // The CSS fallback uses the same version 1 geometry while the API is down.
     return;
   }
@@ -4245,15 +4334,21 @@ function applyBoardRecords(records) {
 async function loadBoards() {
   if (!auth) {
     applyBoardRecords([]);
+    pageLoadDiagnostics.mark('boards:load:skipped', { reason: 'guest' });
     return false;
   }
 
+  const finishDiagnostics = pageLoadDiagnostics.begin('boards:load');
   try {
     const records = await requestApi('/boards/');
     applyBoardRecords(records);
+    finishDiagnostics('complete', {
+      boardCount: Array.isArray(records) ? records.length : 0,
+    });
     return true;
   } catch (error) {
     applyBoardRecords([]);
+    finishDiagnostics('failed', pageLoadErrorDetails(error));
     announce(`Could not load Boards: ${error.message}`);
     return false;
   }
@@ -4643,6 +4738,12 @@ async function flushOutbox() {
   if (!await ensureSyncCapabilities()) return;
 
   const accountId = auth.id;
+  const initialOperations = loadOutbox(accountId);
+  const finishDiagnostics = pageLoadDiagnostics.begin('outbox:flush', {
+    ...summarizeOutbox(initialOperations),
+    blocking: false,
+  });
+  let flushedCount = 0;
   outboxFlushInFlight = true;
   window.clearTimeout(outboxRetryTimer);
 
@@ -4676,7 +4777,13 @@ async function flushOutbox() {
         throw error;
       }
 
-      if (auth?.id !== accountId) return;
+      if (auth?.id !== accountId) {
+        finishDiagnostics('cancelled', {
+          reason: 'account-changed',
+          flushedCount,
+        });
+        return;
+      }
 
       const storedOperations = loadOutbox(accountId);
       const remaining = result
@@ -4689,8 +4796,27 @@ async function flushOutbox() {
       }
       outboxRetryDelay = 2000;
       activeOutboxOperation = null;
+      flushedCount += 1;
+    }
+    const remainingOperations = loadOutbox(accountId);
+    if (auth?.id !== accountId || !navigator.onLine) {
+      finishDiagnostics('cancelled', {
+        reason: auth?.id !== accountId ? 'account-changed' : 'offline',
+        flushedCount,
+        ...summarizeOutbox(remainingOperations),
+      });
+    } else {
+      finishDiagnostics('complete', {
+        flushedCount,
+        ...summarizeOutbox(remainingOperations),
+      });
     }
   } catch (error) {
+    finishDiagnostics('failed', {
+      flushedCount,
+      ...summarizeOutbox(loadOutbox(accountId)),
+      ...pageLoadErrorDetails(error),
+    });
     if (auth?.id === accountId) {
       announce(`Changes are safe on this device and will sync later: ${error.message}`);
       scheduleOutboxRetry(accountId);
@@ -5176,25 +5302,67 @@ async function loadRemainingServerThoughts({
   silent = false,
 } = {}) {
   let nextCursor = cursor;
+  let pageNumber = 2;
+  let loadedCount = 0;
+  const finishBackground = pageLoadDiagnostics.begin('thoughts:background-load', {
+    blocking: false,
+    pageSize: BACKGROUND_THOUGHT_PAGE_SIZE,
+  });
 
   while (nextCursor) {
-    if (!auth || syncPending || requestId !== serverThoughtsRequestId) return false;
+    if (!auth || syncPending || requestId !== serverThoughtsRequestId) {
+      finishBackground('cancelled', { loadedCount, pageCount: pageNumber - 2 });
+      return false;
+    }
 
+    const finishRequest = pageLoadDiagnostics.begin('thoughts:background-page:request', {
+      pageNumber,
+      limit: BACKGROUND_THOUGHT_PAGE_SIZE,
+    });
+    let finishApply = null;
     try {
       const page = await requestThoughtListPage({
         limit: BACKGROUND_THOUGHT_PAGE_SIZE,
         cursor: nextCursor,
       });
+      finishRequest('complete', {
+        pageNumber,
+        resultCount: page.results.length,
+        hasMore: Boolean(page.nextCursor),
+      });
 
-      if (!auth || syncPending || requestId !== serverThoughtsRequestId) return false;
+      if (!auth || syncPending || requestId !== serverThoughtsRequestId) {
+        finishBackground('cancelled', { loadedCount, pageCount: pageNumber - 2 });
+        return false;
+      }
 
       serverThoughtsNextCursor = page.nextCursor;
+      finishApply = pageLoadDiagnostics.begin('thoughts:background-page:apply', {
+        pageNumber,
+        resultCount: page.results.length,
+      });
       mergeServerThoughts(page.results);
+      finishApply('complete', { totalThoughtCount: thoughts.length });
+      loadedCount += page.results.length;
       nextCursor = page.nextCursor;
       renderBoardExpansionControls();
 
       if (isSpatialSpace(activeSpaceId)) refreshSpatialGraph();
+      pageNumber += 1;
     } catch (error) {
+      finishRequest('failed', {
+        pageNumber,
+        ...pageLoadErrorDetails(error),
+      });
+      finishApply?.('failed', {
+        pageNumber,
+        ...pageLoadErrorDetails(error),
+      });
+      finishBackground('failed', {
+        loadedCount,
+        pageCount: pageNumber - 2,
+        ...pageLoadErrorDetails(error),
+      });
       if (!silent && requestId === serverThoughtsRequestId) {
         announce(`Could not load all saved thoughts: ${error.message}`);
       }
@@ -5202,6 +5370,11 @@ async function loadRemainingServerThoughts({
     }
   }
 
+  finishBackground('complete', {
+    loadedCount,
+    pageCount: pageNumber - 2,
+    totalThoughtCount: thoughts.length,
+  });
   return true;
 }
 
@@ -5209,27 +5382,58 @@ async function loadServerThoughts({ silent = false } = {}) {
   if (!auth || syncPending) return false;
 
   const requestId = ++serverThoughtsRequestId;
+  const finishInitialLoad = pageLoadDiagnostics.begin('thoughts:initial-load', {
+    limit: INITIAL_THOUGHT_PAGE_SIZE,
+    silent,
+  });
+  const finishRequest = pageLoadDiagnostics.begin('thoughts:first-page:request', {
+    limit: INITIAL_THOUGHT_PAGE_SIZE,
+  });
+  let finishApply = null;
 
   try {
     const page = await requestThoughtListPage({
       limit: INITIAL_THOUGHT_PAGE_SIZE,
     });
+    finishRequest('complete', {
+      resultCount: page.results.length,
+      hasMore: Boolean(page.nextCursor),
+    });
 
-    if (!auth || syncPending || requestId !== serverThoughtsRequestId) return false;
+    if (!auth || syncPending || requestId !== serverThoughtsRequestId) {
+      finishInitialLoad('cancelled');
+      return false;
+    }
 
+    finishApply = pageLoadDiagnostics.begin('thoughts:first-page:apply', {
+      resultCount: page.results.length,
+    });
     applyServerThoughts(page.results);
+    finishApply('complete', { totalThoughtCount: thoughts.length });
     serverThoughtsNextCursor = page.nextCursor;
     renderBoardExpansionControls();
     if (page.nextCursor) {
+      pageLoadDiagnostics.mark('thoughts:background-load:scheduled', {
+        blocking: false,
+        pageSize: BACKGROUND_THOUGHT_PAGE_SIZE,
+      });
       void loadRemainingServerThoughts({
         cursor: page.nextCursor,
         requestId,
         silent,
       });
     }
+    finishInitialLoad('complete', {
+      firstPageCount: page.results.length,
+      totalThoughtCount: thoughts.length,
+      backgroundPending: Boolean(page.nextCursor),
+    });
     if (!silent) announce('Your saved thoughts are ready.');
     return true;
   } catch (error) {
+    finishRequest('failed', pageLoadErrorDetails(error));
+    finishApply?.('failed', pageLoadErrorDetails(error));
+    finishInitialLoad('failed', pageLoadErrorDetails(error));
     if (!silent) announce(`Could not load saved thoughts: ${error.message}`);
     return false;
   }
@@ -5237,10 +5441,15 @@ async function loadServerThoughts({ silent = false } = {}) {
 
 async function syncGuestThoughts() {
   if (!auth || syncInFlight) return false;
+  const finishSync = pageLoadDiagnostics.begin('thoughts:guest-sync');
+  const finishCapabilities = pageLoadDiagnostics.begin('sync-capabilities:check');
   if (!await ensureSyncCapabilities()) {
+    finishCapabilities('failed');
     syncPending = true;
+    finishSync('failed', { reason: 'capabilities-unavailable' });
     return false;
   }
+  finishCapabilities('complete');
 
   const accountId = auth.id;
   let pending = loadPendingThoughts(accountId);
@@ -5252,26 +5461,44 @@ async function syncGuestThoughts() {
 
   if (!pending.length) {
     syncPending = false;
+    finishSync('complete', { pendingThoughtCount: 0 });
     return true;
   }
 
   const operationId = ++syncOperationId;
   syncInFlight = true;
+  const finishRequest = pageLoadDiagnostics.begin('thoughts:guest-sync:request', {
+    pendingThoughtCount: pending.length,
+  });
   try {
     const response = await requestApi('/thoughts/sync/', {
       method: 'POST',
       body: { thoughts: serializeThoughtsForSync(pending) },
     });
+    finishRequest('complete', {
+      resultCount: Array.isArray(response.thoughts) ? response.thoughts.length : 0,
+    });
 
-    if (auth?.id !== accountId || operationId !== syncOperationId) return false;
+    if (auth?.id !== accountId || operationId !== syncOperationId) {
+      finishSync('cancelled', { reason: 'account-changed' });
+      return false;
+    }
 
     localStorage.removeItem(STORAGE_KEY);
     localStorage.removeItem(pendingSyncStorageKey(accountId));
     syncPending = false;
     applyServerThoughts(response.thoughts);
+    finishSync('complete', {
+      pendingThoughtCount: pending.length,
+      totalThoughtCount: thoughts.length,
+    });
     return true;
   } catch (error) {
-    if (auth?.id !== accountId || operationId !== syncOperationId) return false;
+    finishRequest('failed', pageLoadErrorDetails(error));
+    if (auth?.id !== accountId || operationId !== syncOperationId) {
+      finishSync('cancelled', { reason: 'account-changed' });
+      return false;
+    }
 
     if (/up to \d+ thoughts/i.test(error.message)) {
       syncPending = false;
@@ -5281,10 +5508,15 @@ async function syncGuestThoughts() {
       } else {
         syncPending = true;
       }
+      finishSync('failed', {
+        reason: 'account-capacity',
+        recoveredServerState: loaded,
+      });
       return false;
     }
 
     syncPending = true;
+    finishSync('failed', pageLoadErrorDetails(error));
     announce(`Could not sync local thoughts. They are still safe on this device: ${error.message}`);
     return false;
   } finally {
@@ -5293,19 +5525,32 @@ async function syncGuestThoughts() {
 }
 
 async function restoreAuthenticatedThoughts({ silent = false } = {}) {
-  let ready;
-  if (syncPending) {
-    ready = await syncGuestThoughts();
-  } else {
-    ready = await loadServerThoughts({ silent });
-  }
+  const finishDiagnostics = pageLoadDiagnostics.begin('thoughts:restore', {
+    mode: syncPending ? 'sync-pending' : 'server-load',
+    silent,
+  });
+  try {
+    let ready;
+    if (syncPending) {
+      ready = await syncGuestThoughts();
+    } else {
+      ready = await loadServerThoughts({ silent });
+    }
 
-  if (ready && auth) {
-    serverStateReady = true;
-    renderBoardExpansionControls();
+    if (ready && auth) {
+      serverStateReady = true;
+      renderBoardExpansionControls();
+    }
+    if (isCloudMode()) void flushOutbox();
+    finishDiagnostics(ready ? 'complete' : 'failed', {
+      thoughtCount: thoughts.length,
+      backgroundPending: Boolean(serverThoughtsNextCursor),
+    });
+    return ready;
+  } catch (error) {
+    finishDiagnostics('failed', pageLoadErrorDetails(error));
+    throw error;
   }
-  if (isCloudMode()) void flushOutbox();
-  return ready;
 }
 
 function setupPanelRefreshButton(button) {
@@ -7158,7 +7403,7 @@ function renderSpacesOverview() {
     'Boards', 'boards', boardSpaces, canvasWidth, canvasHeight,
   );
 
-  if (auth) boardSection.grid.append(createNewBoardTile());
+  if (auth) boardSection.grid.prepend(createNewBoardTile());
   const spatialActive = isSpatialSpace(activeSpaceId);
   spacesSpatialAction.classList.toggle('is-active', spatialActive);
   if (spatialActive) spacesSpatialAction.setAttribute('aria-current', 'page');
@@ -7763,44 +8008,84 @@ async function loadCurrentIdentity() {
 }
 
 async function activateAuthenticatedAccount() {
-  clearSpatialNavigationHistory();
-  resetPaginatedThoughtState();
-  sessionValidated = true;
-  serverStateReady = false;
-  legacyOutboxQuarantined = quarantineLegacyOutbox(auth.id);
-  const guestThoughts = loadStoredThoughts(STORAGE_KEY);
-  const cachedAccountThoughts = applyOutboxOperations(
-    loadAccountThoughts(auth.id),
-    loadOutbox(auth.id),
-  );
-  const pendingForAccount = loadPendingThoughts(auth.id);
-  const thoughtsToSync = mergeThoughts(pendingForAccount, guestThoughts);
-  syncPending = thoughtsToSync.length > 0;
-  if (syncPending) {
-    storePendingThoughts(auth.id, thoughtsToSync);
-    localStorage.removeItem(STORAGE_KEY);
+  const finishActivation = pageLoadDiagnostics.begin('account:activate');
+  try {
+    clearSpatialNavigationHistory();
+    resetPaginatedThoughtState();
+    sessionValidated = true;
+    serverStateReady = false;
+    legacyOutboxQuarantined = quarantineLegacyOutbox(auth.id);
+    const finishCacheRead = pageLoadDiagnostics.begin('cache:account-read');
+    const guestThoughts = loadStoredThoughts(STORAGE_KEY);
+    const outboxOperations = loadOutbox(auth.id);
+    const cachedAccountThoughts = applyOutboxOperations(
+      loadAccountThoughts(auth.id),
+      outboxOperations,
+    );
+    const pendingForAccount = loadPendingThoughts(auth.id);
+    const thoughtsToSync = mergeThoughts(pendingForAccount, guestThoughts);
+    syncPending = thoughtsToSync.length > 0;
+    finishCacheRead('complete', {
+      cachedThoughtCount: cachedAccountThoughts.length,
+      guestThoughtCount: guestThoughts.length,
+      pendingThoughtCount: pendingForAccount.length,
+      syncPending,
+      ...summarizeOutbox(outboxOperations),
+    });
+    if (syncPending) {
+      storePendingThoughts(auth.id, thoughtsToSync);
+      localStorage.removeItem(STORAGE_KEY);
+    }
+    const finishCacheHydration = pageLoadDiagnostics.begin('cache:account-hydrate', {
+      cachedThoughtCount: cachedAccountThoughts.length,
+      syncThoughtCount: thoughtsToSync.length,
+    });
+    replaceThoughts(mergeThoughts(cachedAccountThoughts, thoughtsToSync));
+    finishCacheHydration('complete', { renderedThoughtCount: thoughts.length });
+    updateAccountControl();
+
+    const finishTelegram = pageLoadDiagnostics.begin('telegram:status', {
+      blocking: false,
+    });
+    void loadTelegramConnection().then(() => {
+      finishTelegram('complete', { connected: Boolean(telegramAccountConnected) });
+    });
+    if (legacyOutboxQuarantined) {
+      announce('Older unsynced changes were paused to protect server data.');
+    }
+
+    const finishServerBootstrap = pageLoadDiagnostics.begin('account:server-bootstrap');
+    const [thoughtsReady, boardsReady] = await Promise.all([
+      restoreAuthenticatedThoughts(),
+      loadBoards(),
+    ]);
+    finishServerBootstrap('complete', { thoughtsReady, boardsReady });
+    finishActivation('complete', {
+      thoughtsReady,
+      boardsReady,
+      thoughtCount: thoughts.length,
+    });
+    if (thoughtsReady) announce('Signed in.');
+    return thoughtsReady;
+  } catch (error) {
+    finishActivation('failed', pageLoadErrorDetails(error));
+    throw error;
   }
-  replaceThoughts(mergeThoughts(cachedAccountThoughts, thoughtsToSync));
-  updateAccountControl();
-  void loadTelegramConnection();
-  if (legacyOutboxQuarantined) {
-    announce('Older unsynced changes were paused to protect server data.');
-  }
-  const [thoughtsReady] = await Promise.all([
-    restoreAuthenticatedThoughts(),
-    loadBoards(),
-  ]);
-  if (thoughtsReady) announce('Signed in.');
-  return thoughtsReady;
 }
 
 async function restoreTokenSession() {
+  const finishSessionRestore = pageLoadDiagnostics.begin('session:restore', {
+    hasRefreshToken: Boolean(refreshToken),
+  });
   let callbackError = null;
   let completedLogin = false;
+  const finishSsoCallback = pageLoadDiagnostics.begin('session:sso-callback');
   try {
     completedLogin = await exchangeSsoCallback();
+    finishSsoCallback(completedLogin ? 'complete' : 'skipped', { completedLogin });
   } catch (error) {
     callbackError = error;
+    finishSsoCallback('failed', pageLoadErrorDetails(error));
   }
 
   try {
@@ -7808,16 +8093,37 @@ async function restoreTokenSession() {
       if (!refreshToken) {
         if (callbackError) throw callbackError;
         clearAuthenticatedState(null);
+        finishSessionRestore('complete', { mode: 'guest' });
         return false;
       }
-      await refreshAccessToken();
-      await loadCurrentIdentity();
+      const finishRefresh = pageLoadDiagnostics.begin('session:refresh-token');
+      try {
+        await refreshAccessToken();
+        finishRefresh('complete');
+      } catch (error) {
+        finishRefresh('failed', pageLoadErrorDetails(error));
+        throw error;
+      }
+      const finishIdentity = pageLoadDiagnostics.begin('session:identity');
+      try {
+        await loadCurrentIdentity();
+        finishIdentity('complete');
+      } catch (error) {
+        finishIdentity('failed', pageLoadErrorDetails(error));
+        throw error;
+      }
       if (callbackError) {
         announce(`Could not switch account: ${callbackError.message}`);
       }
     }
-    return await activateAuthenticatedAccount();
+    const activated = await activateAuthenticatedAccount();
+    finishSessionRestore('complete', {
+      mode: 'authenticated',
+      activated,
+    });
+    return activated;
   } catch (error) {
+    finishSessionRestore('failed', pageLoadErrorDetails(error));
     sessionValidated = true;
     clearAuthenticatedState(`Could not check your sign-in session: ${error.message}`);
     return false;
@@ -7825,17 +8131,35 @@ async function restoreTokenSession() {
 }
 
 async function initializeApplication() {
+  const finishInitialization = pageLoadDiagnostics.begin('application:initialize');
   setApplicationReady(false);
+  let initializationError = null;
 
   try {
     await restoreTokenSession();
+    const finishNavigation = pageLoadDiagnostics.begin('navigation:restore');
     restoreSpaceNavigation();
     window.addEventListener('popstate', restoreSpaceNavigation);
+    finishNavigation('complete', { activeSpaceKind: getSpace(activeSpaceId)?.kind || 'unknown' });
+  } catch (error) {
+    initializationError = error;
+    throw error;
   } finally {
     setApplicationReady(true);
     updateUi();
     startAnimationOnce();
-    if (isSpatialSpace(activeSpaceId)) void activateSpatialView();
+    pageLoadDiagnostics.mark('animation:started');
+    finishInitialization(initializationError ? 'failed' : 'complete', {
+      authenticated: Boolean(auth),
+      thoughtCount: thoughts.length,
+      boardCount: boards.length,
+      activeSpaceKind: getSpace(activeSpaceId)?.kind || 'unknown',
+      ...(initializationError ? pageLoadErrorDetails(initializationError) : {}),
+    });
+    if (isSpatialSpace(activeSpaceId)) {
+      pageLoadDiagnostics.mark('spatial:activate:scheduled', { blocking: false });
+      void activateSpatialView();
+    }
   }
 }
 
@@ -7859,7 +8183,12 @@ function clearAuthenticatedState(message) {
   localStorage.removeItem(AUTH_STORAGE_KEY);
   sessionStorage.removeItem(AUTH_STORAGE_KEY);
   updateAccountControl();
-  replaceThoughts(loadStoredThoughts(STORAGE_KEY));
+  const guestThoughts = loadStoredThoughts(STORAGE_KEY);
+  const finishGuestHydration = pageLoadDiagnostics.begin('cache:guest-hydrate', {
+    thoughtCount: guestThoughts.length,
+  });
+  replaceThoughts(guestThoughts);
+  finishGuestHydration('complete', { renderedThoughtCount: thoughts.length });
   applyBoardRecords([]);
   if (message) announce(message);
 }
