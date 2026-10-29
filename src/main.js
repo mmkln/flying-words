@@ -191,6 +191,7 @@ const HISTORY_PAGE_SIZE = 50;
 const CONNECTION_SEARCH_PAGE_SIZE = 30;
 const CONNECTION_MAP_INITIAL_DEPTH = 2;
 const PANEL_SEARCH_DEBOUNCE_MS = 250;
+const BOARD_ARRANGE_ACTION_VISIBLE = false;
 const RESERVED_BOTTOM_SPACE = 0;
 const MIN_VISIBLE_THOUGHTS = 4;
 const MAX_VISIBLE_THOUGHTS = 30;
@@ -662,7 +663,11 @@ function renderBoardArrangeControl() {
   const boardThoughtCount = boardVisible ? getBoardThoughts().length : 0;
   boardTools.hidden = !boardVisible || boardThoughtCount === 0;
   boardSelectButton.hidden = !boardVisible || boardThoughtCount === 0;
-  boardArrangeButton.hidden = !boardVisible || boardThoughtCount < 2;
+  boardArrangeButton.hidden = (
+    !BOARD_ARRANGE_ACTION_VISIBLE
+    || !boardVisible
+    || boardThoughtCount < 2
+  );
   boardSelectButton.setAttribute('aria-pressed', String(Boolean(boardSelection)));
   boardSelectButton.title = boardSelection ? 'Finish selecting cards' : 'Select cards';
   boardSelectButton.setAttribute('aria-label', boardSelectButton.title);
@@ -670,7 +675,11 @@ function renderBoardArrangeControl() {
     boardArrangeInFlight
     || Boolean(magnetEditor || connectionEditor)
   );
-  if (!boardVisible || boardThoughtCount < 2) return;
+  if (
+    !BOARD_ARRANGE_ACTION_VISIBLE
+    || !boardVisible
+    || boardThoughtCount < 2
+  ) return;
 
   const cloudUnavailable = Boolean(auth) && (
     !isCloudMode()
@@ -7462,13 +7471,16 @@ function closeSpacesOverview({ restoreFocus = true } = {}) {
   if (isSpatialSpace(activeSpaceId)) void activateSpatialView();
   else renderThoughtInspector();
   if (restoreFocus) {
+    const fallbackTarget = !boardContext.hidden && !boardContext.disabled
+      ? boardContext
+      : spacesButton;
     const target = (
       focusTarget?.isConnected
       && !focusTarget.hidden
       && !focusTarget.disabled
     )
       ? focusTarget
-      : spacesButton;
+      : fallbackTarget;
     target.focus();
   }
 }
@@ -7613,6 +7625,7 @@ function renderBoardContext() {
   );
 
   boardContext.hidden = !visible;
+  spacesButton.hidden = visible;
   if (!visible) {
     boardContextTitle.textContent = '';
     boardContext.removeAttribute('title');
