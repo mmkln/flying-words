@@ -21,6 +21,21 @@ test('calculates the visible Board rectangle in world coordinates', () => {
   );
 });
 
+test('accounts for app chrome around the usable Board viewport', () => {
+  assert.deepEqual(
+    getBoardViewport(
+      { x: -200, y: -100, scale: 0.5 },
+      { x: 20, y: 78, width: 1060, height: 694 },
+    ),
+    {
+      x: 440,
+      y: 356,
+      width: 2120,
+      height: 1388,
+    },
+  );
+});
+
 test('converts world coordinates to minimap coordinates and back', () => {
   const projection = getMinimapProjection(
     [{ x: 100, y: 200, width: 200, height: 100 }],

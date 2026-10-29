@@ -6,10 +6,12 @@ export function getBoardViewport(camera, viewport) {
   const scale = Number.isFinite(camera?.scale) && camera.scale > 0
     ? camera.scale
     : 1;
+  const offsetX = Number.isFinite(viewport?.x) ? viewport.x : 0;
+  const offsetY = Number.isFinite(viewport?.y) ? viewport.y : 0;
 
   return {
-    x: -(Number.isFinite(camera?.x) ? camera.x : 0) / scale,
-    y: -(Number.isFinite(camera?.y) ? camera.y : 0) / scale,
+    x: (offsetX - (Number.isFinite(camera?.x) ? camera.x : 0)) / scale,
+    y: (offsetY - (Number.isFinite(camera?.y) ? camera.y : 0)) / scale,
     width: Math.max(1, viewport?.width || 1) / scale,
     height: Math.max(1, viewport?.height || 1) / scale,
   };

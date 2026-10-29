@@ -46,6 +46,7 @@ import { getSpatialLinkSuggestions } from './spatial-link-suggestions.js';
 import { createSpatialConnectionsList } from './spatial-connections-list.js';
 import { createSpatialNavigationHistory } from './spatial-navigation-history.js';
 import { createCanvasMinimap } from './canvas-minimap.js';
+import { calculateBoardUsableRect } from './board-viewport-layout.js';
 import { calculateBoardGraphLayout } from './board-graph-layout.js';
 import {
   getCanvasPlacement,
@@ -221,7 +222,7 @@ const refreshIconSvg = `
 
 const canvas = document.querySelector('#canvas');
 const canvasWorld = document.querySelector('#canvas-world');
-const boardMinimap = document.querySelector('#board-minimap');
+const navigationHud = document.querySelector('#navigation-hud');
 const boardMinimapCanvas = document.querySelector('#board-minimap-canvas');
 const boardTools = document.querySelector('#board-tools');
 const boardSelectButton = document.querySelector('#board-select-button');
@@ -285,6 +286,8 @@ const connectionMapDialog = document.querySelector('#connection-map-dialog');
 const connectionLayer = document.querySelector('#connection-layer');
 const form = document.querySelector('#thought-form');
 const input = document.querySelector('#thought-input');
+const topToolbar = document.querySelector('#top-toolbar');
+const bottomDock = document.querySelector('#bottom-dock');
 const composerWrap = document.querySelector('.composer-wrap');
 const composerRelation = document.querySelector('#composer-relation');
 const composerRelationLabel = document.querySelector('#composer-relation-label');
@@ -420,9 +423,6 @@ let boardArrangeInFlight = false;
 let boardActionUndoHandler = null;
 let boardActionUndoKind = null;
 let boardActionToastTimer = null;
-let canvasHudTimer = null;
-let canvasHudVisible = false;
-let canvasHudExpanded = false;
 let lastTimestamp = performance.now();
 let nextSpawnAt = 0;
 let saveTimer;
@@ -464,7 +464,6 @@ let activeSpaceId = (
   : DEFAULT_SPACE_ID;
 let canvasCamera = loadCanvasCamera(activeSpaceId);
 let boardGeometry = applyBoardGeometryCss(DEFAULT_BOARD_GEOMETRY);
-canvasHudVisible = isCanvasSpace(activeSpaceId) && canvasCamera.scale < MAX_CANVAS_SCALE;
 let boards = [];
 let editingBoardId = null;
 let boardRenameInFlight = false;
@@ -507,8 +506,17 @@ const canvasMinimap = createCanvasMinimap({
   onNavigate(worldPoint) {
     if (!isCanvasSpace(activeSpaceId)) return;
     const bounds = canvas.getBoundingClientRect();
-    canvasCamera.x = bounds.width / 2 - worldPoint.x * canvasCamera.scale;
-    canvasCamera.y = bounds.height / 2 - worldPoint.y * canvasCamera.scale;
+    const usable = getBoardUsableRect();
+    canvasCamera.x = (
+      (usable.left + usable.right) / 2
+      - bounds.left
+      - worldPoint.x * canvasCamera.scale
+    );
+    canvasCamera.y = (
+      (usable.top + usable.bottom) / 2
+      - bounds.top
+      - worldPoint.y * canvasCamera.scale
+    );
     renderCanvasCamera();
     saveCanvasCamera();
   },
@@ -529,6 +537,7 @@ const boardConnectionsPopover = createBoardConnectionsPopover({
 
 function getCanvasMinimapSnapshot() {
   const bounds = canvas.getBoundingClientRect();
+  const usable = getBoardUsableRect();
   const cards = thoughts
     .filter((thought) => hasCanvasPlacement(thought, activeSpaceId))
     .map((thought) => ({
@@ -549,8 +558,10 @@ function getCanvasMinimapSnapshot() {
     connections,
     camera: { ...canvasCamera },
     viewport: {
-      width: bounds.width,
-      height: bounds.height,
+      x: usable.left - bounds.left,
+      y: usable.top - bounds.top,
+      width: usable.width,
+      height: usable.height,
     },
   };
 }
@@ -562,13 +573,14 @@ function scheduleCanvasMinimapRender() {
     && viewMode !== 'spaces'
     && thoughts.some((thought) => hasCanvasPlacement(thought, activeSpaceId))
   );
-  boardMinimap.hidden = !visible;
+  navigationHud.hidden = !visible;
 
   if (!visible) {
     if (canvasMinimapFrame) cancelAnimationFrame(canvasMinimapFrame);
     canvasMinimapFrame = null;
     return;
   }
+  renderCanvasHud();
   if (canvasMinimapFrame) return;
 
   canvasMinimapFrame = requestAnimationFrame(() => {
@@ -1169,13 +1181,31 @@ function resizeComposer() {
 renderComposerKnowledgeKind(composerKnowledgeKind);
 resizeComposer();
 
-// Spatial's bottom-left controls must clear the composer even as a draft
-// grows or the related-thought context appears. No camera-frame measurements.
-const spatialComposerSizeObserver = new ResizeObserver(([entry]) => {
-  const height = entry.borderBoxSize?.[0]?.blockSize ?? entry.contentRect.height;
-  spatialWorld.style.setProperty('--spatial-composer-height', `${Math.ceil(height)}px`);
-});
-spatialComposerSizeObserver.observe(composerWrap);
+// App chrome owns its geometry. Board and Spatial consumers observe that one
+// layout instead of duplicating offsets for every floating control.
+let chromeLayoutFrame = null;
+function scheduleChromeLayoutUpdate() {
+  if (chromeLayoutFrame) return;
+
+  chromeLayoutFrame = requestAnimationFrame(() => {
+    chromeLayoutFrame = null;
+    const bottomDockHeight = Math.ceil(bottomDock.getBoundingClientRect().height);
+    const composerBottomInset = Math.max(
+      0,
+      Math.ceil(window.innerHeight - form.getBoundingClientRect().bottom),
+    );
+    document.documentElement.style.setProperty('--bottom-dock-height', `${bottomDockHeight}px`);
+    document.documentElement.style.setProperty('--composer-bottom-inset', `${composerBottomInset}px`);
+    spatialWorld.style.setProperty('--spatial-composer-height', `${bottomDockHeight}px`);
+    scheduleCanvasMinimapRender();
+  });
+}
+
+const chromeSizeObserver = new ResizeObserver(scheduleChromeLayoutUpdate);
+chromeSizeObserver.observe(topToolbar);
+chromeSizeObserver.observe(bottomDock);
+chromeSizeObserver.observe(thoughtInspectorStack);
+scheduleChromeLayoutUpdate();
 
 function openComposerKnowledgeKindPicker() {
   if (magnetEditor || connectionEditor) {
@@ -1501,45 +1531,11 @@ function saveCanvasCamera() {
   localStorage.setItem(canvasCameraStorageKey(activeSpaceId), JSON.stringify(canvasCamera));
 }
 
-function isCanvasAtDefaultScale() {
-  return Math.abs(canvasCamera.scale - MAX_CANVAS_SCALE) < 0.001;
-}
-
-function clearCanvasHudTimer() {
-  if (canvasHudTimer) window.clearTimeout(canvasHudTimer);
-  canvasHudTimer = null;
-}
-
 function renderCanvasHud() {
-  const shouldShow = isCanvasSpace(activeSpaceId)
-    && viewMode !== 'spaces'
-    && canvasHudVisible;
-  canvasControls.hidden = !shouldShow;
-  if (!shouldShow) return;
-
-  canvasControls.classList.toggle('is-expanded', canvasHudExpanded);
   const percentage = Math.round(canvasCamera.scale * 100);
   canvasResetZoom.textContent = `${percentage}%`;
   canvasZoomIn.disabled = canvasCamera.scale >= MAX_CANVAS_SCALE;
   canvasZoomOut.disabled = canvasCamera.scale <= MIN_CANVAS_SCALE;
-}
-
-function scheduleCanvasHudCollapse(delay = 1500) {
-  clearCanvasHudTimer();
-  canvasHudTimer = window.setTimeout(() => {
-    canvasHudExpanded = false;
-    if (isCanvasAtDefaultScale()) canvasHudVisible = false;
-    renderCanvasHud();
-  }, delay);
-}
-
-function revealCanvasHud() {
-  if (!isCanvasSpace(activeSpaceId)) return;
-  clearCanvasHudTimer();
-  canvasHudVisible = true;
-  canvasHudExpanded = true;
-  renderCanvasHud();
-  scheduleCanvasHudCollapse();
 }
 
 function renderCanvasCamera() {
@@ -1549,7 +1545,6 @@ function renderCanvasCamera() {
   canvasWorld.style.transform = activeCanvas
     ? `translate3d(${canvasCamera.x}px, ${canvasCamera.y}px, 0) scale(${canvasCamera.scale})`
     : '';
-  renderCanvasHud();
   scheduleCanvasMinimapRender();
 }
 
@@ -1660,19 +1655,26 @@ function getBoardSelectionCards() {
   }));
 }
 
-function getCanvasSpawnSafeArea() {
+function getBoardUsableRect() {
   const canvasBounds = canvas.getBoundingClientRect();
-  const composerBounds = composerWrap.getBoundingClientRect();
+  const boardInspectorVisible = (
+    !thoughtInspectorStack.hidden
+    && thoughtInspectorStack.dataset.mode === 'board'
+  );
 
-  return {
-    left: canvasBounds.left + CANVAS_SPAWN_MARGIN,
-    top: canvasBounds.top + CANVAS_SPAWN_MARGIN,
-    right: canvasBounds.right - CANVAS_SPAWN_MARGIN,
-    bottom: Math.min(
-      canvasBounds.bottom - CANVAS_SPAWN_MARGIN,
-      composerBounds.top - CANVAS_SPAWN_MARGIN,
-    ),
-  };
+  return calculateBoardUsableRect({
+    canvas: canvasBounds,
+    topToolbar: topToolbar.getBoundingClientRect(),
+    bottomDock: bottomDock.getBoundingClientRect(),
+    rightInspector: boardInspectorVisible
+      ? thoughtInspectorStack.getBoundingClientRect()
+      : null,
+    margin: CANVAS_SPAWN_MARGIN,
+  });
+}
+
+function getCanvasSpawnSafeArea() {
+  return getBoardUsableRect();
 }
 
 function getBoardLogicalFootprint(x, y) {
@@ -1975,6 +1977,7 @@ function renderThoughtInspector() {
 
   thoughtInspectorStack.hidden = !visible;
   spatialInspector.hidden = !visible;
+  scheduleChromeLayoutUpdate();
   if (!visible) {
     spatialConnectionsList.clear();
     spatialInspectorSuggestions.hidden = true;
@@ -1983,6 +1986,7 @@ function renderThoughtInspector() {
   }
 
   thoughtInspectorStack.dataset.mode = spatialMode ? 'spatial' : 'board';
+  scheduleChromeLayoutUpdate();
 
   const kind = getThoughtKnowledgeKind(thought);
   const presentation = getThoughtPresentation(thought);
@@ -2286,7 +2290,6 @@ function fitBoardCameraToPositions(positions) {
     y: (safe.top + safe.bottom) / 2 - bounds.top - (minY + maxY) / 2 * scale,
     scale,
   };
-  canvasHudVisible = !isCanvasAtDefaultScale();
   renderCanvasCamera();
   saveCanvasCamera();
 }
@@ -6363,7 +6366,7 @@ function stopCanvasPan(event) {
   saveCanvasCamera();
 }
 
-function setCanvasScale(nextScale, clientX, clientY, { persist = true, revealHud = true } = {}) {
+function setCanvasScale(nextScale, clientX, clientY, { persist = true } = {}) {
   if (!isCanvasSpace(activeSpaceId)) return;
 
   const scale = Math.min(MAX_CANVAS_SCALE, Math.max(MIN_CANVAS_SCALE, nextScale));
@@ -6377,15 +6380,12 @@ function setCanvasScale(nextScale, clientX, clientY, { persist = true, revealHud
     bounds,
   );
   renderCanvasCamera();
-  if (revealHud) revealCanvasHud();
   if (persist) saveCanvasCamera();
 }
 
 function animateCanvasScale(targetScale, clientX, clientY) {
   if (!isCanvasSpace(activeSpaceId)) return;
   if (canvasScaleAnimationId) cancelAnimationFrame(canvasScaleAnimationId);
-
-  revealCanvasHud();
 
   const startScale = canvasCamera.scale;
   const finalScale = Math.min(
@@ -6402,7 +6402,6 @@ function animateCanvasScale(targetScale, clientX, clientY) {
 
     setCanvasScale(scale, clientX, clientY, {
       persist: progress === 1,
-      revealHud: false,
     });
 
     if (progress < 1) {
@@ -6423,8 +6422,7 @@ function handleCanvasWheel(event) {
     canvasScaleAnimationId = null;
   }
   const nextScale = canvasCamera.scale * Math.exp(-event.deltaY * 0.0015);
-  setCanvasScale(nextScale, event.clientX, event.clientY, { revealHud: false });
-  revealCanvasHud();
+  setCanvasScale(nextScale, event.clientX, event.clientY);
 }
 
 function topZIndex() {
@@ -6555,8 +6553,17 @@ function formatHistoryDate(createdAt) {
 function focusCanvasThought(thought, message = 'Thought shown on Board.') {
   applyCanvasPlacement(thought);
   const bounds = canvas.getBoundingClientRect();
-  canvasCamera.x = bounds.width / 2 - (thought.x + thought.width / 2) * canvasCamera.scale;
-  canvasCamera.y = bounds.height / 2 - (thought.y + thought.height / 2) * canvasCamera.scale;
+  const usable = getBoardUsableRect();
+  canvasCamera.x = (
+    (usable.left + usable.right) / 2
+    - bounds.left
+    - (thought.x + thought.width / 2) * canvasCamera.scale
+  );
+  canvasCamera.y = (
+    (usable.top + usable.bottom) / 2
+    - bounds.top
+    - (thought.y + thought.height / 2) * canvasCamera.scale
+  );
   renderCanvasCamera();
   saveCanvasCamera();
   showThought(thought);
@@ -7521,9 +7528,6 @@ function activateSpace(spaceId) {
 
   activeSpaceId = spaceId;
   canvasCamera = loadCanvasCamera(activeSpaceId);
-  clearCanvasHudTimer();
-  canvasHudVisible = isCanvasSpace(activeSpaceId) && !isCanvasAtDefaultScale();
-  canvasHudExpanded = false;
   renderCanvasCamera();
 
   if (isSpatialSpace(activeSpaceId)) {
@@ -8589,10 +8593,10 @@ canvas.addEventListener('pointercancel', (event) => {
 canvas.addEventListener('wheel', handleCanvasWheel, { passive: false });
 
 function getCanvasViewportCenter() {
-  const bounds = canvas.getBoundingClientRect();
+  const usable = getBoardUsableRect();
   return {
-    x: bounds.left + bounds.width / 2,
-    y: bounds.top + bounds.height / 2,
+    x: (usable.left + usable.right) / 2,
+    y: (usable.top + usable.bottom) / 2,
   };
 }
 
@@ -8608,33 +8612,8 @@ canvasResetZoom.addEventListener('click', () => {
   const center = getCanvasViewportCenter();
   animateCanvasScale(MAX_CANVAS_SCALE, center.x, center.y);
 });
-canvasControls.addEventListener('pointerenter', () => {
-  if (!canvasHudVisible) return;
-  clearCanvasHudTimer();
-  canvasHudExpanded = true;
-  renderCanvasHud();
-});
-canvasControls.addEventListener('pointerleave', () => {
-  if (!canvasHudVisible) return;
-  canvasHudExpanded = false;
-  renderCanvasHud();
-  scheduleCanvasHudCollapse();
-});
-canvasControls.addEventListener('focusin', () => {
-  if (!canvasHudVisible) return;
-  clearCanvasHudTimer();
-  canvasHudExpanded = true;
-  renderCanvasHud();
-});
-canvasControls.addEventListener('focusout', () => {
-  window.requestAnimationFrame(() => {
-    if (!canvasHudVisible || canvasControls.contains(document.activeElement)) return;
-    canvasHudExpanded = false;
-    renderCanvasHud();
-    scheduleCanvasHudCollapse();
-  });
-});
 window.addEventListener('resize', () => {
+  scheduleChromeLayoutUpdate();
   knowledgeKindPicker.close();
   refreshBoardConnectionsPopover();
   if (isSpatialSpace(activeSpaceId)) {

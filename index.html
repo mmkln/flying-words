@@ -42,6 +42,8 @@
   </head>
   <body>
     <main class="app-shell">
+      <header class="top-toolbar" id="top-toolbar">
+        <div class="top-toolbar-leading">
       <button class="icon-button history-button" id="history-button" type="button" aria-label="Open thought history" title="Thought history" disabled>
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
           <path d="M3 12a9 9 0 1 0 3-6.7L3 8"></path>
@@ -78,6 +80,9 @@
           <path d="M20 15.5A8.5 8.5 0 0 1 8.5 4 8.5 8.5 0 1 0 20 15.5Z"></path>
         </svg>
       </button>
+        </div>
+
+        <div class="board-command-bar">
       <button
         class="board-context"
         id="board-context"
@@ -98,11 +103,40 @@
           <path d="m4 6 4 4 4-4"></path>
         </svg>
       </button>
-      <div class="canvas-controls" id="canvas-controls" role="group" aria-label="Board zoom" hidden>
-        <button class="canvas-zoom-step" id="canvas-zoom-in" type="button" aria-label="Zoom in" title="Zoom in">+</button>
-        <button class="canvas-zoom-reset" id="canvas-reset-zoom" type="button" aria-label="Reset zoom" title="Reset zoom">100%</button>
-        <button class="canvas-zoom-step" id="canvas-zoom-out" type="button" aria-label="Zoom out" title="Zoom out">−</button>
-      </div>
+          <div class="board-tools" id="board-tools" role="toolbar" aria-label="Board tools" hidden>
+            <button
+              class="icon-button board-select-button"
+              id="board-select-button"
+              type="button"
+              aria-label="Select cards"
+              aria-pressed="false"
+              title="Select cards"
+            >
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <rect x="4" y="4" width="16" height="16" rx="3" stroke-dasharray="2.5 3"></rect>
+                <path d="m9 12 2 2 4-5"></path>
+              </svg>
+            </button>
+            <button
+              class="icon-button board-arrange-button"
+              id="board-arrange-button"
+              type="button"
+              aria-label="Arrange Board by connections"
+              title="Arrange Board by connections"
+              hidden
+            >
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <circle cx="6" cy="7" r="2.25"></circle>
+                <circle cx="18" cy="6" r="2.25"></circle>
+                <circle cx="16" cy="18" r="2.25"></circle>
+                <circle cx="5" cy="17" r="2.25"></circle>
+                <path d="m8.2 6.8 7.6-.6M17.4 8.2l-1 7.6M13.9 18l-6.7-.7M6.4 9.1l-.9 5.7"></path>
+              </svg>
+            </button>
+          </div>
+        </div>
+
+        <div class="top-toolbar-trailing">
       <div class="account-menu" id="account-menu">
         <button
           class="account-trigger"
@@ -133,66 +167,8 @@
           <button class="account-destructive" id="sign-out" role="menuitem" type="button">Sign Out</button>
         </div>
       </div>
-
-      <div class="selection-toolbar" id="selection-toolbar" role="toolbar" aria-label="Edit card relationships" hidden>
-        <button class="selection-toolbar-button" id="selection-cancel" type="button">Cancel</button>
-        <button
-          class="selection-toolbar-button selection-search"
-          id="connection-search-trigger"
-          type="button"
-          aria-controls="connection-search-panel"
-          aria-expanded="false"
-          hidden
-        >Search</button>
-        <span class="selection-toolbar-count" id="selection-count">0 selected</span>
-        <button class="selection-toolbar-button selection-toolbar-done" id="selection-done" type="button">Done</button>
-      </div>
-
-      <section
-        class="connection-search-panel"
-        id="connection-search-panel"
-        role="search"
-        aria-label="Search thoughts to connect"
-        hidden
-      >
-        <header class="connection-search-header">
-          <span>Connect to</span>
-          <div class="panel-header-actions">
-            <button
-              class="panel-refresh-button"
-              id="connection-search-refresh"
-              type="button"
-              aria-label="Refresh thoughts"
-              hidden
-            ></button>
-            <button
-              id="connection-search-close"
-              type="button"
-              aria-label="Close connection search"
-            >×</button>
-          </div>
-        </header>
-        <label class="connection-search-field">
-          <span class="sr-only">Search thoughts</span>
-          <input
-            id="connection-search-input"
-            type="search"
-            autocomplete="off"
-            placeholder="Search thoughts"
-          />
-        </label>
-        <div
-          class="connection-search-results"
-          id="connection-search-results"
-          role="list"
-        ></div>
-        <button
-          class="panel-load-more"
-          id="connection-search-load-more"
-          type="button"
-          hidden
-        >Load more</button>
-      </section>
+        </div>
+      </header>
 
       <section
         class="thought-space"
@@ -208,48 +184,6 @@
             aria-hidden="true"
             hidden
           ></div>
-        </div>
-        <aside class="board-minimap" id="board-minimap" aria-label="Board minimap" hidden>
-          <canvas
-            id="board-minimap-canvas"
-            tabindex="0"
-            aria-label="Board minimap. Click or drag to navigate. Use arrow keys to pan."
-          ></canvas>
-        </aside>
-        <div class="board-tools" id="board-tools" role="toolbar" aria-label="Board tools" hidden>
-          <button
-            class="icon-button board-select-button"
-            id="board-select-button"
-            type="button"
-            aria-label="Select cards"
-            aria-pressed="false"
-            title="Select cards"
-          >
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-              <rect x="4" y="4" width="16" height="16" rx="3" stroke-dasharray="2.5 3"></rect>
-              <path d="m9 12 2 2 4-5"></path>
-            </svg>
-          </button>
-          <button
-            class="icon-button board-arrange-button"
-            id="board-arrange-button"
-            type="button"
-            aria-label="Arrange Board by connections"
-            title="Arrange Board by connections"
-            hidden
-          >
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-              <circle cx="6" cy="7" r="2.25"></circle>
-              <circle cx="18" cy="6" r="2.25"></circle>
-              <circle cx="16" cy="18" r="2.25"></circle>
-              <circle cx="5" cy="17" r="2.25"></circle>
-              <path d="m8.2 6.8 7.6-.6M17.4 8.2l-1 7.6M13.9 18l-6.7-.7M6.4 9.1l-.9 5.7"></path>
-            </svg>
-          </button>
-        </div>
-        <div class="board-action-toast" id="board-action-toast" role="status" hidden>
-          <span>Board arranged</span>
-          <button id="board-action-undo" type="button">Undo</button>
         </div>
         <div
           class="spatial-world"
@@ -496,6 +430,27 @@
         </div>
       </section>
 
+      <aside class="navigation-hud" id="navigation-hud" aria-label="Board navigation" hidden>
+        <canvas
+          class="board-minimap-canvas"
+          id="board-minimap-canvas"
+          tabindex="0"
+          aria-label="Board minimap. Click or drag to navigate. Use arrow keys to pan."
+        ></canvas>
+        <div class="canvas-controls" id="canvas-controls" role="group" aria-label="Board zoom">
+          <button class="canvas-zoom-step" id="canvas-zoom-out" type="button" aria-label="Zoom out" title="Zoom out">−</button>
+          <button class="canvas-zoom-reset" id="canvas-reset-zoom" type="button" aria-label="Reset zoom" title="Reset zoom">100%</button>
+          <button class="canvas-zoom-step" id="canvas-zoom-in" type="button" aria-label="Zoom in" title="Zoom in">+</button>
+        </div>
+      </aside>
+
+      <div class="feedback-layer" id="feedback-layer">
+        <div class="board-action-toast" id="board-action-toast" role="status" hidden>
+          <span>Board arranged</span>
+          <button id="board-action-undo" type="button">Undo</button>
+        </div>
+      </div>
+
       <dialog
         class="delete-thought-dialog"
         id="delete-thought-dialog"
@@ -644,7 +599,68 @@
         </section>
       </dialog>
 
-      <div class="composer-wrap" inert>
+      <div class="bottom-dock" id="bottom-dock">
+        <section
+          class="connection-search-panel"
+          id="connection-search-panel"
+          role="search"
+          aria-label="Search thoughts to connect"
+          hidden
+        >
+          <header class="connection-search-header">
+            <span>Connect to</span>
+            <div class="panel-header-actions">
+              <button
+                class="panel-refresh-button"
+                id="connection-search-refresh"
+                type="button"
+                aria-label="Refresh thoughts"
+                hidden
+              ></button>
+              <button
+                id="connection-search-close"
+                type="button"
+                aria-label="Close connection search"
+              >×</button>
+            </div>
+          </header>
+          <label class="connection-search-field">
+            <span class="sr-only">Search thoughts</span>
+            <input
+              id="connection-search-input"
+              type="search"
+              autocomplete="off"
+              placeholder="Search thoughts"
+            />
+          </label>
+          <div
+            class="connection-search-results"
+            id="connection-search-results"
+            role="list"
+          ></div>
+          <button
+            class="panel-load-more"
+            id="connection-search-load-more"
+            type="button"
+            hidden
+          >Load more</button>
+        </section>
+
+        <div class="selection-toolbar" id="selection-toolbar" role="toolbar" aria-label="Edit card relationships" hidden>
+          <button class="selection-toolbar-button" id="selection-cancel" type="button">Cancel</button>
+          <button
+            class="selection-toolbar-button selection-search"
+            id="connection-search-trigger"
+            type="button"
+            aria-controls="connection-search-panel"
+            aria-expanded="false"
+            hidden
+          >Search</button>
+          <span class="selection-toolbar-count" id="selection-count">0 selected</span>
+          <button class="selection-toolbar-button selection-toolbar-done" id="selection-done" type="button">Done</button>
+        </div>
+
+        <div class="composer-wrap" inert>
         <div class="composer-relation" id="composer-relation" aria-live="polite" hidden>
           <span>Related to:</span>
           <span id="composer-relation-label"></span>
@@ -683,6 +699,7 @@
           </button>
         </form>
         <p class="composer-tip"><kbd>Enter</kbd> to add · <kbd>Shift + Enter</kbd> for a new line</p>
+        </div>
       </div>
 
       <div
