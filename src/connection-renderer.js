@@ -1,8 +1,29 @@
+import { getConnectionPathData } from './connection-map-edge-geometry.js';
+
 const SVG_NAMESPACE = 'http://www.w3.org/2000/svg';
+let rendererSequence = 0;
 
 export function createConnectionRenderer({ layer, getThoughtById }) {
+  rendererSequence += 1;
+  const markerId = `connection-arrow-${rendererSequence}`;
   const paths = new Map();
   let connections = [];
+
+  const definitions = document.createElementNS(SVG_NAMESPACE, 'defs');
+  const marker = document.createElementNS(SVG_NAMESPACE, 'marker');
+  const markerPath = document.createElementNS(SVG_NAMESPACE, 'path');
+  marker.id = markerId;
+  marker.setAttribute('viewBox', '0 0 10 10');
+  marker.setAttribute('refX', '8');
+  marker.setAttribute('refY', '5');
+  marker.setAttribute('markerWidth', '7');
+  marker.setAttribute('markerHeight', '7');
+  marker.setAttribute('orient', 'auto');
+  markerPath.setAttribute('d', 'M 0 0 L 10 5 L 0 10 z');
+  markerPath.classList.add('connection-edge-arrow');
+  marker.append(markerPath);
+  definitions.append(marker);
+  layer.append(definitions);
 
   function setConnections(nextConnections) {
     connections = nextConnections;
@@ -20,11 +41,13 @@ export function createConnectionRenderer({ layer, getThoughtById }) {
         path = document.createElementNS(SVG_NAMESPACE, 'path');
         path.classList.add('connection-edge');
         path.dataset.connectionId = connection.id;
+        path.setAttribute('marker-end', `url(#${markerId})`);
         layer.append(path);
         paths.set(connection.id, path);
       }
 
       path.dataset.connectionKind = connection.kind;
+      path.classList.toggle('is-draft', connection.draft === true);
     });
   }
 
@@ -47,20 +70,20 @@ export function createConnectionRenderer({ layer, getThoughtById }) {
 
       path.hidden = false;
 
-      const startX = source.x + source.width / 2;
-      const startY = source.y + source.height / 2;
-      const endX = target.x + target.width / 2;
-      const endY = target.y + target.height / 2;
-      const distance = Math.hypot(endX - startX, endY - startY);
-      const direction = endX >= startX ? 1 : -1;
-      const curve = Math.min(110, Math.max(34, distance * 0.28));
-
-      path.setAttribute('d', [
-        `M ${startX} ${startY}`,
-        `C ${startX + direction * curve} ${startY},`,
-        `${endX - direction * curve} ${endY},`,
-        `${endX} ${endY}`,
-      ].join(' '));
+      path.setAttribute('d', getConnectionPathData(
+        {
+          x: source.x + source.width / 2,
+          y: source.y + source.height / 2,
+          width: source.width,
+          height: source.height,
+        },
+        {
+          x: target.x + target.width / 2,
+          y: target.y + target.height / 2,
+          width: target.width,
+          height: target.height,
+        },
+      ));
     });
   }
 

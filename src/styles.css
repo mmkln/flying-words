@@ -1724,11 +1724,19 @@ html[data-app-ready="false"] .composer-wrap {
 
 .connection-edge {
   fill: none;
-  stroke: rgba(112, 85, 197, .46);
+  stroke: var(--accent);
   stroke-width: 1.6;
   stroke-linecap: round;
+  opacity: .46;
   vector-effect: non-scaling-stroke;
 }
+
+.connection-edge.is-draft {
+  stroke-width: 2.2;
+  opacity: .9;
+}
+
+.connection-edge-arrow { fill: var(--accent); }
 
 .empty-state {
   position: absolute;
@@ -3533,6 +3541,9 @@ kbd { padding: 1px 4px; border: 1px solid rgba(114,104,143,.25); border-bottom-w
   pointer-events: none;
 }
 
+.connection-icon-plus,
+.connection-icon-check { display: none !important; }
+
 .thought-card:hover .connection-btn,
 .thought-card:focus-within .connection-btn,
 .thought-space.is-connection-editing .connection-btn {
@@ -3551,12 +3562,30 @@ kbd { padding: 1px 4px; border: 1px solid rgba(114,104,143,.25); border-bottom-w
   background: #7055c5;
 }
 
+.thought-card.is-connection-source .connection-btn::after {
+  position: absolute;
+  inset: -6px;
+  border: 2px solid color-mix(in srgb, var(--accent) 38%, transparent);
+  border-radius: 50%;
+  content: "";
+  pointer-events: none;
+}
+
 .thought-space.is-connection-editing
   .thought-card:not(.is-connection-source):not(.is-connection-selected)
   .connection-btn {
-  color: #0a84ff;
-  border-color: rgba(10, 132, 255, .38);
+  color: var(--text-secondary);
+  border-color: var(--border-subtle);
+  background: var(--surface-elevated);
 }
+
+.thought-space.is-connection-editing
+  .thought-card:not(.is-connection-source):not(.is-connection-selected)
+  .connection-icon-link { display: none; }
+
+.thought-space.is-connection-editing
+  .thought-card:not(.is-connection-source):not(.is-connection-selected)
+  .connection-icon-plus { display: block !important; }
 
 .thought-card.is-connection-selected {
   border-color: rgba(10, 132, 255, .65);
@@ -3567,6 +3596,31 @@ kbd { padding: 1px 4px; border: 1px solid rgba(114,104,143,.25); border-bottom-w
   color: #fff;
   border-color: #0a84ff;
   background: #0a84ff;
+}
+
+.thought-card.is-connection-selected .connection-icon-link { display: none; }
+.thought-card.is-connection-selected .connection-icon-check { display: block !important; }
+
+.thought-space.is-connection-editing
+  .thought-card.is-connection-source
+  .connection-btn {
+  animation: connection-source-pulse .55s ease-out 1;
+}
+
+@keyframes connection-source-pulse {
+  50% {
+    box-shadow:
+      0 0 0 9px color-mix(in srgb, var(--accent) 14%, transparent),
+      var(--shadow-control);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .thought-space.is-connection-editing
+    .thought-card.is-connection-source
+    .connection-btn {
+    animation: none;
+  }
 }
 
 .magnet-btn {

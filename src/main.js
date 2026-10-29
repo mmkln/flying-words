@@ -37,6 +37,7 @@ import {
   reconcileConnections,
 } from './connections.js';
 import { createConnectionRenderer } from './connection-renderer.js';
+import { buildRenderableConnections } from './connection-render-state.js';
 import { findConnectionSearchResults } from './connection-search.js';
 import { createConnectionMapDraft } from './connection-map-draft.js';
 import { createConnectionMapView } from './connection-map-view.js';
@@ -3514,6 +3515,7 @@ function renderConnectionThoughtState(thought) {
 
 function renderConnectionUi() {
   renderRelationshipUi();
+  if (isCanvasSpace(activeSpaceId)) rebuildConnectionLayer();
 }
 
 function rebuildConnectionLayer() {
@@ -3538,7 +3540,11 @@ function rebuildConnectionLayer() {
       .filter(isThoughtAvailableInActiveSpace)
       .map((thought) => thought.id),
   );
-  const connections = flattenConnections(thoughts).filter((connection) => (
+  const persistedConnections = flattenConnections(thoughts);
+  const connections = buildRenderableConnections(
+    persistedConnections,
+    connectionEditor,
+  ).filter((connection) => (
     availableThoughtIds.has(connection.sourceId)
     && availableThoughtIds.has(connection.targetId)
   ));
