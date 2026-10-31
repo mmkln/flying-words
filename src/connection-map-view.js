@@ -7,7 +7,7 @@ import {
   getThoughtPresentation,
   isThoughtResolved,
 } from './thought-content.js';
-import { zoomBoardCameraAtClientPoint } from './board-coordinate-space.js';
+import { createCanvasViewportController } from './canvas-viewport-controller.js';
 import { getConnectionPathData } from './connection-map-edge-geometry.js';
 import {
   getConnectionActionState,
@@ -22,10 +22,6 @@ const MIN_SCALE = 0.35;
 const MAX_SCALE = 1.25;
 const ZOOM_STEP = 0.15;
 const DRAG_THRESHOLD = 5;
-
-function clamp(value, minimum, maximum) {
-  return Math.min(maximum, Math.max(minimum, value));
-}
 
 function rectanglesOverlap(first, second, gap = 0) {
   return !(
@@ -245,16 +241,22 @@ export function createConnectionMapView({
   const nodeElements = new Map();
   let rootId = null;
   let renderedEdges = [];
-  let camera = { x: 0, y: 0, scale: 1 };
-  let pan = null;
   let edgeFrame = null;
-
-  function renderCamera() {
-    world.style.transform = `translate3d(${camera.x}px, ${camera.y}px, 0) scale(${camera.scale})`;
-    zoomResetButton.textContent = `${Math.round(camera.scale * 100)}%`;
-    zoomOutButton.disabled = camera.scale <= MIN_SCALE;
-    zoomInButton.disabled = camera.scale >= MAX_SCALE;
-  }
+  const viewportController = createCanvasViewportController({
+    viewport,
+    world,
+    fitButton,
+    zoomOutButton,
+    zoomResetButton,
+    zoomInButton,
+    minimumScale: MIN_SCALE,
+    maximumScale: MAX_SCALE,
+    zoomStep: ZOOM_STEP,
+    shouldStartPan: (event) => (
+      event.button === 0 && !event.target.closest('.connection-map-card')
+    ),
+  });
+  const camera = viewportController.getCamera();
 
   function getNodeRect(thoughtId) {
     const element = nodeElements.get(thoughtId);
@@ -441,44 +443,12 @@ export function createConnectionMapView({
   }
 
   function fitAll() {
-    const bounds = [...nodeElements.keys()].map(getNodeRect).filter(Boolean);
-    if (!bounds.length) return;
-
+    const nodeBounds = [...nodeElements.keys()].map(getNodeRect).filter(Boolean);
+    if (!nodeBounds.length) return;
     const viewportBounds = viewport.getBoundingClientRect();
-    const minX = Math.min(...bounds.map(({ left }) => left));
-    const minY = Math.min(...bounds.map(({ top }) => top));
-    const maxX = Math.max(...bounds.map(({ right }) => right));
-    const maxY = Math.max(...bounds.map(({ bottom }) => bottom));
-    const padding = viewportBounds.width < 600 ? 44 : 92;
-    const contentWidth = Math.max(1, maxX - minX);
-    const contentHeight = Math.max(1, maxY - minY);
-    const scale = clamp(Math.min(
-      (viewportBounds.width - padding * 2) / contentWidth,
-      (viewportBounds.height - padding * 2) / contentHeight,
-      1,
-    ), MIN_SCALE, MAX_SCALE);
-
-    camera = {
-      x: viewportBounds.width / 2 - (minX + maxX) / 2 * scale,
-      y: viewportBounds.height / 2 - (minY + maxY) / 2 * scale,
-      scale,
-    };
-    renderCamera();
-  }
-
-  function zoomAtCenter(nextScale) {
-    const bounds = viewport.getBoundingClientRect();
-    const point = {
-      x: bounds.left + bounds.width / 2,
-      y: bounds.top + bounds.height / 2,
-    };
-    camera = zoomBoardCameraAtClientPoint(
-      camera,
-      clamp(nextScale, MIN_SCALE, MAX_SCALE),
-      point,
-      bounds,
-    );
-    renderCamera();
+    viewportController.fit(nodeBounds, {
+      padding: viewportBounds.width < 600 ? 44 : 92,
+    });
   }
 
   function revealThought(thoughtId) {
@@ -489,7 +459,7 @@ export function createConnectionMapView({
       const bounds = viewport.getBoundingClientRect();
       camera.x = bounds.width / 2 - node.center.x * camera.scale;
       camera.y = bounds.height / 2 - node.center.y * camera.scale;
-      renderCamera();
+      viewportController.render();
     });
   }
 
@@ -507,64 +477,19 @@ export function createConnectionMapView({
     event.preventDefault();
     onClose();
   });
-  fitButton.addEventListener('click', fitAll);
-  zoomOutButton.addEventListener('click', () => zoomAtCenter(camera.scale - ZOOM_STEP));
-  zoomResetButton.addEventListener('click', () => zoomAtCenter(1));
-  zoomInButton.addEventListener('click', () => zoomAtCenter(camera.scale + ZOOM_STEP));
-
-  viewport.addEventListener('pointerdown', (event) => {
-    if (event.button !== 0 || event.target.closest('.connection-map-card')) return;
-    pan = {
-      pointerId: event.pointerId,
-      clientX: event.clientX,
-      clientY: event.clientY,
-      cameraX: camera.x,
-      cameraY: camera.y,
-    };
-    viewport.classList.add('is-panning');
-    viewport.setPointerCapture(event.pointerId);
-  });
-  viewport.addEventListener('pointermove', (event) => {
-    if (!pan || event.pointerId !== pan.pointerId) return;
-    camera.x = pan.cameraX + event.clientX - pan.clientX;
-    camera.y = pan.cameraY + event.clientY - pan.clientY;
-    renderCamera();
-  });
-  const finishPan = (event) => {
-    if (!pan || event.pointerId !== pan.pointerId) return;
-    pan = null;
-    viewport.classList.remove('is-panning');
-  };
-  viewport.addEventListener('pointerup', finishPan);
-  viewport.addEventListener('pointercancel', finishPan);
-  viewport.addEventListener('wheel', (event) => {
-    event.preventDefault();
-    const bounds = viewport.getBoundingClientRect();
-    const direction = event.deltaY > 0 ? -1 : 1;
-    camera = zoomBoardCameraAtClientPoint(
-      camera,
-      clamp(camera.scale + direction * ZOOM_STEP, MIN_SCALE, MAX_SCALE),
-      { x: event.clientX, y: event.clientY },
-      bounds,
-    );
-    renderCamera();
-  }, { passive: false });
-
   function open({ nextRootId, initialPositions = [] } = {}) {
     rootId = nextRootId;
     positions.clear();
     initialPositions.forEach(({ id, x, y }) => positions.set(id, { x, y }));
-    camera = { x: 0, y: 0, scale: 1 };
+    viewportController.reset();
     searchInput.value = '';
     dialog.showModal();
-    renderCamera();
     requestAnimationFrame(fitAll);
   }
 
   function close() {
     if (edgeFrame) cancelAnimationFrame(edgeFrame);
     edgeFrame = null;
-    pan = null;
     nodeElements.clear();
     positions.clear();
     renderedEdges = [];

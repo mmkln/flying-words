@@ -614,6 +614,45 @@
         </section>
       </dialog>
 
+      <dialog
+        class="board-placement-dialog"
+        id="board-placement-dialog"
+        aria-labelledby="board-placement-title"
+      >
+        <section class="board-placement-shell">
+          <header class="board-placement-header">
+            <button id="board-placement-cancel" type="button">Cancel</button>
+            <h2 id="board-placement-title">Place on Board</h2>
+            <button id="board-placement-confirm" type="button">Place</button>
+          </header>
+
+          <div class="board-placement-stage">
+            <div class="board-placement-viewport" id="board-placement-viewport">
+              <div class="board-placement-world" id="board-placement-world">
+                <svg class="board-placement-edges" id="board-placement-edges" aria-hidden="true">
+                  <defs>
+                    <marker id="board-placement-arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+                      <path d="M 0 0 L 10 5 L 0 10 z"></path>
+                    </marker>
+                  </defs>
+                </svg>
+                <div class="board-placement-nodes" id="board-placement-nodes"></div>
+                <div class="board-placement-group-outline" id="board-placement-group-outline" hidden>
+                  <span id="board-placement-group-label"></span>
+                </div>
+              </div>
+            </div>
+
+            <div class="board-placement-controls" role="group" aria-label="Board placement view">
+              <button id="board-placement-fit" type="button">Fit</button>
+              <button id="board-placement-zoom-out" type="button" aria-label="Zoom out">−</button>
+              <button id="board-placement-zoom-reset" type="button" aria-label="Reset zoom">100%</button>
+              <button id="board-placement-zoom-in" type="button" aria-label="Zoom in">+</button>
+            </div>
+          </div>
+        </section>
+      </dialog>
+
       <div class="bottom-dock" id="bottom-dock">
         <section
           class="connection-search-panel"
@@ -672,7 +711,30 @@
             hidden
           >Search</button>
           <span class="selection-toolbar-count" id="selection-count">0 selected</span>
+          <button
+            class="selection-toolbar-button selection-place"
+            id="selection-place"
+            type="button"
+            aria-controls="board-placement-menu"
+            aria-expanded="false"
+            hidden
+          >Place</button>
           <button class="selection-toolbar-button selection-toolbar-done" id="selection-done" type="button">Done</button>
+          <div
+            class="board-placement-menu"
+            id="board-placement-menu"
+            role="menu"
+            hidden
+          >
+            <button id="board-placement-add" type="button" role="menuitem">
+              <span>Place on another Board…</span>
+              <small>Keep them on this Board</small>
+            </button>
+            <button id="board-placement-move" type="button" role="menuitem">
+              <span>Move to another Board…</span>
+              <small>Remove them from this Board</small>
+            </button>
+          </div>
         </div>
 
         <div class="composer-wrap" inert>

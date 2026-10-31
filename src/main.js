@@ -45,6 +45,7 @@ import { buildRenderableConnections } from './connection-render-state.js';
 import { findConnectionSearchResults } from './connection-search.js';
 import { createConnectionMapDraft } from './connection-map-draft.js';
 import { createConnectionMapView } from './connection-map-view.js';
+import { createBoardPlacementView } from './board-placement-view.js';
 import { matchesThoughtSearch } from './thought-search.js';
 import { getSpatialLinkSuggestions } from './spatial-link-suggestions.js';
 import { createSpatialConnectionsList } from './spatial-connections-list.js';
@@ -86,6 +87,15 @@ import {
   toggleBoardSelection,
   translateBoardSelectionOrigins,
 } from './board-selection.js';
+import {
+  BoardPlacementOperation,
+  createBoardPlacementSession,
+  planBoardPlacementCommit,
+  restoreBoardPlacementCanvas,
+  setBoardPlacementTarget,
+  updateBoardPlacementDraft,
+} from './board-placement-session.js';
+import { suggestBoardPlacementDraft } from './board-placement-layout.js';
 import {
   getSpatialPlacement,
   withSpatialPlacement,
@@ -365,6 +375,11 @@ const selectionToolbar = document.querySelector('#selection-toolbar');
 const selectionCount = document.querySelector('#selection-count');
 const selectionCancel = document.querySelector('#selection-cancel');
 const selectionDone = document.querySelector('#selection-done');
+const selectionPlace = document.querySelector('#selection-place');
+const boardPlacementMenu = document.querySelector('#board-placement-menu');
+const boardPlacementAdd = document.querySelector('#board-placement-add');
+const boardPlacementMove = document.querySelector('#board-placement-move');
+const boardPlacementDialog = document.querySelector('#board-placement-dialog');
 const connectionSearchTrigger = document.querySelector('#connection-search-trigger');
 const connectionSearchPanel = document.querySelector('#connection-search-panel');
 const connectionSearchClose = document.querySelector('#connection-search-close');
@@ -433,6 +448,9 @@ let dragOffset = { x: 0, y: 0 };
 let boardSelection = null;
 let boardSelectionDrag = null;
 let boardSelectionMarquee = null;
+let boardPlacementSession = null;
+let boardPlacementCreateInFlight = false;
+let spacesOverviewPurpose = 'navigation';
 let boardSpacePressed = false;
 let canvasPan = null;
 let canvasScaleAnimationId = null;
@@ -519,6 +537,12 @@ const connectionMapView = createConnectionMapView({
   onEditText: editConnectionMapThought,
   onSaveBoard: saveConnectionMapAsBoard,
   onClose: closeConnectionMap,
+});
+
+const boardPlacementView = createBoardPlacementView({
+  dialog: boardPlacementDialog,
+  onCancel: cancelBoardPlacement,
+  onConfirm: commitBoardPlacement,
 });
 
 const canvasMinimap = createCanvasMinimap({
@@ -1666,6 +1690,259 @@ function closeBoardSelection({ restoreFocus = false } = {}) {
     boardSelectButton.focus({ preventScroll: true });
   }
   announce('Card selection finished.');
+}
+
+function closeBoardPlacementMenu({ restoreFocus = false } = {}) {
+  if (boardPlacementMenu.hidden) return;
+  boardPlacementMenu.hidden = true;
+  selectionPlace.setAttribute('aria-expanded', 'false');
+  if (restoreFocus && !selectionPlace.hidden) {
+    selectionPlace.focus({ preventScroll: true });
+  }
+}
+
+function openBoardPlacementMenu() {
+  if (!isBoardSelectionActive() || !boardSelection.selectedIds.size || !auth) return;
+  boardPlacementMenu.hidden = false;
+  selectionPlace.setAttribute('aria-expanded', 'true');
+  boardPlacementAdd.focus({ preventScroll: true });
+}
+
+function toggleBoardPlacementMenu() {
+  if (boardPlacementMenu.hidden) openBoardPlacementMenu();
+  else closeBoardPlacementMenu({ restoreFocus: true });
+}
+
+function restoreBoardPlacementSelection(session) {
+  if (
+    !session
+    || activeSpaceId !== session.sourceBoardId
+    || !isCanvasSpace(activeSpaceId)
+  ) return;
+
+  if (!openBoardSelection()) return;
+  boardSelection.selectedIds = new Set(
+    session.thoughtIds.filter((thoughtId) => (
+      hasCanvasPlacement(getThoughtById(thoughtId), activeSpaceId)
+    )),
+  );
+  renderBoardSelectionUi();
+}
+
+function startBoardPlacement(operation) {
+  if (
+    !auth
+    || !isBoardSelectionActive()
+    || !boardSelection.selectedIds.size
+    || blockEditsDuringAccountSync()
+  ) return;
+
+  const session = createBoardPlacementSession({
+    operation,
+    sourceBoardId: activeSpaceId,
+    selectedIds: boardSelection.selectedIds,
+    thoughts,
+  });
+  if (!session) return;
+
+  boardPlacementSession = session;
+  closeBoardPlacementMenu();
+  closeBoardSelection();
+  openSpacesOverview({
+    purpose: 'board-placement',
+    returnFocus: boardSelectButton,
+  });
+}
+
+function boardPlacementVisibleWorld(boardId) {
+  const bounds = canvas.getBoundingClientRect();
+  const camera = loadCanvasCamera(boardId);
+  return {
+    x: -camera.x / camera.scale,
+    y: -camera.y / camera.scale,
+    width: Math.max(1, bounds.width) / camera.scale,
+    height: Math.max(1, bounds.height) / camera.scale,
+    scale: camera.scale,
+  };
+}
+
+function boardPlacementCards(boardId) {
+  return thoughts.flatMap((thought) => {
+    const position = getCanvasPlacement(thought, boardId);
+    if (!position) return [];
+    return [{
+      thought,
+      position,
+      width: boardGeometry.cardWidth,
+      height: boardGeometry.cardHeight,
+    }];
+  });
+}
+
+function openBoardPlacementTarget(targetBoardId) {
+  if (!boardPlacementSession || targetBoardId === boardPlacementSession.sourceBoardId) return;
+
+  const nextSession = setBoardPlacementTarget(
+    boardPlacementSession,
+    targetBoardId,
+    thoughts,
+  );
+  if (!nextSession?.targetBoardId) return;
+
+  const existingCards = boardPlacementCards(targetBoardId);
+  const existingIds = new Set(existingCards.map(({ thought }) => thought.id));
+  const sourcePlacements = nextSession.sourcePositions.filter(
+    ({ id }) => !existingIds.has(id),
+  );
+  const visibleWorld = boardPlacementVisibleWorld(targetBoardId);
+  const draftPositions = suggestBoardPlacementDraft({
+    sourcePlacements,
+    occupiedCards: existingCards.map(({ thought, position, width, height }) => ({
+      id: thought.id,
+      ...position,
+      width,
+      height,
+    })),
+    viewport: visibleWorld,
+    cardWidth: boardGeometry.cardWidth,
+    cardHeight: boardGeometry.cardHeight,
+    gap: BOARD_INSERTION_GAP,
+  });
+  const draftById = new Map(draftPositions.map((position) => [position.id, position]));
+  const draftCards = nextSession.thoughtIds.flatMap((thoughtId) => {
+    const thought = getThoughtById(thoughtId);
+    const position = draftById.get(thoughtId);
+    return thought && position ? [{ thought, position }] : [];
+  });
+  const visibleIds = new Set([
+    ...existingIds,
+    ...draftCards.map(({ thought }) => thought.id),
+  ]);
+  const edges = flattenConnections(thoughts).filter(({ sourceId, targetId }) => (
+    visibleIds.has(sourceId) && visibleIds.has(targetId)
+  ));
+
+  boardPlacementSession = updateBoardPlacementDraft(nextSession, draftPositions);
+  closeSpacesOverview({ restoreFocus: false, preservePurpose: true });
+  boardPlacementView.open({
+    board: getSpace(targetBoardId),
+    existingCards,
+    draftCards,
+    edges,
+    geometry: boardGeometry,
+    selectedCount: nextSession.thoughtIds.length,
+    operation: nextSession.operation,
+    visibleWorld,
+    confirmWithoutDraft: (
+      nextSession.operation === BoardPlacementOperation.MOVE
+      && nextSession.preexistingTargetIds.length > 0
+    ),
+  });
+}
+
+async function createBoardForPlacement() {
+  if (
+    !boardPlacementSession
+    || boardPlacementCreateInFlight
+    || !auth
+    || blockEditsDuringAccountSync()
+  ) return;
+
+  boardPlacementCreateInFlight = true;
+  renderSpacesOverview();
+  try {
+    const board = await createBoardRecord(nextBoardTitle());
+    applyBoardRecords([...boards, board]);
+    announce(`${board.title} created.`);
+    openBoardPlacementTarget(board.id);
+  } catch (error) {
+    announce(`Could not create Board: ${error.message}`);
+  } finally {
+    boardPlacementCreateInFlight = false;
+    if (viewMode === 'spaces') renderSpacesOverview();
+  }
+}
+
+function refreshBoardAfterPlacement(changedThoughtIds) {
+  initializeThoughtVisibility();
+  changedThoughtIds.forEach((thoughtId) => {
+    const thought = getThoughtById(thoughtId);
+    if (!thought) return;
+    if (isCanvasSpace(activeSpaceId) && hasCanvasPlacement(thought, activeSpaceId)) {
+      applyCanvasPlacement(thought);
+    }
+    renderThought(thought);
+  });
+  rebuildConnectionLayer();
+  updateUi();
+}
+
+function undoBoardPlacement(changes) {
+  if (blockEditsDuringAccountSync()) {
+    hideBoardActionMessage();
+    return;
+  }
+
+  const changedThoughtIds = [];
+  changes.forEach(({ thoughtId, previousCanvas }) => {
+    const thought = getThoughtById(thoughtId);
+    if (!thought) return;
+    thought.meta = restoreBoardPlacementCanvas(thought.meta, previousCanvas);
+    changedThoughtIds.push(thoughtId);
+    if (isCloudMode()) enqueueThoughtMetaPatch(thought, ['canvas']);
+  });
+  saveThoughts();
+  refreshBoardAfterPlacement(changedThoughtIds);
+  hideBoardActionMessage();
+  announce('Board placement undone.');
+}
+
+function commitBoardPlacement(draftPositions) {
+  if (!boardPlacementSession || blockEditsDuringAccountSync()) return;
+
+  const session = updateBoardPlacementDraft(boardPlacementSession, draftPositions);
+  const changes = planBoardPlacementCommit(session, thoughts);
+  if (!changes.length) {
+    boardPlacementView.close();
+    boardPlacementSession = null;
+    spacesOverviewPurpose = 'navigation';
+    announce('These cards are already on that Board.');
+    return;
+  }
+
+  changes.forEach(({ thoughtId, nextMeta }) => {
+    const thought = getThoughtById(thoughtId);
+    if (!thought) return;
+    thought.meta = nextMeta;
+    if (isCloudMode()) enqueueThoughtMetaPatch(thought, ['canvas']);
+  });
+  saveThoughts();
+  refreshBoardAfterPlacement(changes.map(({ thoughtId }) => thoughtId));
+  boardPlacementView.close();
+  boardPlacementSession = null;
+  spacesOverviewPurpose = 'navigation';
+
+  const targetName = getSpace(session.targetBoardId)?.label || 'Board';
+  const verb = session.operation === BoardPlacementOperation.MOVE ? 'Moved' : 'Placed';
+  showBoardActionMessage(`${verb} on “${targetName}”`, {
+    onUndo: () => undoBoardPlacement(changes),
+    undoKind: 'placement',
+    duration: 15_000,
+  });
+  announce(`${verb} ${session.thoughtIds.length} cards on ${targetName}.`);
+}
+
+function cancelBoardPlacement() {
+  const session = boardPlacementSession;
+  boardPlacementView.close();
+  if (viewMode === 'spaces') {
+    closeSpacesOverview({ restoreFocus: false });
+  }
+  boardPlacementSession = null;
+  boardPlacementCreateInFlight = false;
+  spacesOverviewPurpose = 'navigation';
+  restoreBoardPlacementSelection(session);
+  announce('Board placement cancelled.');
 }
 
 function toggleBoardThoughtSelection(thought) {
@@ -3346,6 +3623,11 @@ function renderRelationshipUi() {
   selectionToolbar.hidden = !boardSelecting && !magnetEditor && !connectionEditor;
   selectionCancel.textContent = boardSelecting ? 'Clear' : 'Cancel';
   selectionCancel.hidden = boardSelecting && selectedTotal === 0;
+  const canPlaceBoardSelection = Boolean(
+    boardSelecting && selectedTotal > 0 && auth,
+  );
+  selectionPlace.hidden = !canPlaceBoardSelection;
+  if (!canPlaceBoardSelection) closeBoardPlacementMenu();
   connectionSearchTrigger.hidden = !canSearchConnectionTargets;
   connectionSearchTrigger.setAttribute(
     'aria-expanded',
@@ -7404,35 +7686,65 @@ function createSpaceTile(space, canvasWidth, canvasHeight) {
     && isCanvasSpace(space.id)
     && boards.some((board) => board.id === space.id)
   );
+  const choosingPlacementTarget = Boolean(
+    spacesOverviewPurpose === 'board-placement'
+    && boardPlacementSession
+    && isCanvasSpace(space.id)
+  );
+  const isSourceBoard = choosingPlacementTarget
+    && space.id === boardPlacementSession.sourceBoardId;
+  const alreadyPlaced = choosingPlacementTarget
+    && boardPlacementSession.thoughtIds.every((thoughtId) => (
+      hasCanvasPlacement(getThoughtById(thoughtId), space.id)
+    ));
+  const targetUnavailable = Boolean(
+    isSourceBoard
+    || (
+      alreadyPlaced
+      && boardPlacementSession.operation === BoardPlacementOperation.PLACE
+    )
+  );
 
   tile.className = 'space-tile';
   tile.classList.toggle('is-board', isCanvasSpace(space.id));
   tile.classList.toggle('is-spatial', isSpatialSpace(space.id));
   tile.classList.toggle('is-active', space.id === activeSpaceId);
+  tile.classList.toggle('is-placement-unavailable', targetUnavailable);
 
   openButton.type = 'button';
   openButton.className = 'space-tile-open';
   openButton.dataset.spaceId = space.id;
-  openButton.setAttribute(
-    'aria-label',
-    isCanvasSpace(space.id) ? `Open Board: ${space.label}` : `Open ${space.label}`,
-  );
+  openButton.setAttribute('aria-label', choosingPlacementTarget
+    ? targetUnavailable
+      ? `${space.label}. ${isSourceBoard ? 'Current Board' : 'Cards already placed'}`
+      : `Place cards on ${space.label}`
+    : isCanvasSpace(space.id) ? `Open Board: ${space.label}` : `Open ${space.label}`);
+  openButton.disabled = targetUnavailable;
   if (space.id === activeSpaceId) openButton.setAttribute('aria-current', 'true');
 
   surface.className = 'space-preview-surface';
   footer.className = 'space-tile-footer';
   renderSpacePreview(surface, space, canvasWidth, canvasHeight);
   openButton.append(surface);
-  openButton.addEventListener('click', () => navigateToSpace(space.id));
+  openButton.addEventListener('click', () => {
+    if (choosingPlacementTarget) openBoardPlacementTarget(space.id);
+    else navigateToSpace(space.id);
+  });
 
-  if (canRenameBoard && editingBoardId === space.id) {
+  if (!choosingPlacementTarget && canRenameBoard && editingBoardId === space.id) {
     footer.append(createBoardTitleEditor(space));
   } else {
     footer.append(createSpaceLabel(space));
+    if (targetUnavailable) {
+      const status = document.createElement('span');
+      status.className = 'space-tile-status';
+      status.textContent = isSourceBoard ? 'Current' : 'Already placed';
+      footer.append(status);
+    }
   }
 
   tile.append(openButton, footer);
-  if (canRenameBoard && editingBoardId !== space.id) {
+  if (!choosingPlacementTarget && canRenameBoard && editingBoardId !== space.id) {
     tile.append(createBoardActions(space));
   }
 
@@ -7465,7 +7777,11 @@ function createNewBoardTile() {
   surface.append(icon);
   footer.append(label);
   button.append(surface);
-  button.addEventListener('click', () => void createBoard());
+  button.disabled = boardPlacementCreateInFlight;
+  button.addEventListener('click', () => {
+    if (spacesOverviewPurpose === 'board-placement') void createBoardForPlacement();
+    else void createBoard();
+  });
   tile.append(button, footer);
   return tile;
 }
@@ -7493,6 +7809,7 @@ function createSpaceSection(title, sectionId, spaces, canvasWidth, canvasHeight)
 
 function renderSpacesOverview() {
   spacesGrid.replaceChildren();
+  spacesOverview.dataset.purpose = spacesOverviewPurpose;
   const canvasBounds = canvas.getBoundingClientRect();
   const canvasWidth = Math.max(1, canvasBounds.width);
   const canvasHeight = Math.max(1, canvasBounds.height - RESERVED_BOTTOM_SPACE);
@@ -7507,15 +7824,31 @@ function renderSpacesOverview() {
   );
 
   if (auth) boardSection.grid.prepend(createNewBoardTile());
+  const choosingPlacementTarget = Boolean(
+    spacesOverviewPurpose === 'board-placement' && boardPlacementSession,
+  );
   const spatialActive = isSpatialSpace(activeSpaceId);
+  spacesSpatialAction.hidden = choosingPlacementTarget;
   spacesSpatialAction.classList.toggle('is-active', spatialActive);
   if (spatialActive) spacesSpatialAction.setAttribute('aria-current', 'page');
   else spacesSpatialAction.removeAttribute('aria-current');
 
-  spacesGrid.append(
-    flowSection.section,
-    boardSection.section,
-  );
+  if (choosingPlacementTarget) {
+    const header = document.createElement('header');
+    const heading = document.createElement('h1');
+    const description = document.createElement('p');
+    const count = boardPlacementSession.thoughtIds.length;
+    const moving = boardPlacementSession.operation === BoardPlacementOperation.MOVE;
+    header.className = 'board-placement-destination-header';
+    heading.textContent = `${moving ? 'Move' : 'Place'} ${count} ${count === 1 ? 'card' : 'cards'}`;
+    description.textContent = moving
+      ? 'Choose a Board. You’ll place the cards before they move.'
+      : 'Choose a Board. You’ll place the cards before anything is saved.';
+    header.append(heading, description);
+    spacesGrid.append(header, boardSection.section);
+  } else {
+    spacesGrid.append(flowSection.section, boardSection.section);
+  }
 }
 
 function findSpaceTileInDirection(tiles, currentTile, key) {
@@ -7541,11 +7874,12 @@ function findSpaceTileInDirection(tiles, currentTile, key) {
     .sort((left, right) => left.score - right.score)[0]?.tile || null;
 }
 
-function closeSpacesOverview({ restoreFocus = true } = {}) {
+function closeSpacesOverview({ restoreFocus = true, preservePurpose = false } = {}) {
   if (viewMode !== 'spaces') return;
   const focusTarget = spacesOverviewReturnFocus;
   spacesOverviewReturnFocus = spacesButton;
   viewMode = 'canvas';
+  if (!preservePurpose) spacesOverviewPurpose = 'navigation';
   renderBoardContext();
   renderCanvasCamera();
   spacesOverview.hidden = true;
@@ -7662,7 +7996,10 @@ function activateSpace(spaceId) {
   announce(`${label || 'Space'} opened.`);
 }
 
-function openSpacesOverview({ returnFocus = spacesButton } = {}) {
+function openSpacesOverview({
+  returnFocus = spacesButton,
+  purpose = 'navigation',
+} = {}) {
   if (boardArrangeInFlight) {
     announce('Wait until the Board finishes arranging.');
     return;
@@ -7685,6 +8022,9 @@ function openSpacesOverview({ returnFocus = spacesButton } = {}) {
   spacesOverviewReturnFocus = returnFocus instanceof HTMLElement
     ? returnFocus
     : spacesButton;
+  spacesOverviewPurpose = purpose === 'board-placement' && boardPlacementSession
+    ? 'board-placement'
+    : 'navigation';
   viewMode = 'spaces';
   renderBoardContext();
   renderCanvasCamera();
@@ -7694,7 +8034,12 @@ function openSpacesOverview({ returnFocus = spacesButton } = {}) {
   const activeSpaceControl = spacesGrid.querySelector(
     `[data-space-id="${activeSpaceId}"]`,
   );
-  if (activeSpaceControl) activeSpaceControl.focus();
+  const firstPlacementTarget = spacesGrid.querySelector(
+    '.space-tile-open:not(:disabled)',
+  );
+  if (spacesOverviewPurpose === 'board-placement' && firstPlacementTarget) {
+    firstPlacementTarget.focus();
+  } else if (activeSpaceControl) activeSpaceControl.focus();
   else if (isSpatialSpace(activeSpaceId)) spacesSpatialAction.focus();
 }
 
@@ -8547,9 +8892,21 @@ boardActionUndo.addEventListener('click', () => {
   boardActionUndo.disabled = true;
   void undo();
 });
-spacesClose.addEventListener('click', closeSpacesOverview);
+spacesClose.addEventListener('click', () => {
+  if (spacesOverviewPurpose === 'board-placement') cancelBoardPlacement();
+  else closeSpacesOverview();
+});
 spacesOverview.addEventListener('click', (event) => {
-  if (event.target === spacesOverview) closeSpacesOverview();
+  if (event.target !== spacesOverview) return;
+  if (spacesOverviewPurpose === 'board-placement') cancelBoardPlacement();
+  else closeSpacesOverview();
+});
+selectionPlace.addEventListener('click', toggleBoardPlacementMenu);
+boardPlacementAdd.addEventListener('click', () => {
+  startBoardPlacement(BoardPlacementOperation.PLACE);
+});
+boardPlacementMove.addEventListener('click', () => {
+  startBoardPlacement(BoardPlacementOperation.MOVE);
 });
 selectionCancel.addEventListener('click', () => {
   if (boardSelection) {
@@ -8566,6 +8923,19 @@ selectionDone.addEventListener('click', () => {
   if (boardSelection) closeBoardSelection({ restoreFocus: true });
   else if (magnetEditor) commitMagnetEditor();
   else if (connectionEditor) commitConnectionEditor();
+});
+document.addEventListener('pointerdown', (event) => {
+  if (
+    boardPlacementMenu.hidden
+    || selectionPlace.contains(event.target)
+    || boardPlacementMenu.contains(event.target)
+  ) return;
+  closeBoardPlacementMenu();
+});
+boardPlacementMenu.addEventListener('keydown', (event) => {
+  if (event.key !== 'Escape') return;
+  event.preventDefault();
+  closeBoardPlacementMenu({ restoreFocus: true });
 });
 connectionSearchTrigger.addEventListener('click', () => {
   if (isConnectionSearchOpen()) closeConnectionSearch();
@@ -8769,13 +9139,14 @@ window.addEventListener('keydown', (event) => {
 
     if (event.key === 'Escape') {
       event.preventDefault();
-      closeSpacesOverview();
+      if (spacesOverviewPurpose === 'board-placement') cancelBoardPlacement();
+      else closeSpacesOverview();
       return;
     }
 
     if (!event.key.startsWith('Arrow')) return;
 
-    const tiles = [...spacesGrid.querySelectorAll('.space-tile-open')];
+    const tiles = [...spacesGrid.querySelectorAll('.space-tile-open:not(:disabled)')];
     const currentTile = tiles.find((tile) => tile === document.activeElement);
     if (!currentTile) return;
 
