@@ -122,7 +122,6 @@ import {
 } from './sync-operations.js';
 import {
   ThemeMode,
-  nextThemeMode,
   normalizeThemeMode,
   resolveTheme,
 } from './theme.js';
@@ -323,18 +322,23 @@ const spacesOverview = document.querySelector('#spaces-overview');
 const spacesClose = document.querySelector('#spaces-close');
 const spacesSpatialAction = document.querySelector('#spaces-spatial-action');
 const spacesGrid = document.querySelector('#spaces-grid');
-const themeButton = document.querySelector('#theme-button');
 const accountMenu = document.querySelector('#account-menu');
 const accountTrigger = document.querySelector('#account-trigger');
 const accountTriggerLabel = document.querySelector('#account-trigger-label');
 const accountAvatar = document.querySelector('#account-avatar');
 const accountChevron = document.querySelector('#account-chevron');
 const accountPopover = document.querySelector('#account-popover');
+const accountAuthenticatedContent = document.querySelector('#account-authenticated-content');
 const accountMenuAvatar = document.querySelector('#account-menu-avatar');
 const accountEmail = document.querySelector('#account-email');
 const telegramSettingsMenuItem = document.querySelector('#telegram-settings');
 const switchAccountMenuItem = document.querySelector('#switch-account');
+const signInMenuItem = document.querySelector('#sign-in-menu');
 const signOutMenuItem = document.querySelector('#sign-out');
+const appearancePicker = document.querySelector('#appearance-picker');
+const appearanceOptions = [
+  ...appearancePicker.querySelectorAll('[data-theme-value]'),
+];
 const telegramSettingsDialog = document.querySelector('#telegram-settings-dialog');
 const telegramSettingsClose = document.querySelector('#telegram-settings-close');
 const telegramSettingsStatus = document.querySelector('#telegram-settings-status');
@@ -728,16 +732,12 @@ function showBoardActionMessage(message, {
   boardActionToastTimer = window.setTimeout(hideBoardActionMessage, duration);
 }
 
-function renderThemeButton() {
-  const labels = {
-    [ThemeMode.SYSTEM]: 'System',
-    [ThemeMode.LIGHT]: 'Light',
-    [ThemeMode.DARK]: 'Dark',
-  };
-  const label = labels[themeMode];
-  themeButton.dataset.mode = themeMode;
-  themeButton.title = `Appearance: ${label}`;
-  themeButton.setAttribute('aria-label', `Appearance: ${label}`);
+function renderAppearancePicker() {
+  appearanceOptions.forEach((option) => {
+    const selected = option.dataset.themeValue === themeMode;
+    option.classList.toggle('is-selected', selected);
+    option.setAttribute('aria-checked', String(selected));
+  });
 }
 
 function applyTheme() {
@@ -749,7 +749,7 @@ function applyTheme() {
     resolvedTheme === ThemeMode.DARK ? '#0e0d14' : '#f9f8fe',
   );
   spatialView?.setTheme(resolvedTheme);
-  renderThemeButton();
+  renderAppearancePicker();
   scheduleCanvasMinimapRender();
 }
 
@@ -759,6 +759,15 @@ function storeThemeMode() {
   } catch {
     // The selected theme still applies for this session when storage is disabled.
   }
+}
+
+function setThemeMode(nextMode) {
+  const normalizedMode = normalizeThemeMode(nextMode);
+  if (normalizedMode === themeMode) return;
+  themeMode = normalizedMode;
+  storeThemeMode();
+  applyTheme();
+  announce(`Appearance changed to ${themeMode}.`);
 }
 
 function loadSpatialLayoutMode() {
@@ -7943,7 +7952,10 @@ function toggleAccountMenu() {
   const willOpen = accountPopover.hidden;
   accountPopover.hidden = !willOpen;
   accountTrigger.setAttribute('aria-expanded', String(willOpen));
-  if (willOpen) telegramSettingsMenuItem.focus();
+  if (willOpen) {
+    if (auth) telegramSettingsMenuItem.focus();
+    else signInMenuItem.focus();
+  }
 }
 
 function updateAccountControl() {
@@ -7958,15 +7970,18 @@ function updateAccountControl() {
   }
 
   accountTrigger.disabled = false;
-  accountTrigger.classList.toggle('is-authenticated', Boolean(auth));
-  accountAvatar.hidden = !auth;
-  accountChevron.hidden = !auth;
+  const isAuthenticated = Boolean(auth);
+  accountTrigger.classList.toggle('is-authenticated', isAuthenticated);
+  accountAvatar.hidden = !isAuthenticated;
+  accountChevron.hidden = false;
+  accountAuthenticatedContent.hidden = !isAuthenticated;
+  signInMenuItem.hidden = isAuthenticated;
+  signOutMenuItem.hidden = !isAuthenticated;
 
   if (!auth) {
     accountTriggerLabel.hidden = false;
     accountTriggerLabel.textContent = 'Sign in';
-    accountTrigger.title = 'Sign in';
-    closeAccountMenu();
+    accountTrigger.title = 'Account and appearance';
     if (telegramSettingsDialog.open) telegramSettingsDialog.close();
     return;
   }
@@ -8381,9 +8396,9 @@ accountTrigger.addEventListener('click', () => {
   }
   if (magnetEditor) closeMagnetEditor({ restoreMotion: true });
   if (connectionEditor) closeConnectionEditor();
-  if (auth) toggleAccountMenu();
-  else startLogin();
+  toggleAccountMenu();
 });
+signInMenuItem.addEventListener('click', () => startLogin());
 telegramSettingsMenuItem.addEventListener('click', openTelegramSettings);
 switchAccountMenuItem.addEventListener('click', () => {
   switchAccount();
@@ -8831,11 +8846,10 @@ window.addEventListener('beforeunload', () => {
   saveThoughts();
 });
 
-themeButton.addEventListener('click', () => {
-  themeMode = nextThemeMode(themeMode);
-  storeThemeMode();
-  applyTheme();
-  announce(`Appearance changed to ${themeMode}.`);
+appearancePicker.addEventListener('click', (event) => {
+  const option = event.target.closest('[data-theme-value]');
+  if (!option || !appearancePicker.contains(option)) return;
+  setThemeMode(option.dataset.themeValue);
 });
 
 systemThemeQuery.addEventListener('change', () => {

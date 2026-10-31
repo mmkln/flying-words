@@ -1971,6 +1971,29 @@ html[data-app-ready="false"] .composer-wrap {
 .account-popover-copy strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; }
 .account-popover-copy small { color: var(--text-tertiary); font-size: 11px; }
 .account-menu-divider { height: 1px; margin: 4px 3px; background: var(--border-subtle); }
+.account-appearance {
+  display: flex;
+  min-height: 42px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 4px 7px 4px 10px;
+}
+.account-appearance-label {
+  color: var(--text-secondary);
+  font-size: 12px;
+  font-weight: 400;
+}
+.appearance-picker {
+  display: grid;
+  width: 104px;
+  flex: 0 0 104px;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 2px;
+  padding: 2px;
+  border-radius: 9px;
+  background: var(--surface-muted);
+}
 .account-popover button {
   width: 100%;
   padding: 10px 11px;
@@ -1984,6 +2007,28 @@ html[data-app-ready="false"] .composer-wrap {
   text-align: left;
 }
 .account-popover button:hover, .account-popover button:focus-visible { color: var(--text-primary); background: var(--surface-hover); outline: 0; }
+.account-popover .appearance-option {
+  display: grid;
+  min-height: 28px;
+  padding: 0;
+  place-items: center;
+  border-radius: 7px;
+  color: var(--text-tertiary);
+  text-align: center;
+}
+.account-popover .appearance-option svg { width: 15px; height: 15px; }
+.account-popover .appearance-option.is-selected {
+  color: var(--text-primary);
+  background: var(--surface-elevated);
+  box-shadow: 0 1px 3px rgba(35, 26, 61, .12), inset 0 1px var(--inset-highlight);
+}
+.account-popover .appearance-option:focus-visible {
+  outline: 3px solid var(--focus-ring);
+  outline-offset: 1px;
+}
+:root[data-theme="dark"] .account-popover .appearance-option.is-selected {
+  box-shadow: 0 1px 3px rgba(0, 0, 0, .32), inset 0 1px var(--inset-highlight);
+}
 .account-popover .account-destructive { color: #b64655; }
 .account-popover .account-destructive:hover, .account-popover .account-destructive:focus-visible { color: #a23849; background: rgba(182, 70, 85, .09); }
 
@@ -4047,23 +4092,6 @@ kbd { padding: 1px 4px; border: 1px solid rgba(114,104,143,.25); border-bottom-w
 @media (hover: none) {
   .thought-card.is-canvas-card .delete-btn { opacity: 1; }
 }
-
-/* Appearance */
-.theme-button {
-  width: 38px;
-  height: 38px;
-  border-radius: 50%;
-}
-
-.theme-icon {
-  display: none;
-  width: 18px;
-  height: 18px;
-}
-
-:root[data-theme-mode="system"] .theme-icon-system,
-:root[data-theme-mode="light"] .theme-icon-light,
-:root[data-theme-mode="dark"] .theme-icon-dark { display: block; }
 
 .account-trigger {
   border-color: var(--border-subtle);
