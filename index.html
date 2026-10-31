@@ -776,14 +776,30 @@
         <span class="sr-only">Search thoughts</span>
         <input id="history-search" type="search" placeholder="Search thoughts" autocomplete="off" />
       </label>
-      <div class="history-list" id="history-list"></div>
+      <div class="history-scroll" id="history-scroll">
+        <div class="history-list" id="history-list"></div>
+        <div
+          class="history-pagination"
+          id="history-pagination"
+          aria-live="polite"
+          hidden
+        >
+          <span
+            class="history-pagination-spinner"
+            id="history-pagination-spinner"
+            aria-hidden="true"
+            hidden
+          ></span>
+          <span class="sr-only" id="history-pagination-status"></span>
+          <button
+            class="history-pagination-retry"
+            id="history-pagination-retry"
+            type="button"
+            hidden
+          >Retry</button>
+        </div>
+      </div>
       <div class="history-preview" id="history-preview" aria-hidden="true" hidden></div>
-      <button
-        class="panel-load-more history-load-more"
-        id="history-load-more"
-        type="button"
-        hidden
-      >Load more</button>
     </dialog>
 
     <dialog class="history-dialog anchors-dialog" id="anchors-dialog" aria-labelledby="anchors-title">

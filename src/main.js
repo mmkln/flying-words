@@ -156,6 +156,11 @@ import {
   buildThoughtListPath,
   normalizeThoughtListResponse,
 } from './thought-list-api.js';
+import {
+  HistoryPaginationState,
+  getHistoryPaginationState,
+  shouldObserveHistoryPagination,
+} from './history-pagination.js';
 
 const pageLoadDiagnostics = createPageLoadDiagnostics();
 pageLoadDiagnostics.mark('module:evaluated');
@@ -304,9 +309,13 @@ const historyDialog = document.querySelector('#history-dialog');
 const historyClose = document.querySelector('#history-close');
 const historyRefresh = document.querySelector('#history-refresh');
 const historySearch = document.querySelector('#history-search');
+const historyScroll = document.querySelector('#history-scroll');
 const historyList = document.querySelector('#history-list');
 const historyPreview = document.querySelector('#history-preview');
-const historyLoadMore = document.querySelector('#history-load-more');
+const historyPagination = document.querySelector('#history-pagination');
+const historyPaginationSpinner = document.querySelector('#history-pagination-spinner');
+const historyPaginationStatus = document.querySelector('#history-pagination-status');
+const historyPaginationRetry = document.querySelector('#history-pagination-retry');
 const anchorsButton = document.querySelector('#anchors-button');
 const anchorsDialog = document.querySelector('#anchors-dialog');
 const anchorsClose = document.querySelector('#anchors-close');
@@ -399,8 +408,10 @@ let historyThoughtIds = [];
 let historyNextCursor = null;
 let historyHasMore = false;
 let historyLoading = false;
+let historyLoadError = false;
 let historyRequestId = 0;
 let historySearchTimer = null;
+let historyPaginationObserver = null;
 let connectionSearchThoughtIds = [];
 let connectionSearchNextCursor = null;
 let connectionSearchHasMore = false;
@@ -1431,13 +1442,14 @@ function resetPaginatedThoughtState() {
   historyNextCursor = null;
   historyHasMore = false;
   historyLoading = false;
+  historyLoadError = false;
   historyRequestId += 1;
   connectionSearchThoughtIds = [];
   connectionSearchNextCursor = null;
   connectionSearchHasMore = false;
   connectionSearchLoading = false;
   connectionSearchRequestId += 1;
-  renderHistoryLoadMore();
+  renderHistoryPagination();
   renderConnectionSearchLoadMore();
 }
 
@@ -5623,7 +5635,7 @@ function captureManualRefreshUiSnapshot() {
   return {
     historyOpen: historyDialog.open,
     historyQuery: historySearch.value,
-    historyScrollTop: historyList.scrollTop,
+    historyScrollTop: historyScroll.scrollTop,
     connectionSearchOpen: isConnectionSearchOpen(),
     connectionSearchQuery: connectionSearchInput.value,
     connectionSearchActiveIndex,
@@ -5690,12 +5702,13 @@ function rerenderOpenThoughtPanels(snapshot = {}) {
       historyNextCursor = null;
       historyHasMore = false;
       historyLoading = false;
+      historyLoadError = false;
       historyRequestId += 1;
       renderHistory();
       void loadHistoryPage({ reset: true });
     } else {
       renderHistory();
-      historyList.scrollTop = snapshot.historyScrollTop || 0;
+      historyScroll.scrollTop = snapshot.historyScrollTop || 0;
     }
   }
 
@@ -6827,18 +6840,61 @@ async function focusThoughtFromAnchors(thought) {
   await focusThoughtInActiveSpace(thought);
 }
 
-function renderHistoryLoadMore() {
-  if (!historyLoadMore) return;
-
-  const hasLoadedResults = historyThoughtIds.length > 0;
-  historyLoadMore.hidden = (
-    !auth
-    || (historyLoading && !hasLoadedResults)
-    || (!historyHasMore && !historyLoading)
-  );
-  historyLoadMore.disabled = historyLoading;
-  historyLoadMore.textContent = historyLoading ? 'Loading…' : 'Load more';
+function canAutoLoadHistory() {
+  return shouldObserveHistoryPagination({
+    authenticated: Boolean(auth),
+    dialogOpen: historyDialog.open,
+    hasMore: historyHasMore,
+    loading: historyLoading,
+    hasLoadedResults: historyThoughtIds.length > 0,
+    error: historyLoadError,
+  });
 }
+
+function renderHistoryPagination() {
+  historyPaginationObserver?.unobserve(historyPagination);
+
+  const state = getHistoryPaginationState({
+    authenticated: Boolean(auth),
+    hasMore: historyHasMore,
+    loading: historyLoading,
+    hasLoadedResults: historyThoughtIds.length > 0,
+    error: historyLoadError,
+  });
+  const showLoadingIndicator = state === HistoryPaginationState.LOADING;
+  const showError = state === HistoryPaginationState.ERROR;
+
+  historyPagination.hidden = state === HistoryPaginationState.HIDDEN;
+  historyPagination.classList.toggle('is-loading', showLoadingIndicator);
+  historyPagination.classList.toggle('is-error', showError);
+  historyPaginationSpinner.hidden = !showLoadingIndicator;
+  historyPaginationRetry.hidden = !showError;
+
+  if (showLoadingIndicator) {
+    historyPaginationStatus.textContent = 'Loading more thoughts.';
+  } else if (showError) {
+    historyPaginationStatus.textContent = 'Could not load more thoughts.';
+  } else {
+    historyPaginationStatus.textContent = '';
+  }
+
+  if (canAutoLoadHistory()) {
+    historyPaginationObserver?.observe(historyPagination);
+  }
+}
+
+historyPaginationObserver = new IntersectionObserver(
+  ([entry]) => {
+    if (!entry?.isIntersecting || !canAutoLoadHistory()) return;
+    historyPaginationObserver.unobserve(historyPagination);
+    void loadHistoryPage();
+  },
+  {
+    root: historyScroll,
+    rootMargin: '0px 0px 240px 0px',
+    threshold: 0,
+  },
+);
 
 function getLocalHistoryMatches() {
   const query = historySearch.value;
@@ -6908,6 +6964,7 @@ async function loadHistoryPage({ reset = false } = {}) {
 
   const requestId = ++historyRequestId;
   historyLoading = true;
+  historyLoadError = false;
   renderHistory();
 
   try {
@@ -6936,13 +6993,13 @@ async function loadHistoryPage({ reset = false } = {}) {
     return true;
   } catch (error) {
     if (requestId === historyRequestId) {
+      historyLoadError = true;
       announce(`Could not load history: ${error.message}`);
     }
     return false;
   } finally {
     if (requestId === historyRequestId) {
       historyLoading = false;
-      renderHistoryLoadMore();
       renderHistory();
     }
   }
@@ -6968,7 +7025,7 @@ function renderHistory() {
       variant: 'history',
       rows: 6,
     });
-    renderHistoryLoadMore();
+    renderHistoryPagination();
     return;
   }
 
@@ -6981,7 +7038,7 @@ function renderHistory() {
       empty.textContent = 'No thoughts yet.';
     }
     historyList.append(empty);
-    renderHistoryLoadMore();
+    renderHistoryPagination();
     return;
   }
 
@@ -7055,7 +7112,7 @@ function renderHistory() {
     section.append(list);
     historyList.append(section);
   });
-  renderHistoryLoadMore();
+  renderHistoryPagination();
 }
 
 function getAnchoredThoughts() {
@@ -7140,9 +7197,13 @@ function openHistory() {
   historyThoughtIds = [];
   historyNextCursor = null;
   historyHasMore = false;
+  historyLoading = false;
+  historyLoadError = false;
+  historyRequestId += 1;
   renderHistory();
   updateManualRefreshControls();
   historyDialog.showModal();
+  renderHistoryPagination();
   historySearch.focus();
   if (auth) void loadHistoryPage({ reset: true });
 }
@@ -8573,8 +8634,11 @@ historyList.addEventListener('focusin', (event) => {
   if (button?.matches(':focus-visible')) showHistoryPreview(button);
 });
 historyList.addEventListener('focusout', hideHistoryPreview);
-historyList.addEventListener('scroll', hideHistoryPreview, { passive: true });
-historyDialog.addEventListener('close', hideHistoryPreview);
+historyScroll.addEventListener('scroll', hideHistoryPreview, { passive: true });
+historyDialog.addEventListener('close', () => {
+  hideHistoryPreview();
+  renderHistoryPagination();
+});
 setupPanelRefreshButton(historyRefresh);
 composerRelationClear.addEventListener('click', clearComposerRelation);
 historySearch.addEventListener('input', () => {
@@ -8583,6 +8647,7 @@ historySearch.addEventListener('input', () => {
     historyNextCursor = null;
     historyHasMore = false;
     historyLoading = false;
+    historyLoadError = false;
     historyRequestId += 1;
     renderHistory();
     scheduleHistorySearch();
@@ -8591,7 +8656,7 @@ historySearch.addEventListener('input', () => {
 
   renderHistory();
 });
-historyLoadMore.addEventListener('click', () => {
+historyPaginationRetry.addEventListener('click', () => {
   void loadHistoryPage();
 });
 historyDialog.addEventListener('click', (event) => {
