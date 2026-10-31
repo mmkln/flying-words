@@ -1521,23 +1521,10 @@ html[data-app-ready="false"] .composer-wrap {
   z-index: 4;
   top: -9px;
   left: -9px;
-  display: grid;
-  width: 30px;
-  height: 30px;
-  padding: 6px;
-  place-items: center;
-  border: 1px solid color-mix(in srgb, var(--accent) 28%, transparent);
-  border-radius: 50%;
-  color: var(--accent);
-  cursor: pointer;
-  background: var(--surface-elevated);
-  box-shadow: var(--shadow-control);
   opacity: 0;
   pointer-events: none;
-  transition: opacity .16s ease, color .16s ease, background .16s ease, border-color .16s ease;
 }
 
-.connection-map-card-connect svg { display: block; width: 17px; height: 17px; pointer-events: none; }
 .connection-map-card:hover .connection-map-card-connect,
 .connection-map-card:focus-within .connection-map-card-connect,
 .connection-map-card.is-connection-source .connection-map-card-connect,
@@ -1545,20 +1532,8 @@ html[data-app-ready="false"] .composer-wrap {
   opacity: 1;
   pointer-events: auto;
 }
-.connection-map-card.is-connection-source .connection-map-card-connect {
-  color: #fff;
-  border-color: var(--accent);
-  background: var(--accent);
-}
-.connection-map-card.is-connection-selected .connection-map-card-connect {
-  color: #fff;
-  border-color: #0a84ff;
-  background: #0a84ff;
-}
 .connection-map-card.is-connection-editing:not(.is-connection-source):not(.is-connection-selected)
   .connection-map-card-connect {
-  color: #0a84ff;
-  border-color: rgba(10, 132, 255, .38);
   opacity: 1;
   pointer-events: auto;
 }
@@ -3501,20 +3476,69 @@ kbd { padding: 1px 4px; border: 1px solid rgba(114,104,143,.25); border-bottom-w
   top: -9px;
   left: 25px;
   z-index: 4;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.connection-action-button {
   display: grid;
   width: 30px;
   height: 30px;
   padding: 6px;
   place-items: center;
-  border: 1px solid rgba(112, 85, 197, .28);
+  border: 1px solid color-mix(in srgb, var(--accent) 28%, transparent);
   border-radius: 50%;
-  color: #7055c5;
+  color: var(--accent);
   cursor: pointer;
-  background: rgba(255, 255, 255, .97);
-  box-shadow: 0 3px 8px rgba(47, 35, 82, .12);
-  opacity: 0;
-  pointer-events: none;
+  background: var(--surface-elevated);
+  box-shadow: var(--shadow-control);
+  font: inherit;
   transition: opacity .16s ease, color .16s ease, background .16s ease, border-color .16s ease;
+}
+
+.connection-action-icon {
+  display: none;
+  width: 17px;
+  height: 17px;
+  pointer-events: none;
+}
+
+.connection-action-button:is(
+  [data-connection-action-state="idle"],
+  [data-connection-action-state="source"]
+) .connection-action-icon-link,
+.connection-action-button[data-connection-action-state="available"]
+  .connection-action-icon-plus,
+.connection-action-button[data-connection-action-state="selected"]
+  .connection-action-icon-check {
+  display: block;
+}
+
+.connection-action-button[data-connection-action-state="source"] {
+  color: #fff;
+  border-color: var(--accent);
+  background: var(--accent);
+}
+
+.connection-action-button[data-connection-action-state="source"]::after {
+  position: absolute;
+  inset: -6px;
+  border: 2px solid color-mix(in srgb, var(--accent) 38%, transparent);
+  border-radius: 50%;
+  content: "";
+  pointer-events: none;
+}
+
+.connection-action-button[data-connection-action-state="available"] {
+  color: var(--text-secondary);
+  border-color: var(--border-subtle);
+  background: var(--surface-elevated);
+}
+
+.connection-action-button[data-connection-action-state="selected"] {
+  color: #fff;
+  border-color: #0a84ff;
+  background: #0a84ff;
 }
 
 .connection-btn[hidden] { display: none !important; }
@@ -3667,16 +3691,6 @@ kbd { padding: 1px 4px; border: 1px solid rgba(114,104,143,.25); border-bottom-w
 
 .board-connections-add-all { padding: 7px 10px; }
 
-.connection-btn svg {
-  display: block;
-  width: 17px;
-  height: 17px;
-  pointer-events: none;
-}
-
-.connection-icon-plus,
-.connection-icon-check { display: none !important; }
-
 .thought-card:hover .connection-btn,
 .thought-card:focus-within .connection-btn,
 .thought-space.is-connection-editing .connection-btn {
@@ -3689,50 +3703,10 @@ kbd { padding: 1px 4px; border: 1px solid rgba(114,104,143,.25); border-bottom-w
   box-shadow: 0 0 0 3px rgba(112, 85, 197, .11), 0 15px 32px rgba(68, 50, 124, .15);
 }
 
-.thought-card.is-connection-source .connection-btn {
-  color: #fff;
-  border-color: #7055c5;
-  background: #7055c5;
-}
-
-.thought-card.is-connection-source .connection-btn::after {
-  position: absolute;
-  inset: -6px;
-  border: 2px solid color-mix(in srgb, var(--accent) 38%, transparent);
-  border-radius: 50%;
-  content: "";
-  pointer-events: none;
-}
-
-.thought-space.is-connection-editing
-  .thought-card:not(.is-connection-source):not(.is-connection-selected)
-  .connection-btn {
-  color: var(--text-secondary);
-  border-color: var(--border-subtle);
-  background: var(--surface-elevated);
-}
-
-.thought-space.is-connection-editing
-  .thought-card:not(.is-connection-source):not(.is-connection-selected)
-  .connection-icon-link { display: none; }
-
-.thought-space.is-connection-editing
-  .thought-card:not(.is-connection-source):not(.is-connection-selected)
-  .connection-icon-plus { display: block !important; }
-
 .thought-card.is-connection-selected {
   border-color: rgba(10, 132, 255, .65);
   box-shadow: 0 0 0 3px rgba(10, 132, 255, .1), 0 15px 32px rgba(68, 50, 124, .15);
 }
-
-.thought-card.is-connection-selected .connection-btn {
-  color: #fff;
-  border-color: #0a84ff;
-  background: #0a84ff;
-}
-
-.thought-card.is-connection-selected .connection-icon-link { display: none; }
-.thought-card.is-connection-selected .connection-icon-check { display: block !important; }
 
 .thought-space.is-connection-editing
   .thought-card.is-connection-source
@@ -4407,7 +4381,6 @@ kbd {
 .thought-focus-primary:hover,
 .selection-toolbar-done:hover { background: var(--accent-hover); }
 
-.connection-btn,
 .magnet-btn,
 .thought-space.is-magnet-editing .thought-card:not(.is-magnet-editor-parent) .magnet-btn {
   background: var(--surface-elevated);

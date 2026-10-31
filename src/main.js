@@ -7,6 +7,10 @@ import {
 } from './magnet-hierarchy.js';
 import { createMagnetPhysics } from './magnet-physics.js';
 import {
+  getConnectionActionState,
+  renderConnectionActionButton,
+} from './connection-action-button.js';
+import {
   KnowledgeKind,
   getKnowledgeKindLabel,
   getKnowledgeKindPlaceholder,
@@ -3537,13 +3541,20 @@ function renderConnectionThoughtState(thought) {
   thought.element.classList.toggle('is-connection-source', isSource);
   thought.element.classList.toggle('is-connection-selected', isSelected);
   button.disabled = Boolean(magnetEditor);
-  button.setAttribute('aria-pressed', String(isSource || isSelected));
 
-  if (isSource) button.title = 'Connection source';
-  else if (connectionEditor && isSelected) button.title = 'Remove connection';
-  else if (connectionEditor) button.title = 'Add connection';
-  else button.title = 'Edit connections';
-  button.setAttribute('aria-label', button.title);
+  let title = 'Edit connections';
+  if (isSource) title = 'Cancel connection editing';
+  else if (connectionEditor && isSelected) title = 'Remove connection';
+  else if (connectionEditor) title = 'Add connection';
+
+  renderConnectionActionButton(button, {
+    state: getConnectionActionState({
+      editing: Boolean(connectionEditor),
+      source: isSource,
+      selected: isSelected,
+    }),
+    title,
+  });
 }
 
 function renderConnectionUi() {

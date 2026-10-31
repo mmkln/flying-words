@@ -9,6 +9,10 @@ import {
 } from './thought-content.js';
 import { zoomBoardCameraAtClientPoint } from './board-coordinate-space.js';
 import { getConnectionPathData } from './connection-map-edge-geometry.js';
+import {
+  getConnectionActionState,
+  renderConnectionActionButton,
+} from './connection-action-button.js';
 
 const SVG_NAMESPACE = 'http://www.w3.org/2000/svg';
 const CARD_WIDTH = 280;
@@ -92,22 +96,22 @@ function createThoughtCard(
   });
 
   connectButton.type = 'button';
-  connectButton.className = 'connection-map-card-connect';
-  connectButton.innerHTML = `
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true">
-      <circle cx="5" cy="12" r="3"></circle>
-      <circle cx="19" cy="12" r="3"></circle>
-      <path d="M8 12h8"></path>
-    </svg>
-  `;
-  connectButton.setAttribute('aria-pressed', String(
-    node.connectionSource || node.connectionSelected,
-  ));
-  if (node.connectionSource) connectButton.title = 'Finish editing connections';
-  else if (node.editing && node.connectionSelected) connectButton.title = 'Remove connection';
-  else if (node.editing) connectButton.title = 'Add connection';
-  else connectButton.title = 'Edit connections';
-  connectButton.setAttribute('aria-label', `${connectButton.title}: ${presentation.primaryText}`);
+  connectButton.className = 'connection-action-button connection-map-card-connect';
+
+  let connectionTitle = 'Edit connections';
+  if (node.connectionSource) connectionTitle = 'Finish editing connections';
+  else if (node.editing && node.connectionSelected) connectionTitle = 'Remove connection';
+  else if (node.editing) connectionTitle = 'Add connection';
+
+  renderConnectionActionButton(connectButton, {
+    state: getConnectionActionState({
+      editing: node.editing,
+      source: node.connectionSource,
+      selected: node.connectionSelected,
+    }),
+    title: connectionTitle,
+    ariaLabel: `${connectionTitle}: ${presentation.primaryText}`,
+  });
   connectButton.addEventListener('click', () => onConnectionAction(thought.id));
 
   element.append(icon, text, connectButton);
