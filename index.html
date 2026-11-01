@@ -38,8 +38,8 @@
           : '#f9f8fe';
       })();
     </script>
-    <script type="module" crossorigin src="/assets/index-CHXA1aMS.js"></script>
-    <link rel="stylesheet" crossorigin href="/assets/index-DzxA-Tht.css">
+    <script type="module" crossorigin src="/assets/index-1bBTH0Qh.js"></script>
+    <link rel="stylesheet" crossorigin href="/assets/index-CGLx4mkD.css">
   </head>
   <body>
     <main class="app-shell">
@@ -462,7 +462,8 @@
 
       <div class="feedback-layer" id="feedback-layer">
         <div class="board-action-toast" id="board-action-toast" role="status" hidden>
-          <span>Board arranged</span>
+          <span id="board-action-message">Board arranged</span>
+          <button id="board-action-view" type="button" hidden>View</button>
           <button id="board-action-undo" type="button">Undo</button>
         </div>
       </div>
@@ -623,7 +624,10 @@
         <section class="board-placement-shell">
           <header class="board-placement-header">
             <button id="board-placement-cancel" type="button">Cancel</button>
-            <h2 id="board-placement-title">Place on Board</h2>
+            <div class="board-placement-heading">
+              <h2 id="board-placement-title">Place on Board</h2>
+              <p id="board-placement-summary"></p>
+            </div>
             <button id="board-placement-confirm" type="button">Place</button>
           </header>
 
