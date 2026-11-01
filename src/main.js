@@ -1,5 +1,6 @@
 import { createPageLoadDiagnostics } from './page-load-diagnostics.js';
 import { createBoardRenderScheduler } from './board-render-scheduler.js';
+import { createFlowSceneCache } from './flow-scene-cache.js';
 import { getThoughtMountDiff } from './thought-mount-projection.js';
 import {
   buildHierarchyComponents,
@@ -449,7 +450,10 @@ let connectionSearchTimer = null;
 const visibilityStates = new Map();
 const componentByThoughtId = new Map();
 const magnetPhysics = createMagnetPhysics();
+const flowScene = createFlowSceneCache(buildFlowSceneSnapshot);
 let magnetComponents = [];
+let cachedFlowBounds = null;
+let cachedFlowVisibleTarget = null;
 const DRAG_THRESHOLD_PX = 6;
 let draggedThought = null;
 let dragCandidate = null;
@@ -3038,6 +3042,9 @@ function rebuildMagnetComponents({ preserveVisibility = true } = {}) {
     relations: getEffectiveMagnetRelations(),
     hierarchyComponents: magnetComponents,
   });
+  cachedFlowVisibleTarget = null;
+  flowScene.invalidate();
+  refreshFlowHoveredComponents();
 
   if (!preserveVisibility) return;
   visibilityStates.clear();
@@ -3355,6 +3362,48 @@ function getActiveThoughts() {
   return thoughts.filter(isThoughtActive);
 }
 
+function buildFlowSceneSnapshot() {
+  const activeComponents = magnetComponents.filter((component) => (
+    isMagnetComponentAvailableInActiveSpace(component)
+    && (
+      isMagnetComponentPinned(component)
+      || getVisibilityState(component).status !== 'dormant'
+    )
+  ));
+  const activeComponentIds = new Set();
+  const activeThoughtIds = new Set();
+
+  activeComponents.forEach((component) => {
+    activeComponentIds.add(component.id);
+    getMagnetComponentMembers(component).forEach((thought) => {
+      activeThoughtIds.add(thought.id);
+    });
+  });
+
+  if (!cachedFlowBounds) cachedFlowBounds = getPlayfieldBounds();
+  if (cachedFlowVisibleTarget === null) {
+    cachedFlowVisibleTarget = calculateVisibleTarget(cachedFlowBounds);
+  }
+
+  return {
+    activeComponents,
+    activeComponentIds,
+    activeThoughtIds,
+    bounds: cachedFlowBounds,
+    visibleTarget: cachedFlowVisibleTarget,
+  };
+}
+
+function refreshFlowHoveredComponents() {
+  flowScene.clearHovered();
+  if (!isFlowSpace(activeSpaceId)) return;
+
+  getMountedThoughts().forEach((thought) => {
+    if (!thought.element?.matches(':hover, :focus-within')) return;
+    flowScene.setHovered(getMagnetComponent(thought)?.id, true);
+  });
+}
+
 function getMountedThoughts() {
   return [...mountedThoughtsById.values()];
 }
@@ -3398,9 +3447,8 @@ function getPlayfieldBounds() {
   };
 }
 
-function calculateVisibleTarget() {
+function calculateVisibleTarget(bounds = getPlayfieldBounds()) {
   const availableThoughts = thoughts.filter(isThoughtAvailableInActiveSpace);
-  const bounds = getPlayfieldBounds();
   const usableArea = bounds.width * bounds.height;
   const measuredThoughts = availableThoughts.filter(
     (thought) => thought.width > 0 && thought.height > 0,
@@ -3423,6 +3471,12 @@ function calculateVisibleTarget() {
   return Math.max(pinnedCount, Math.min(availableThoughts.length, limitedTarget));
 }
 
+function refreshFlowGeometry() {
+  cachedFlowBounds = getPlayfieldBounds();
+  cachedFlowVisibleTarget = calculateVisibleTarget(cachedFlowBounds);
+  flowScene.invalidate();
+}
+
 function showThought(thought) {
   if (!isThoughtAvailableInActiveSpace(thought)) return;
   if (isSpatialSpace(activeSpaceId)) return;
@@ -3433,7 +3487,11 @@ function showThought(thought) {
   }
   const component = getMagnetComponent(thought);
   if (!component) return;
-  getVisibilityState(component).status = 'visible';
+  const state = getVisibilityState(component);
+  if (state.status !== 'visible') {
+    state.status = 'visible';
+    flowScene.invalidate();
+  }
   getMagnetComponentMembers(component).forEach((member) => {
     mountThoughtElement(member);
     member.element.hidden = false;
@@ -3450,6 +3508,7 @@ function hideThought(thought) {
   const state = getVisibilityState(component);
   state.status = 'dormant';
   state.lastVisibleAt = Date.now();
+  flowScene.invalidate();
   members.forEach(unmountThoughtElement);
 }
 
@@ -3494,7 +3553,7 @@ function isMagnetComponentFullyOutside(component, bounds) {
 function spawnThoughtFromEdge(thought, reducedMotion = false) {
   const component = getMagnetComponent(thought);
   if (!component) return;
-  const bounds = getPlayfieldBounds();
+  const bounds = cachedFlowBounds || getPlayfieldBounds();
   const state = getVisibilityState(component);
   const members = getMagnetComponentMembers(component);
 
@@ -3506,6 +3565,7 @@ function spawnThoughtFromEdge(thought, reducedMotion = false) {
 
   if (reducedMotion) {
     state.status = 'visible';
+    flowScene.invalidate();
     const group = componentBounds(component);
     const groupWidth = group.maxX - group.minX;
     const groupHeight = group.maxY - group.minY;
@@ -3531,6 +3591,7 @@ function spawnThoughtFromEdge(thought, reducedMotion = false) {
   }
 
   state.status = 'entering';
+  flowScene.invalidate();
   const edge = Math.floor(Math.random() * 4);
   const speed = randomBetween(14, 23);
   const drift = randomBetween(-8, 8);
@@ -3599,8 +3660,8 @@ function spawnNextDormantThought(reducedMotion) {
   return true;
 }
 
-function maybeSpawnThought(timestamp, reducedMotion) {
-  if (getActiveThoughts().length >= calculateVisibleTarget()) {
+function maybeSpawnThought(timestamp, reducedMotion, scene) {
+  if (scene.activeThoughtIds.size >= scene.visibleTarget) {
     nextSpawnAt = 0;
     return;
   }
@@ -3624,15 +3685,20 @@ function initializeThoughtVisibility() {
 
   if (isSpatialSpace(activeSpaceId)) {
     nextSpawnAt = 0;
+    flowScene.invalidate();
     return;
   }
 
   if (isCanvasSpace(activeSpaceId)) {
     nextSpawnAt = 0;
+    flowScene.invalidate();
     return;
   }
 
-  const target = calculateVisibleTarget();
+  const bounds = cachedFlowBounds || getPlayfieldBounds();
+  const target = calculateVisibleTarget(bounds);
+  cachedFlowBounds = bounds;
+  cachedFlowVisibleTarget = target;
   const availableComponents = magnetComponents.filter(
     isMagnetComponentAvailableInActiveSpace,
   );
@@ -3670,6 +3736,7 @@ function initializeThoughtVisibility() {
   });
 
   nextSpawnAt = 0;
+  flowScene.invalidate();
 }
 
 function magnetCandidateDisabled(thought) {
@@ -4487,8 +4554,32 @@ function mountThoughtElement(
   element.addEventListener('focus', () => {
     if (!isBoardSelectionActive()) selectThought(thought);
   });
-  element.addEventListener('pointerenter', () => element.classList.add('is-hovered'));
-  element.addEventListener('pointerleave', () => element.classList.remove('is-hovered'));
+  let pointerOver = false;
+  let focusWithin = false;
+  const updateFlowHover = () => {
+    if (!isFlowSpace(activeSpaceId)) return;
+    const component = getMagnetComponent(thought);
+    flowScene.setHovered(component?.id, pointerOver || focusWithin);
+  };
+  element.addEventListener('pointerenter', () => {
+    pointerOver = true;
+    element.classList.add('is-hovered');
+    updateFlowHover();
+  });
+  element.addEventListener('pointerleave', () => {
+    pointerOver = false;
+    element.classList.remove('is-hovered');
+    updateFlowHover();
+  });
+  element.addEventListener('focusin', () => {
+    focusWithin = true;
+    updateFlowHover();
+  });
+  element.addEventListener('focusout', (event) => {
+    focusWithin = event.relatedTarget instanceof Node
+      && element.contains(event.relatedTarget);
+    updateFlowHover();
+  });
   return element;
 }
 
@@ -8222,6 +8313,13 @@ function activateSpace(spaceId) {
   activeSpaceId = spaceId;
   canvasCamera = loadCanvasCamera(activeSpaceId);
   renderCanvasCamera();
+  if (isFlowSpace(activeSpaceId)) refreshFlowGeometry();
+  else {
+    cachedFlowBounds = null;
+    cachedFlowVisibleTarget = null;
+    flowScene.invalidate();
+    flowScene.clearHovered();
+  }
 
   if (isSpatialSpace(activeSpaceId)) {
     initializeThoughtVisibility();
@@ -8251,6 +8349,10 @@ function activateSpace(spaceId) {
     }
     renderThought(thought);
   });
+  if (flowActive) {
+    refreshFlowGeometry();
+    refreshFlowHoveredComponents();
+  }
 
   rebuildConnectionLayer();
   updateUi();
@@ -8404,22 +8506,11 @@ function animate(timestamp) {
     return;
   }
 
-  const bounds = getPlayfieldBounds();
-  const activeThoughts = getActiveThoughts();
-  const activeComponents = magnetComponents.filter((component) => (
-    isMagnetComponentAvailableInActiveSpace(component)
-    && (
-      isMagnetComponentPinned(component)
-      || getVisibilityState(component).status !== 'dormant'
-    )
-  ));
+  const scene = flowScene.getSnapshot();
+  let physicsResult = null;
 
   if (!magnetEditor && !connectionEditor && !thoughtEditor.isOpen()) {
-    const hoveredComponentIds = new Set(activeComponents
-      .filter((component) => getMagnetComponentMembers(component).some(
-        (thought) => thought.element.matches(':hover, :focus-within'),
-      ))
-      .map((component) => component.id));
+    const hoveredComponentIds = new Set(scene.hoveredComponentIds);
 
     if (knowledgeKindEditor?.thoughtId) {
       const editedThought = getThoughtById(knowledgeKindEditor.thoughtId);
@@ -8427,35 +8518,41 @@ function animate(timestamp) {
       if (editedComponent) hoveredComponentIds.add(editedComponent.id);
     }
 
-    magnetPhysics.advance(delta, {
-      activeThoughtIds: new Set(activeThoughts.map((thought) => thought.id)),
+    physicsResult = magnetPhysics.advance(delta, {
+      activeComponentIds: scene.activeComponentIds,
+      activeThoughtIds: scene.activeThoughtIds,
       hoveredComponentIds,
       motionScale,
     });
   }
 
-  activeComponents.forEach((component) => {
+  scene.activeComponents.forEach((component) => {
     if (isMagnetComponentPinned(component) || magnetEditor) return;
     const state = getVisibilityState(component);
     const members = getMagnetComponentMembers(component);
     if (
       state.status === 'entering'
-      && members.some((member) => intersectsPlayfield(member, bounds))
+      && members.some((member) => intersectsPlayfield(member, scene.bounds))
     ) {
       state.status = 'visible';
     } else if (
       state.status === 'visible'
-      && isMagnetComponentFullyOutside(component, bounds)
+      && isMagnetComponentFullyOutside(component, scene.bounds)
     ) {
       hideThought(members[0]);
     }
   });
 
-  activeThoughts.forEach(renderThought);
-  connectionRenderer.update();
+  if (physicsResult?.stepped) {
+    physicsResult.updatedThoughtIds.forEach((thoughtId) => {
+      const thought = getThoughtById(thoughtId);
+      if (thought?.element) renderThought(thought);
+    });
+    connectionRenderer.update();
+  }
 
   if (!magnetEditor && !connectionEditor && !thoughtEditor.isOpen()) {
-    maybeSpawnThought(timestamp, reducedMotion);
+    maybeSpawnThought(timestamp, reducedMotion, scene);
   }
   ensureFlowAnimation();
 }
@@ -9381,6 +9478,7 @@ window.addEventListener('resize', () => {
     renderThought(thought);
   });
   rebuildMagnetComponents();
+  if (isFlowSpace(activeSpaceId)) refreshFlowGeometry();
   connectionRenderer.update();
   nextSpawnAt = 0;
   scheduleSave();

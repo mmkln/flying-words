@@ -112,6 +112,7 @@ export function createMagnetPhysics(customOptions = {}) {
   let componentByThoughtId = new Map();
   let nodes = new Map();
   let constraints = new Map();
+  let constraintsByComponentId = new Map();
   let connectionConstraints = new Map();
   let dragged = null;
 
@@ -133,6 +134,12 @@ export function createMagnetPhysics(customOptions = {}) {
 
   function exportWorldState() {
     nodes.forEach((node) => exportThought(node.thoughtId));
+  }
+
+  function exportActiveWorldState(activeComponentIds) {
+    activeComponentIds.forEach((componentId) => {
+      exportComponent(components.get(componentId));
+    });
   }
 
   function syncTopology({ thoughts, relations, hierarchyComponents }) {
@@ -208,6 +215,7 @@ export function createMagnetPhysics(customOptions = {}) {
     });
 
     const nextConstraints = new Map();
+    const nextConstraintsByComponentId = new Map();
     relations.forEach((relation) => {
       const parent = nextThoughtsById.get(relation.parentId);
       const child = nextThoughtsById.get(relation.childId);
@@ -218,7 +226,7 @@ export function createMagnetPhysics(customOptions = {}) {
 
       const key = relationKey(relation);
       const preference = getMagnetSlotPreference(parent, child, relation.slot);
-      nextConstraints.set(key, {
+      const constraint = {
         key,
         parentId: relation.parentId,
         childId: relation.childId,
@@ -226,7 +234,14 @@ export function createMagnetPhysics(customOptions = {}) {
         restLength: preference.restLength,
         preferredAngle: preference.angle,
         strength: previousConstraints.get(key)?.strength ?? 0,
-      });
+      };
+      nextConstraints.set(key, constraint);
+
+      const componentConstraints = nextConstraintsByComponentId.get(
+        parentNode.componentId,
+      ) || [];
+      componentConstraints.push(constraint);
+      nextConstraintsByComponentId.set(parentNode.componentId, componentConstraints);
     });
 
     thoughtsById = nextThoughtsById;
@@ -234,6 +249,7 @@ export function createMagnetPhysics(customOptions = {}) {
     componentByThoughtId = nextComponentByThoughtId;
     nodes = nextNodes;
     constraints = nextConstraints;
+    constraintsByComponentId = nextConstraintsByComponentId;
     accumulator = 0;
 
     if (dragged && !nodes.has(dragged.thoughtId)) dragged = null;
@@ -286,67 +302,69 @@ export function createMagnetPhysics(customOptions = {}) {
   }
 
   function addConstraintForces(forces, activeComponentIds, delta) {
-    constraints.forEach((constraint) => {
-      const parentNode = nodes.get(constraint.parentId);
-      const childNode = nodes.get(constraint.childId);
-      if (!parentNode || !childNode) return;
-      if (parentNode.componentId !== childNode.componentId) return;
-      if (!activeComponentIds.has(parentNode.componentId)) return;
+    activeComponentIds.forEach((componentId) => {
+      const componentConstraints = constraintsByComponentId.get(componentId) || [];
+      componentConstraints.forEach((constraint) => {
+        const parentNode = nodes.get(constraint.parentId);
+        const childNode = nodes.get(constraint.childId);
+        if (!parentNode || !childNode) return;
+        if (parentNode.componentId !== childNode.componentId) return;
 
-      const component = components.get(parentNode.componentId);
-      const parent = thoughtsById.get(parentNode.thoughtId);
-      const child = thoughtsById.get(childNode.thoughtId);
-      if (!component || !parent || !child) return;
+        const component = components.get(parentNode.componentId);
+        const parent = thoughtsById.get(parentNode.thoughtId);
+        const child = thoughtsById.get(childNode.thoughtId);
+        if (!component || !parent || !child) return;
 
-      constraint.strength = Math.min(
-        1,
-        constraint.strength + delta / options.relationRampDuration,
-      );
+        constraint.strength = Math.min(
+          1,
+          constraint.strength + delta / options.relationRampDuration,
+        );
 
-      const parentPosition = nodeWorldPosition(component, parentNode);
-      const childPosition = nodeWorldPosition(component, childNode);
-      const parentCenterX = parentPosition.x + parent.width / 2;
-      const parentCenterY = parentPosition.y + parent.height / 2;
-      const childCenterX = childPosition.x + child.width / 2;
-      const childCenterY = childPosition.y + child.height / 2;
-      let dx = childCenterX - parentCenterX;
-      let dy = childCenterY - parentCenterY;
-      let distance = Math.hypot(dx, dy);
-      if (distance < 0.001) {
-        dx = Math.cos(constraint.preferredAngle);
-        dy = Math.sin(constraint.preferredAngle);
-        distance = 1;
-      }
+        const parentPosition = nodeWorldPosition(component, parentNode);
+        const childPosition = nodeWorldPosition(component, childNode);
+        const parentCenterX = parentPosition.x + parent.width / 2;
+        const parentCenterY = parentPosition.y + parent.height / 2;
+        const childCenterX = childPosition.x + child.width / 2;
+        const childCenterY = childPosition.y + child.height / 2;
+        let dx = childCenterX - parentCenterX;
+        let dy = childCenterY - parentCenterY;
+        let distance = Math.hypot(dx, dy);
+        if (distance < 0.001) {
+          dx = Math.cos(constraint.preferredAngle);
+          dy = Math.sin(constraint.preferredAngle);
+          distance = 1;
+        }
 
-      const normalX = dx / distance;
-      const normalY = dy / distance;
-      const tangentX = -normalY;
-      const tangentY = normalX;
-      const relativeVelocityX = childNode.localVx - parentNode.localVx;
-      const relativeVelocityY = childNode.localVy - parentNode.localVy;
-      const velocityAlongSpring = (
-        relativeVelocityX * normalX + relativeVelocityY * normalY
-      );
-      const degreeScale = 1 / Math.sqrt(parentNode.degree * childNode.degree);
-      const springForce = (
-        (distance - constraint.restLength) * options.springStiffness
-        + velocityAlongSpring * options.springDamping
-      ) * degreeScale * constraint.strength;
-      const angleError = wrapAngle(
-        Math.atan2(dy, dx) - constraint.preferredAngle,
-      );
-      const angularForce = -angleError
-        * constraint.restLength
-        * options.angularStiffness
-        * degreeScale
-        * constraint.strength;
-      const childForceX = -normalX * springForce + tangentX * angularForce;
-      const childForceY = -normalY * springForce + tangentY * angularForce;
+        const normalX = dx / distance;
+        const normalY = dy / distance;
+        const tangentX = -normalY;
+        const tangentY = normalX;
+        const relativeVelocityX = childNode.localVx - parentNode.localVx;
+        const relativeVelocityY = childNode.localVy - parentNode.localVy;
+        const velocityAlongSpring = (
+          relativeVelocityX * normalX + relativeVelocityY * normalY
+        );
+        const degreeScale = 1 / Math.sqrt(parentNode.degree * childNode.degree);
+        const springForce = (
+          (distance - constraint.restLength) * options.springStiffness
+          + velocityAlongSpring * options.springDamping
+        ) * degreeScale * constraint.strength;
+        const angleError = wrapAngle(
+          Math.atan2(dy, dx) - constraint.preferredAngle,
+        );
+        const angularForce = -angleError
+          * constraint.restLength
+          * options.angularStiffness
+          * degreeScale
+          * constraint.strength;
+        const childForceX = -normalX * springForce + tangentX * angularForce;
+        const childForceY = -normalY * springForce + tangentY * angularForce;
 
-      forces.get(childNode.thoughtId).x += childForceX;
-      forces.get(childNode.thoughtId).y += childForceY;
-      forces.get(parentNode.thoughtId).x -= childForceX;
-      forces.get(parentNode.thoughtId).y -= childForceY;
+        forces.get(childNode.thoughtId).x += childForceX;
+        forces.get(childNode.thoughtId).y += childForceY;
+        forces.get(parentNode.thoughtId).x -= childForceX;
+        forces.get(parentNode.thoughtId).y -= childForceY;
+      });
     });
   }
 
@@ -678,11 +696,7 @@ export function createMagnetPhysics(customOptions = {}) {
   }
 
   function fixedStep(delta, context) {
-    const activeComponentIds = new Set();
-    context.activeThoughtIds.forEach((thoughtId) => {
-      const component = componentByThoughtId.get(thoughtId);
-      if (component) activeComponentIds.add(component.id);
-    });
+    const { activeComponentIds, activeThoughtIds } = context;
 
     activeComponentIds.forEach((componentId) => {
       const component = components.get(componentId);
@@ -715,7 +729,7 @@ export function createMagnetPhysics(customOptions = {}) {
     }
 
     const forces = new Map(
-      [...nodes.keys()].map((thoughtId) => [thoughtId, { x: 0, y: 0 }]),
+      [...activeThoughtIds].map((thoughtId) => [thoughtId, { x: 0, y: 0 }]),
     );
     addConstraintForces(forces, activeComponentIds, delta);
     addInternalCollisionForces(forces, activeComponentIds);
@@ -757,19 +771,44 @@ export function createMagnetPhysics(customOptions = {}) {
   }
 
   function advance(frameDelta, context = {}) {
-    const activeThoughtIds = context.activeThoughtIds || new Set(thoughtsById.keys());
+    const activeComponentIds = context.activeComponentIds
+      || new Set();
+    if (!context.activeComponentIds) {
+      const requestedThoughtIds = context.activeThoughtIds || thoughtsById.keys();
+      requestedThoughtIds.forEach((thoughtId) => {
+        const component = componentByThoughtId.get(thoughtId);
+        if (component) activeComponentIds.add(component.id);
+      });
+    }
+    const activeThoughtIds = context.activeThoughtIds
+      || new Set();
+    if (!context.activeThoughtIds) {
+      activeComponentIds.forEach((componentId) => {
+        components.get(componentId)?.memberIds.forEach((thoughtId) => {
+          activeThoughtIds.add(thoughtId);
+        });
+      });
+    }
     const hoveredComponentIds = context.hoveredComponentIds || new Set();
     const motionScale = clamp(finite(context.motionScale, 1), 0.1, 1);
 
     accumulator += Math.min(Math.max(0, finite(frameDelta)), 0.05) * motionScale;
     let substeps = 0;
     while (accumulator >= options.fixedStep && substeps < options.maxSubsteps) {
-      fixedStep(options.fixedStep, { activeThoughtIds, hoveredComponentIds });
+      fixedStep(options.fixedStep, {
+        activeComponentIds,
+        activeThoughtIds,
+        hoveredComponentIds,
+      });
       accumulator -= options.fixedStep;
       substeps += 1;
     }
     if (substeps === options.maxSubsteps) accumulator = 0;
-    exportWorldState();
+    if (substeps > 0) exportActiveWorldState(activeComponentIds);
+    return {
+      stepped: substeps > 0,
+      updatedThoughtIds: substeps > 0 ? activeThoughtIds : new Set(),
+    };
   }
 
   function translateComponent(componentId, shiftX, shiftY) {

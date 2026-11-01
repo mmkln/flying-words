@@ -378,3 +378,74 @@ test('dragging keeps the selected card at the pointer target', () => {
   assert.ok(Number.isFinite(thoughts[1].vx));
   assert.ok(Number.isFinite(thoughts[1].vy));
 });
+
+test('advances and exports only thoughts in active components', () => {
+  const thoughts = Array.from({ length: 5000 }, (_, index) => makeThought(
+    `thought-${index}`,
+    { x: index * 2, vx: index < 10 ? 12 : 30 },
+  ));
+  const engine = createMagnetPhysics();
+  sync(engine, thoughts, []);
+  const activeThoughtIds = new Set(thoughts.slice(0, 10).map(({ id }) => id));
+  const activeComponentIds = new Set(engine.debugSnapshot().components
+    .filter((component) => component.memberIds.some((id) => activeThoughtIds.has(id)))
+    .map(({ id }) => id));
+  const inactiveBefore = thoughts.slice(10).map(({ x, y, vx, vy }) => ({ x, y, vx, vy }));
+
+  const result = engine.advance(1 / 60, {
+    activeComponentIds,
+    hoveredComponentIds: new Set(),
+  });
+
+  assert.equal(result.stepped, true);
+  assert.deepEqual(result.updatedThoughtIds, activeThoughtIds);
+  thoughts.slice(10).forEach((thought, index) => {
+    assertPosition(thought, inactiveBefore[index]);
+  });
+  thoughts.slice(0, 10).forEach((thought, index) => {
+    assert.ok(thought.x > index * 2);
+  });
+});
+
+test('does not report dirty thoughts when no fixed step ran', () => {
+  const thought = makeThought('still', { vx: 20 });
+  const engine = createMagnetPhysics();
+  sync(engine, [thought], []);
+  const [component] = engine.debugSnapshot().components;
+
+  const result = engine.advance(0, {
+    activeComponentIds: new Set([component.id]),
+  });
+
+  assert.equal(result.stepped, false);
+  assert.deepEqual(result.updatedThoughtIds, new Set());
+  assert.equal(thought.x, 0);
+});
+
+test('ramps magnetic constraints only inside active components', () => {
+  const thoughts = [
+    makeThought('active-parent', { x: 0 }),
+    makeThought('active-child', { x: 300 }),
+    makeThought('dormant-parent', { x: 700 }),
+    makeThought('dormant-child', { x: 1000 }),
+  ];
+  const relations = [
+    { parentId: 'active-parent', childId: 'active-child', slot: 0 },
+    { parentId: 'dormant-parent', childId: 'dormant-child', slot: 0 },
+  ];
+  const engine = createMagnetPhysics();
+  sync(engine, thoughts, relations);
+  const activeComponent = engine.debugSnapshot().components.find(
+    (component) => component.memberIds.includes('active-parent'),
+  );
+
+  engine.advance(1 / 60, {
+    activeComponentIds: new Set([activeComponent.id]),
+  });
+
+  const constraints = new Map(engine.debugSnapshot().constraints.map(
+    (constraint) => [constraint.key, constraint],
+  ));
+  assert.ok(constraints.get('active-parent->active-child').strength > 0);
+  assert.equal(constraints.get('dormant-parent->dormant-child').strength, 0);
+});
