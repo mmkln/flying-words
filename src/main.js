@@ -1,4 +1,6 @@
 import { createPageLoadDiagnostics } from './page-load-diagnostics.js';
+import { createBoardRenderScheduler } from './board-render-scheduler.js';
+import { getThoughtMountDiff } from './thought-mount-projection.js';
 import {
   buildHierarchyComponents,
   magnetMetaFromParents,
@@ -409,9 +411,11 @@ let refreshToken = localStorage.getItem(REFRESH_TOKEN_STORAGE_KEY);
 let refreshInFlight = null;
 let sessionValidated = false;
 let applicationReady = false;
-let animationStarted = false;
+let flowAnimationFrameId = null;
 let legacyOutboxQuarantined = false;
 let thoughts = loadStoredThoughts(STORAGE_KEY);
+let thoughtsById = new Map(thoughts.map((thought) => [thought.id, thought]));
+const mountedThoughtsById = new Map();
 pageLoadDiagnostics.mark('cache:guest-read', { thoughtCount: thoughts.length });
 let syncPending = false;
 let syncInFlight = false;
@@ -459,7 +463,6 @@ let spacesOverviewPurpose = 'navigation';
 let boardSpacePressed = false;
 let canvasPan = null;
 let canvasScaleAnimationId = null;
-let canvasMinimapFrame = null;
 let boardArrangeAnimationFrame = null;
 let boardArrangeAnimationFinish = null;
 let boardArrangeInFlight = false;
@@ -513,6 +516,7 @@ let editingBoardId = null;
 let boardRenameInFlight = false;
 let pendingBoardDeletionId = null;
 let boardDeleteInFlight = false;
+let activeRenderableConnections = [];
 
 const connectionRenderer = createConnectionRenderer({
   layer: connectionLayer,
@@ -572,6 +576,25 @@ const canvasMinimap = createCanvasMinimap({
   },
 });
 
+const boardRenderScheduler = createBoardRenderScheduler({
+  requestFrame: requestAnimationFrame,
+  cancelFrame: cancelAnimationFrame,
+  onFlush(update) {
+    if (!isCanvasSpace(activeSpaceId) || viewMode === 'spaces') return;
+
+    const cards = update.allCards
+      ? getMountedThoughts()
+      : [...update.thoughtIds]
+        .map(getThoughtById)
+        .filter((thought) => thought?.element);
+
+    cards.forEach(renderThought);
+    if (update.connections) connectionRenderer.update();
+    if (update.controls) renderBoardArrangeControl();
+    if (update.minimap) renderCanvasMinimapNow();
+  },
+});
+
 const boardConnectionsPopover = createBoardConnectionsPopover({
   element: boardConnectionsPopoverElement,
   list: boardConnectionsList,
@@ -588,9 +611,7 @@ const boardConnectionsPopover = createBoardConnectionsPopover({
 function getCanvasMinimapSnapshot() {
   const bounds = canvas.getBoundingClientRect();
   const usable = getBoardUsableRect();
-  const cards = thoughts
-    .filter((thought) => hasCanvasPlacement(thought, activeSpaceId))
-    .map((thought) => ({
+  const cards = getBoardThoughts().map((thought) => ({
       id: thought.id,
       x: thought.x,
       y: thought.y,
@@ -599,7 +620,7 @@ function getCanvasMinimapSnapshot() {
       selected: thought.id === selectedThoughtId,
     }));
   const cardIds = new Set(cards.map(({ id }) => id));
-  const connections = flattenConnections(thoughts).filter(({ sourceId, targetId }) => (
+  const connections = activeRenderableConnections.filter(({ sourceId, targetId }) => (
     cardIds.has(sourceId) && cardIds.has(targetId)
   ));
 
@@ -616,31 +637,29 @@ function getCanvasMinimapSnapshot() {
   };
 }
 
-function scheduleCanvasMinimapRender() {
-  renderBoardArrangeControl();
+function renderCanvasMinimapNow() {
   const visible = (
     isCanvasSpace(activeSpaceId)
     && viewMode !== 'spaces'
-    && thoughts.some((thought) => hasCanvasPlacement(thought, activeSpaceId))
+    && getBoardThoughts().length > 0
   );
   navigationHud.hidden = !visible;
 
-  if (!visible) {
-    if (canvasMinimapFrame) cancelAnimationFrame(canvasMinimapFrame);
-    canvasMinimapFrame = null;
-    return;
-  }
+  if (!visible) return;
   renderCanvasHud();
-  if (canvasMinimapFrame) return;
+  canvasMinimap.render(getCanvasMinimapSnapshot());
+}
 
-  canvasMinimapFrame = requestAnimationFrame(() => {
-    canvasMinimapFrame = null;
-    canvasMinimap.render(getCanvasMinimapSnapshot());
+function scheduleCanvasMinimapRender() {
+  boardRenderScheduler.request({
+    minimap: true,
+    controls: true,
   });
 }
 
 function getBoardThoughts() {
-  return thoughts.filter((thought) => hasCanvasPlacement(thought, activeSpaceId));
+  if (!isCanvasSpace(activeSpaceId)) return [];
+  return getMountedThoughts();
 }
 
 function getMissingBoardConnectionItems(sourceId) {
@@ -687,7 +706,7 @@ function renderBoardExpansionControls() {
     ? buildConnectionIndex(thoughts)
     : null;
 
-  thoughts.forEach((thought) => {
+  getMountedThoughts().forEach((thought) => {
     const button = thought.element.querySelector('.board-expand-button');
     if (!button) return;
 
@@ -1426,11 +1445,14 @@ function setApplicationReady(ready) {
   pageLoadDiagnostics.mark(ready ? 'ui:unlocked' : 'ui:locked');
 }
 
-function startAnimationOnce() {
-  if (animationStarted) return;
+function ensureFlowAnimation() {
+  if (
+    flowAnimationFrameId !== null
+    || !isFlowSpace(activeSpaceId)
+  ) return;
 
-  animationStarted = true;
-  window.requestAnimationFrame(animate);
+  lastTimestamp = performance.now();
+  flowAnimationFrameId = window.requestAnimationFrame(animate);
 }
 
 function blockEditsDuringAccountSync() {
@@ -1651,6 +1673,7 @@ function isBoardSelectionActive() {
 }
 
 function renderBoardThoughtSelectionState(thought) {
+  if (!thought.element) return;
   const selected = Boolean(boardSelection?.selectedIds.has(thought.id));
   const dragging = Boolean(boardSelectionDrag?.origins.has(thought.id));
   thought.element.classList.toggle('is-board-selected', selected);
@@ -1660,7 +1683,7 @@ function renderBoardThoughtSelectionState(thought) {
 function renderBoardSelectionUi() {
   const active = isBoardSelectionActive();
   canvas.classList.toggle('is-board-selecting', active);
-  thoughts.forEach(renderBoardThoughtSelectionState);
+  getMountedThoughts().forEach(renderBoardThoughtSelectionState);
   renderRelationshipUi();
   renderBoardArrangeControl();
 }
@@ -2134,6 +2157,7 @@ function findCanvasSpawnPosition(thought) {
 }
 
 function placeThoughtInVisibleCanvas(thought) {
+  mountThoughtElement(thought);
   // Board collision coordinates use the server-owned fixed logical footprint,
   // so measure only after the Board class has set that footprint on the DOM.
   thought.element.classList.add('is-canvas-card');
@@ -2186,8 +2210,23 @@ function placeThoughtInVisibleCanvas(thought) {
   return displacedThoughts;
 }
 
+function rebuildThoughtIndex() {
+  thoughtsById = new Map(thoughts.map((thought) => [thought.id, thought]));
+}
+
+function registerThought(thought) {
+  thoughts.push(thought);
+  thoughtsById.set(thought.id, thought);
+  return thought;
+}
+
+function unregisterThought(thought) {
+  thoughts = thoughts.filter((item) => item !== thought);
+  thoughtsById.delete(thought.id);
+}
+
 function getThoughtById(thoughtId) {
-  return thoughts.find((thought) => thought.id === thoughtId) || null;
+  return thoughtsById.get(thoughtId) || null;
 }
 
 function closeSpatialInspectorMenu() {
@@ -2850,12 +2889,12 @@ function createConnectionMapThought(rawText) {
 
   const contentPatch = createThoughtContentPatch(draft);
   const thoughtId = crypto.randomUUID();
-  const thought = makeThought(contentPatch.text, {
+  const thought = createThoughtRecord(contentPatch.text, {
     id: thoughtId,
     createdAt: Date.now(),
     meta: mergeMetaPatch({}, contentPatch.meta_patch),
   });
-  thoughts.push(thought);
+  registerThought(thought);
   session.visibleIds.add(thought.id);
   session.spawnAnchorById.set(thought.id, sourceId || session.rootId);
 
@@ -2911,19 +2950,21 @@ function toggleSpatialPositionPin() {
 
 function selectThought(thought) {
   selectedThoughtId = thought.id;
-  thoughts.forEach((item) => {
+  getMountedThoughts().forEach((item) => {
     item.element.classList.toggle('is-selected', item.id === selectedThoughtId);
   });
   spatialView?.setSelectedThought(selectedThoughtId);
   renderThoughtInspector();
+  if (isCanvasSpace(activeSpaceId)) scheduleCanvasMinimapRender();
 }
 
 function clearThoughtSelection() {
   selectedThoughtId = null;
-  thoughts.forEach((thought) => thought.element.classList.remove('is-selected'));
+  getMountedThoughts().forEach((thought) => thought.element.classList.remove('is-selected'));
   spatialView?.setSelectedThought(null);
   closeSpatialInspectorMenu();
   renderThoughtInspector();
+  if (isCanvasSpace(activeSpaceId)) scheduleCanvasMinimapRender();
 }
 
 function getPersistedMagnetParents(thought) {
@@ -3314,6 +3355,41 @@ function getActiveThoughts() {
   return thoughts.filter(isThoughtActive);
 }
 
+function getMountedThoughts() {
+  return [...mountedThoughtsById.values()];
+}
+
+function shouldMountThought(thought) {
+  if (isSpatialSpace(activeSpaceId)) return false;
+  if (isCanvasSpace(activeSpaceId)) {
+    return hasCanvasPlacement(thought, activeSpaceId);
+  }
+  return isThoughtActive(thought);
+}
+
+function syncMountedThoughtElement(thought) {
+  if (shouldMountThought(thought)) mountThoughtElement(thought);
+  else unmountThoughtElement(thought);
+}
+
+function syncMountedThoughtElements() {
+  const mountedIds = new Set(mountedThoughtsById.keys());
+  const { mountIds, unmountIds } = getThoughtMountDiff({
+    thoughts,
+    mountedIds,
+    shouldMount: shouldMountThought,
+  });
+
+  unmountIds.forEach((thoughtId) => {
+    const thought = getThoughtById(thoughtId);
+    if (thought) unmountThoughtElement(thought);
+  });
+  mountIds.forEach((thoughtId) => {
+    const thought = getThoughtById(thoughtId);
+    if (thought) mountThoughtElement(thought);
+  });
+}
+
 function getPlayfieldBounds() {
   const bounds = canvas.getBoundingClientRect();
   return {
@@ -3351,6 +3427,7 @@ function showThought(thought) {
   if (!isThoughtAvailableInActiveSpace(thought)) return;
   if (isSpatialSpace(activeSpaceId)) return;
   if (isCanvasSpace(activeSpaceId)) {
+    mountThoughtElement(thought);
     thought.element.hidden = false;
     return;
   }
@@ -3358,6 +3435,7 @@ function showThought(thought) {
   if (!component) return;
   getVisibilityState(component).status = 'visible';
   getMagnetComponentMembers(component).forEach((member) => {
+    mountThoughtElement(member);
     member.element.hidden = false;
   });
 }
@@ -3372,9 +3450,7 @@ function hideThought(thought) {
   const state = getVisibilityState(component);
   state.status = 'dormant';
   state.lastVisibleAt = Date.now();
-  members.forEach((member) => {
-    member.element.hidden = true;
-  });
+  members.forEach(unmountThoughtElement);
 }
 
 function intersectsPlayfield(thought, bounds) {
@@ -3423,6 +3499,7 @@ function spawnThoughtFromEdge(thought, reducedMotion = false) {
   const members = getMagnetComponentMembers(component);
 
   members.forEach((member) => {
+    mountThoughtElement(member);
     member.element.hidden = false;
     measureThought(member);
   });
@@ -3546,17 +3623,11 @@ function initializeThoughtVisibility() {
   visibilityStates.clear();
 
   if (isSpatialSpace(activeSpaceId)) {
-    thoughts.forEach((thought) => {
-      thought.element.hidden = true;
-    });
     nextSpawnAt = 0;
     return;
   }
 
   if (isCanvasSpace(activeSpaceId)) {
-    thoughts.forEach((thought) => {
-      thought.element.hidden = !isThoughtAvailableInActiveSpace(thought);
-    });
     nextSpawnAt = 0;
     return;
   }
@@ -3596,9 +3667,6 @@ function initializeThoughtVisibility() {
       status: visible ? 'visible' : 'dormant',
       lastVisibleAt: visible ? 0 : Date.now(),
     });
-    getMagnetComponentMembers(component).forEach((member) => {
-      member.element.hidden = !visible;
-    });
   });
 
   nextSpawnAt = 0;
@@ -3611,6 +3679,7 @@ function magnetCandidateDisabled(thought) {
 }
 
 function renderMagnetThoughtState(thought) {
+  if (!thought.element) return;
   const button = thought.element.querySelector('.magnet-button');
   if (!button) return;
 
@@ -3725,7 +3794,7 @@ function renderRelationshipUi() {
   knowledgePickerTrigger.disabled = Boolean(
     boardSelecting || magnetEditor || connectionEditor,
   );
-  thoughts.forEach((thought) => {
+  getMountedThoughts().forEach((thought) => {
     renderMagnetThoughtState(thought);
     renderConnectionThoughtState(thought);
     thought.element.querySelector('.thought-kind-button').disabled = Boolean(
@@ -3862,6 +3931,7 @@ function commitMagnetEditor() {
 }
 
 function renderConnectionThoughtState(thought) {
+  if (!thought.element) return;
   const button = thought.element.querySelector('.connection-button');
   if (!button) return;
 
@@ -3908,6 +3978,7 @@ function renderConnectionUi() {
 function rebuildConnectionLayer() {
   scheduleCanvasMinimapRender();
   if (isSpatialSpace(activeSpaceId)) {
+    activeRenderableConnections = [];
     connectionRenderer.setConnections([]);
     magnetPhysics.syncConnections([]);
     connectionRenderer.update();
@@ -3916,24 +3987,27 @@ function rebuildConnectionLayer() {
   }
 
   if (!getSpaceCapabilities(activeSpaceId).connections) {
+    activeRenderableConnections = [];
     connectionRenderer.setConnections([]);
     magnetPhysics.syncConnections([]);
     connectionRenderer.update();
     return;
   }
 
-  const availableThoughtIds = new Set(
-    thoughts
-      .filter(isThoughtAvailableInActiveSpace)
-      .map((thought) => thought.id),
+  const mountedThoughtIds = new Set(
+    getMountedThoughts().map((thought) => thought.id),
   );
   const persistedConnections = flattenConnections(thoughts);
+  activeRenderableConnections = persistedConnections.filter((connection) => (
+    mountedThoughtIds.has(connection.sourceId)
+    && mountedThoughtIds.has(connection.targetId)
+  ));
   const connections = buildRenderableConnections(
     persistedConnections,
     connectionEditor,
   ).filter((connection) => (
-    availableThoughtIds.has(connection.sourceId)
-    && availableThoughtIds.has(connection.targetId)
+    mountedThoughtIds.has(connection.sourceId)
+    && mountedThoughtIds.has(connection.targetId)
   ));
   connectionRenderer.setConnections(connections);
   magnetPhysics.syncConnections([]);
@@ -4292,32 +4366,21 @@ function commitConnectionEditor() {
   announce(`${result.count} thoughts connected.`);
 }
 
-function makeThought(
+function createThoughtRecord(
   text,
   restoredThought = {},
-  { deferReveal = false } = {},
+  layoutBounds = canvas.getBoundingClientRect(),
 ) {
-  const fragment = template.content.cloneNode(true);
-  const element = fragment.querySelector('.thought-card');
-  const textElement = fragment.querySelector('.thought-text');
-  const kindButton = fragment.querySelector('.thought-kind-button');
-  const anchorButton = fragment.querySelector('.anchor-button');
-  const pinButton = fragment.querySelector('.pin-button');
-  const magnetButton = fragment.querySelector('.magnet-button');
-  const connectionButton = fragment.querySelector('.connection-button');
-  const boardExpandButton = fragment.querySelector('.board-expand-button');
-  const deleteButton = fragment.querySelector('.delete-button');
-  const rect = canvas.getBoundingClientRect();
-  const thought = {
+  return {
     id: restoredThought.id || crypto.randomUUID(),
     text,
     color: restoredThought.color || 'purple',
     x: Number.isFinite(restoredThought.x)
       ? restoredThought.x
-      : Math.max(20, rect.width / 2 - 100 + randomBetween(-40, 40)),
+      : Math.max(20, layoutBounds.width / 2 - 100 + randomBetween(-40, 40)),
     y: Number.isFinite(restoredThought.y)
       ? restoredThought.y
-      : Math.max(40, rect.height * 0.56 + randomBetween(-40, 40)),
+      : Math.max(40, layoutBounds.height * 0.56 + randomBetween(-40, 40)),
     vx: Number.isFinite(restoredThought.vx) ? restoredThought.vx : randomVelocity(),
     vy: Number.isFinite(restoredThought.vy) ? restoredThought.vy : randomVelocity(),
     rotation: Number.isFinite(restoredThought.rotation)
@@ -4331,28 +4394,46 @@ function makeThought(
       ? cloneMeta(restoredThought.meta)
       : {},
     createdAt: restoredThought.createdAt || Date.now(),
-    element,
+    element: null,
     width: 0,
     height: 0,
   };
+}
 
-  textElement.textContent = getThoughtCardPreviewText(text);
+function mountThoughtElement(
+  thought,
+  { deferReveal = false } = {},
+) {
+  if (thought.element) {
+    mountedThoughtsById.set(thought.id, thought);
+    return thought.element;
+  }
+
+  const fragment = template.content.cloneNode(true);
+  const element = fragment.querySelector('.thought-card');
+  const textElement = fragment.querySelector('.thought-text');
+  const kindButton = fragment.querySelector('.thought-kind-button');
+  const anchorButton = fragment.querySelector('.anchor-button');
+  const pinButton = fragment.querySelector('.pin-button');
+  const magnetButton = fragment.querySelector('.magnet-button');
+  const connectionButton = fragment.querySelector('.connection-button');
+  const boardExpandButton = fragment.querySelector('.board-expand-button');
+  const deleteButton = fragment.querySelector('.delete-button');
+
+  thought.element = element;
+  mountedThoughtsById.set(thought.id, thought);
+
+  textElement.textContent = getThoughtCardPreviewText(thought.text);
   if (deferReveal) {
     element.style.visibility = 'hidden';
   }
   canvasWorld.append(element);
   element.classList.toggle('is-canvas-card', isCanvasSpace(activeSpaceId));
   measureThought(thought);
-  const hasLocalPosition = (
-    Number.isFinite(restoredThought.x) && Number.isFinite(restoredThought.y)
-  );
-  if (!hasLocalPosition) {
-    if (isCanvasSpace(activeSpaceId)) applyCanvasPlacement(thought);
-    else if (isFlowSpace(activeSpaceId)) applyPinnedLayout(thought);
-  }
+  if (isCanvasSpace(activeSpaceId)) applyCanvasPlacement(thought);
+  else if (isFlowSpace(activeSpaceId) && thought.pinned) applyPinnedLayout(thought);
   if (isFlowSpace(activeSpaceId)) constrainThought(thought);
   renderThought(thought);
-  if (isSpatialSpace(activeSpaceId)) element.hidden = true;
 
   pinButton.addEventListener('click', () => togglePinned(thought));
   anchorButton.addEventListener('click', () => toggleThoughtAnchor(thought));
@@ -4408,7 +4489,16 @@ function makeThought(
   });
   element.addEventListener('pointerenter', () => element.classList.add('is-hovered'));
   element.addEventListener('pointerleave', () => element.classList.remove('is-hovered'));
-  return thought;
+  return element;
+}
+
+function unmountThoughtElement(thought) {
+  mountedThoughtsById.delete(thought.id);
+  if (!thought.element) return;
+  thought.element.remove();
+  thought.element = null;
+  thought.width = 0;
+  thought.height = 0;
 }
 
 function replaceThoughts(nextThoughts, { persist = true } = {}) {
@@ -4434,11 +4524,17 @@ function replaceThoughts(nextThoughts, { persist = true } = {}) {
     canvas.classList.remove('is-connection-editing');
     canvas.classList.remove('is-board-selecting');
     stopDrag();
-    thoughts.forEach((thought) => thought.element?.remove());
-    thoughts = nextThoughts.map((thought) => makeThought(thought.text, thought));
+    thoughts.forEach(unmountThoughtElement);
+    const layoutBounds = canvas.getBoundingClientRect();
+    thoughts = nextThoughts.map((thought) => (
+      createThoughtRecord(thought.text, thought, layoutBounds)
+    ));
+    rebuildThoughtIndex();
     repairMagnetRelations();
     rebuildMagnetComponents({ preserveVisibility: false });
     initializeThoughtVisibility();
+    syncMountedThoughtElements();
+    getMountedThoughts().forEach(renderThought);
     renderRelationshipUi();
     rebuildConnectionLayer();
     updateUi();
@@ -4451,6 +4547,7 @@ function replaceThoughts(nextThoughts, { persist = true } = {}) {
 }
 
 function measureThought(thought) {
+  if (!thought.element) return;
   thought.width = thought.element.offsetWidth;
   thought.height = thought.element.offsetHeight;
 }
@@ -5638,16 +5735,12 @@ function applyServerThoughts(records) {
 }
 
 function syncThoughtElementVisibility(thought) {
-  if (isSpatialSpace(activeSpaceId)) {
-    thought.element.hidden = true;
-    return;
-  }
-
-  thought.element.hidden = !isThoughtAvailableInActiveSpace(thought);
+  syncMountedThoughtElement(thought);
 }
 
 function mergeClientThoughts(nextThoughts, byId) {
   const merged = [];
+  const layoutBounds = canvas.getBoundingClientRect();
 
   nextThoughts.forEach((next) => {
     const existing = byId.get(next.id);
@@ -5657,21 +5750,14 @@ function mergeClientThoughts(nextThoughts, byId) {
       const width = existing.width;
       const height = existing.height;
       Object.assign(existing, next, { element, width, height });
-      if (isCanvasSpace(activeSpaceId)) applyCanvasPlacement(existing);
-      else if (isFlowSpace(activeSpaceId) && existing.pinned) applyPinnedLayout(existing);
-      renderThought(existing);
-      measureThought(existing);
-      renderThought(existing);
-      syncThoughtElementVisibility(existing);
       merged.push(existing);
       return;
     }
 
     if (thoughts.length >= MAX_THOUGHTS) return;
 
-    const thought = makeThought(next.text, next);
-    syncThoughtElementVisibility(thought);
-    thoughts.push(thought);
+    const thought = createThoughtRecord(next.text, next, layoutBounds);
+    registerThought(thought);
     byId.set(thought.id, thought);
     merged.push(thought);
   });
@@ -5680,9 +5766,17 @@ function mergeClientThoughts(nextThoughts, byId) {
 }
 
 function finalizeServerThoughtMerge() {
+  rebuildThoughtIndex();
   repairMagnetRelations();
   rebuildMagnetComponents({ preserveVisibility: true });
   initializeThoughtVisibility();
+  syncMountedThoughtElements();
+  getMountedThoughts().forEach((thought) => {
+    if (isCanvasSpace(activeSpaceId)) applyCanvasPlacement(thought);
+    else if (isFlowSpace(activeSpaceId) && thought.pinned) applyPinnedLayout(thought);
+    measureThought(thought);
+    renderThought(thought);
+  });
   rebuildConnectionLayer();
   updateUi();
   saveThoughts();
@@ -6222,24 +6316,21 @@ async function addThought(draft, { relationTargetId = null } = {}) {
     return false;
   }
   const thoughtId = crypto.randomUUID();
-  const thought = makeThought(
+  const thought = createThoughtRecord(
     text,
     {
       id: thoughtId,
       createdAt: Date.now(),
       meta,
     },
-    {
-      deferReveal: addingToBoard || addingToSpatial,
-    },
   );
+  registerThought(thought);
+  if (addingToBoard) {
+    mountThoughtElement(thought, { deferReveal: true });
+  }
   const displacedBoardThoughts = addingToBoard
     ? placeThoughtInVisibleCanvas(thought)
     : [];
-  if (addingToSpatial) {
-    thought.element.hidden = true;
-  }
-  thoughts.push(thought);
   if (relationTarget) {
     reconcileConnections(relationTarget, [
       ...getOutgoingConnections(relationTarget).map(({ targetId }) => targetId),
@@ -6247,6 +6338,7 @@ async function addThought(draft, { relationTargetId = null } = {}) {
     ]);
   }
   rebuildMagnetComponents();
+  syncMountedThoughtElement(thought);
   updateUi();
   saveThoughts();
   if (addingToSpatial && activeSpaceId === targetSpaceId) {
@@ -6465,10 +6557,10 @@ function undoRemoveFromBoard({ thoughtId, boardId, position }) {
 function removeThoughtElement(thought) {
   if (draggedThought === thought) stopDrag();
   if (boardSelection?.selectedIds.delete(thought.id)) renderBoardSelectionUi();
-  thought.element.classList.add('is-removing');
-  window.setTimeout(() => {
-    thought.element.remove();
-    thoughts = thoughts.filter((item) => item !== thought);
+
+  const finalizeRemoval = () => {
+    unmountThoughtElement(thought);
+    unregisterThought(thought);
     rebuildMagnetComponents();
     renderRelationshipUi();
     rebuildConnectionLayer();
@@ -6476,7 +6568,15 @@ function removeThoughtElement(thought) {
     updateUi();
     saveThoughts();
     announce('Thought deleted.');
-  }, 180);
+  };
+
+  if (!thought.element) {
+    finalizeRemoval();
+    return;
+  }
+
+  thought.element.classList.add('is-removing');
+  window.setTimeout(finalizeRemoval, 180);
 }
 
 function beginDrag(event, thought) {
@@ -6589,7 +6689,11 @@ function moveDrag(event) {
       thought.y = y;
       thought.rotation = 0;
     });
-    scheduleCanvasMinimapRender();
+    boardRenderScheduler.request({
+      cards: positions.map(({ id }) => id),
+      connections: true,
+      minimap: true,
+    });
     return;
   }
 
@@ -6601,8 +6705,11 @@ function moveDrag(event) {
     draggedThought.x = position.x;
     draggedThought.y = position.y;
     draggedThought.rotation = 0;
-    renderThought(draggedThought);
-    connectionRenderer.update();
+    boardRenderScheduler.request({
+      cards: [draggedThought.id],
+      connections: true,
+      minimap: true,
+    });
     return;
   }
 
@@ -6678,8 +6785,11 @@ function stopDrag(event, { cancelled = !event } = {}) {
     boardSelectionDrag = null;
     draggedThought = null;
     renderBoardSelectionUi();
-    connectionRenderer.update();
-    scheduleCanvasMinimapRender();
+    boardRenderScheduler.request({
+      cards: movedThoughts.map(({ id }) => id),
+      connections: true,
+      minimap: true,
+    });
     if (!cancelled) {
       announce(`Moved ${movedThoughts.length} ${movedThoughts.length === 1 ? 'card' : 'cards'}.`);
     }
@@ -6879,7 +6989,13 @@ function handleCanvasWheel(event) {
 }
 
 function topZIndex() {
-  return thoughts.reduce((maximum, thought) => Math.max(maximum, Number(thought.element.style.zIndex) || 1), 1);
+  return getMountedThoughts().reduce(
+    (maximum, thought) => Math.max(
+      maximum,
+      Number(thought.element.style.zIndex) || 1,
+    ),
+    1,
+  );
 }
 
 function constrainThought(thought) {
@@ -6914,6 +7030,7 @@ function startThoughtTextEditing(thought, { kind, origin = 'space' } = {}) {
 }
 
 function renderThought(thought) {
+  if (!thought.element) return;
   const canvasThought = isCanvasSpace(activeSpaceId);
   const textElement = thought.element.querySelector('.thought-text');
   const resourceHost = thought.element.querySelector('.thought-resource-host');
@@ -6966,7 +7083,6 @@ function renderThought(thought) {
   thought.element.classList.toggle('is-anchored', canvasThought && anchored);
   renderMagnetThoughtState(thought);
   renderConnectionThoughtState(thought);
-  if (canvasThought) scheduleCanvasMinimapRender();
 }
 
 function historyGroup(createdAt) {
@@ -8026,7 +8142,10 @@ function closeSpacesOverview({ restoreFocus = true, preservePurpose = false } = 
   renderCanvasCamera();
   spacesOverview.hidden = true;
   if (isSpatialSpace(activeSpaceId)) void activateSpatialView();
-  else renderThoughtInspector();
+  else {
+    renderThoughtInspector();
+    if (isFlowSpace(activeSpaceId)) ensureFlowAnimation();
+  }
   if (restoreFocus) {
     const fallbackTarget = !boardContext.hidden && !boardContext.disabled
       ? boardContext
@@ -8089,6 +8208,11 @@ function activateSpace(spaceId) {
   finishBoardArrangeAnimation();
   stopCanvasPan();
   deactivateSpatialView();
+  boardRenderScheduler.cancel();
+  if (flowAnimationFrameId !== null) {
+    cancelAnimationFrame(flowAnimationFrameId);
+    flowAnimationFrameId = null;
+  }
   if (canvasScaleAnimationId) {
     cancelAnimationFrame(canvasScaleAnimationId);
     canvasScaleAnimationId = null;
@@ -8101,6 +8225,7 @@ function activateSpace(spaceId) {
 
   if (isSpatialSpace(activeSpaceId)) {
     initializeThoughtVisibility();
+    syncMountedThoughtElements();
     rebuildConnectionLayer();
     updateUi();
     closeSpacesOverview();
@@ -8114,12 +8239,9 @@ function activateSpace(spaceId) {
   const canvasActive = isCanvasSpace(activeSpaceId);
   const flowActive = isFlowSpace(activeSpaceId);
 
-  thoughts.forEach((thought) => {
-    thought.element.classList.toggle('is-canvas-card', canvasActive);
-  });
-
   initializeThoughtVisibility();
-  getActiveThoughts().forEach((thought) => {
+  syncMountedThoughtElements();
+  getMountedThoughts().forEach((thought) => {
     measureThought(thought);
     if (canvasActive) {
       applyCanvasPlacement(thought);
@@ -8133,6 +8255,17 @@ function activateSpace(spaceId) {
   rebuildConnectionLayer();
   updateUi();
   closeSpacesOverview();
+
+  if (flowActive) {
+    ensureFlowAnimation();
+  } else if (canvasActive) {
+    boardRenderScheduler.request({
+      allCards: true,
+      connections: true,
+      minimap: true,
+      controls: true,
+    });
+  }
 
   const label = getSpaces().find((space) => space.id === activeSpaceId)?.label;
   announce(`${label || 'Space'} opened.`);
@@ -8256,25 +8389,18 @@ function announce(message) {
 }
 
 function animate(timestamp) {
+  flowAnimationFrameId = null;
+  if (!isFlowSpace(activeSpaceId)) return;
+
   const delta = Math.min((timestamp - lastTimestamp) / 1000, 0.05);
   lastTimestamp = timestamp;
   const reducedMotion = reducedMotionQuery.matches;
   const motionScale = reducedMotion ? REDUCED_MOTION_TIME_SCALE : 1;
 
-  if (viewMode === 'spaces' || historyDialog.open || anchorsDialog.open) {
-    window.requestAnimationFrame(animate);
-    return;
-  }
+  if (viewMode === 'spaces') return;
 
-  if (isSpatialSpace(activeSpaceId)) {
-    window.requestAnimationFrame(animate);
-    return;
-  }
-
-  if (isCanvasSpace(activeSpaceId)) {
-    getActiveThoughts().forEach(renderThought);
-    connectionRenderer.update();
-    window.requestAnimationFrame(animate);
+  if (historyDialog.open || anchorsDialog.open) {
+    ensureFlowAnimation();
     return;
   }
 
@@ -8331,7 +8457,7 @@ function animate(timestamp) {
   if (!magnetEditor && !connectionEditor && !thoughtEditor.isOpen()) {
     maybeSpawnThought(timestamp, reducedMotion);
   }
-  window.requestAnimationFrame(animate);
+  ensureFlowAnimation();
 }
 
 function closeAccountMenu({ restoreFocus = false } = {}) {
@@ -8747,7 +8873,7 @@ async function initializeApplication() {
   } finally {
     setApplicationReady(true);
     updateUi();
-    startAnimationOnce();
+    ensureFlowAnimation();
     pageLoadDiagnostics.mark('animation:started');
     finishInitialization(initializationError ? 'failed' : 'complete', {
       authenticated: Boolean(auth),

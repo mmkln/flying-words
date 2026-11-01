@@ -57,8 +57,8 @@ export function createConnectionRenderer({ layer, getThoughtById }) {
       const source = getThoughtById(connection.sourceId);
       const target = getThoughtById(connection.targetId);
       const endpointsVisible = (
-        source
-        && target
+        source?.element
+        && target?.element
         && !source.element.hidden
         && !target.element.hidden
       );
