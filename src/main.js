@@ -172,6 +172,7 @@ import {
   buildThoughtListPath,
   normalizeThoughtListResponse,
 } from './thought-list-api.js';
+import { parseThoughtSyncReceipt } from './thought-sync-api.js';
 import {
   HistoryPaginationState,
   getHistoryPaginationState,
@@ -207,6 +208,7 @@ const MAX_THOUGHT_TEXT_LENGTH = 2000;
 const THOUGHT_TEXT_WARNING_THRESHOLD = 1700;
 const INITIAL_THOUGHT_PAGE_SIZE = 50;
 const BACKGROUND_THOUGHT_PAGE_SIZE = 1000;
+const BACKGROUND_THOUGHT_MERGE_BATCH_SIZE = 50;
 const HISTORY_PAGE_SIZE = 50;
 const CONNECTION_SEARCH_PAGE_SIZE = 30;
 const CONNECTION_MAP_INITIAL_DEPTH = 2;
@@ -4409,7 +4411,7 @@ function makeThought(
   return thought;
 }
 
-function replaceThoughts(nextThoughts) {
+function replaceThoughts(nextThoughts, { persist = true } = {}) {
   const finishDiagnostics = pageLoadDiagnostics.begin('thoughts:replace', {
     previousThoughtCount: thoughts.length,
     nextThoughtCount: nextThoughts.length,
@@ -4440,7 +4442,7 @@ function replaceThoughts(nextThoughts) {
     renderRelationshipUi();
     rebuildConnectionLayer();
     updateUi();
-    saveThoughts();
+    if (persist) saveThoughts();
     finishDiagnostics('complete', { thoughtCount: thoughts.length });
   } catch (error) {
     finishDiagnostics('failed', pageLoadErrorDetails(error));
@@ -5644,13 +5646,10 @@ function syncThoughtElementVisibility(thought) {
   thought.element.hidden = !isThoughtAvailableInActiveSpace(thought);
 }
 
-function mergeServerThoughts(records) {
-  if (!Array.isArray(records) || !records.length) return [];
-
-  const byId = new Map(thoughts.map((thought) => [thought.id, thought]));
+function mergeClientThoughts(nextThoughts, byId) {
   const merged = [];
 
-  serverRecordsToClientThoughts(records).forEach((next) => {
+  nextThoughts.forEach((next) => {
     const existing = byId.get(next.id);
 
     if (existing) {
@@ -5677,14 +5676,56 @@ function mergeServerThoughts(records) {
     merged.push(thought);
   });
 
+  return merged;
+}
+
+function finalizeServerThoughtMerge() {
   repairMagnetRelations();
   rebuildMagnetComponents({ preserveVisibility: true });
   initializeThoughtVisibility();
   rebuildConnectionLayer();
   updateUi();
   saveThoughts();
+}
+
+function mergeServerThoughts(records) {
+  if (!Array.isArray(records) || !records.length) return [];
+
+  const byId = new Map(thoughts.map((thought) => [thought.id, thought]));
+  const merged = mergeClientThoughts(serverRecordsToClientThoughts(records), byId);
+
+  finalizeServerThoughtMerge();
 
   return merged;
+}
+
+function yieldToBrowser() {
+  if (typeof window.scheduler?.yield === 'function') {
+    return window.scheduler.yield();
+  }
+
+  return new Promise((resolve) => window.setTimeout(resolve, 0));
+}
+
+async function mergeServerThoughtsProgressively(records, { isCurrent } = {}) {
+  if (!Array.isArray(records) || !records.length) return true;
+
+  const byId = new Map(thoughts.map((thought) => [thought.id, thought]));
+  const nextThoughts = serverRecordsToClientThoughts(records);
+
+  for (let offset = 0; offset < nextThoughts.length; offset += BACKGROUND_THOUGHT_MERGE_BATCH_SIZE) {
+    if (isCurrent && !isCurrent()) return false;
+
+    mergeClientThoughts(
+      nextThoughts.slice(offset, offset + BACKGROUND_THOUGHT_MERGE_BATCH_SIZE),
+      byId,
+    );
+    await yieldToBrowser();
+  }
+
+  if (isCurrent && !isCurrent()) return false;
+  finalizeServerThoughtMerge();
+  return true;
 }
 
 async function loadRemainingServerThoughts({
@@ -5727,12 +5768,24 @@ async function loadRemainingServerThoughts({
         return false;
       }
 
-      serverThoughtsNextCursor = page.nextCursor;
       finishApply = pageLoadDiagnostics.begin('thoughts:background-page:apply', {
         pageNumber,
         resultCount: page.results.length,
+        batchSize: BACKGROUND_THOUGHT_MERGE_BATCH_SIZE,
       });
-      mergeServerThoughts(page.results);
+      const applied = await mergeServerThoughtsProgressively(page.results, {
+        isCurrent: () => Boolean(
+          auth
+          && !syncPending
+          && requestId === serverThoughtsRequestId
+        ),
+      });
+      if (!applied) {
+        finishApply('cancelled');
+        finishBackground('cancelled', { loadedCount, pageCount: pageNumber - 2 });
+        return false;
+      }
+      serverThoughtsNextCursor = page.nextCursor;
       finishApply('complete', { totalThoughtCount: thoughts.length });
       loadedCount += page.results.length;
       nextCursor = page.nextCursor;
@@ -5830,7 +5883,7 @@ async function loadServerThoughts({ silent = false } = {}) {
   }
 }
 
-async function syncGuestThoughts() {
+async function syncGuestThoughts({ silent = false } = {}) {
   if (!auth || syncInFlight) return false;
   const finishSync = pageLoadDiagnostics.begin('thoughts:guest-sync');
   const finishCapabilities = pageLoadDiagnostics.begin('sync-capabilities:check');
@@ -5852,22 +5905,35 @@ async function syncGuestThoughts() {
 
   if (!pending.length) {
     syncPending = false;
-    finishSync('complete', { pendingThoughtCount: 0 });
-    return true;
+    const ready = await loadServerThoughts({ silent });
+    finishSync(ready ? 'complete' : 'failed', {
+      pendingThoughtCount: 0,
+      reason: ready ? undefined : 'first-page-load-failed',
+    });
+    return ready;
   }
 
   const operationId = ++syncOperationId;
   syncInFlight = true;
+  let receipt = null;
   const finishRequest = pageLoadDiagnostics.begin('thoughts:guest-sync:request', {
     pendingThoughtCount: pending.length,
   });
   try {
     const response = await requestApi('/thoughts/sync/', {
       method: 'POST',
-      body: { thoughts: serializeThoughtsForSync(pending) },
+      body: {
+        thoughts: serializeThoughtsForSync(pending),
+        response_mode: 'receipt',
+      },
     });
+    receipt = parseThoughtSyncReceipt(response);
+    if (!receipt) {
+      throw new Error('The server returned an invalid sync receipt.');
+    }
     finishRequest('complete', {
-      resultCount: Array.isArray(response.thoughts) ? response.thoughts.length : 0,
+      createdCount: receipt.createdIds.length,
+      alreadyPresentCount: receipt.alreadyPresentIds.length,
     });
 
     if (auth?.id !== accountId || operationId !== syncOperationId) {
@@ -5878,12 +5944,6 @@ async function syncGuestThoughts() {
     localStorage.removeItem(STORAGE_KEY);
     localStorage.removeItem(pendingSyncStorageKey(accountId));
     syncPending = false;
-    applyServerThoughts(response.thoughts);
-    finishSync('complete', {
-      pendingThoughtCount: pending.length,
-      totalThoughtCount: thoughts.length,
-    });
-    return true;
   } catch (error) {
     finishRequest('failed', pageLoadErrorDetails(error));
     if (auth?.id !== accountId || operationId !== syncOperationId) {
@@ -5913,6 +5973,16 @@ async function syncGuestThoughts() {
   } finally {
     if (operationId === syncOperationId) syncInFlight = false;
   }
+
+  const ready = await loadServerThoughts({ silent });
+  finishSync(ready ? 'complete' : 'failed', {
+    pendingThoughtCount: pending.length,
+    createdCount: receipt.createdIds.length,
+    alreadyPresentCount: receipt.alreadyPresentIds.length,
+    totalThoughtCount: thoughts.length,
+    reason: ready ? undefined : 'first-page-load-failed',
+  });
+  return ready;
 }
 
 async function restoreAuthenticatedThoughts({ silent = false } = {}) {
@@ -5923,7 +5993,7 @@ async function restoreAuthenticatedThoughts({ silent = false } = {}) {
   try {
     let ready;
     if (syncPending) {
-      ready = await syncGuestThoughts();
+      ready = await syncGuestThoughts({ silent });
     } else {
       ready = await loadServerThoughts({ silent });
     }
@@ -8567,7 +8637,10 @@ async function activateAuthenticatedAccount() {
       cachedThoughtCount: cachedAccountThoughts.length,
       syncThoughtCount: thoughtsToSync.length,
     });
-    replaceThoughts(mergeThoughts(cachedAccountThoughts, thoughtsToSync));
+    replaceThoughts(mergeThoughts(
+      cachedAccountThoughts.slice(0, INITIAL_THOUGHT_PAGE_SIZE),
+      thoughtsToSync.slice(0, INITIAL_THOUGHT_PAGE_SIZE),
+    ), { persist: false });
     finishCacheHydration('complete', { renderedThoughtCount: thoughts.length });
     updateAccountControl();
 
