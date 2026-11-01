@@ -4582,12 +4582,17 @@ kbd {
   font-weight: 600;
 }
 
-.space-tile.is-placement-unavailable .space-preview-surface,
-.space-tile.is-placement-unavailable .space-tile-footer {
+.space-tile.is-placement-complete .space-preview-surface,
+.space-tile.is-placement-complete .space-tile-footer {
   opacity: .48;
 }
 
 .space-tile.is-placement-unavailable .space-tile-open { cursor: default; }
+
+.space-tile.is-placement-source .space-preview-surface {
+  border-color: color-mix(in srgb, var(--text-tertiary) 34%, var(--border-subtle));
+  box-shadow: none;
+}
 
 .board-placement-dialog {
   width: min(94vw, 1600px);
@@ -4627,12 +4632,32 @@ kbd {
   background: var(--surface-elevated);
 }
 
-.board-placement-header h2 {
+.board-placement-heading {
   grid-column: 2;
+  display: grid;
+  min-width: 0;
+  justify-items: center;
+  gap: 2px;
+  text-align: center;
+}
+
+.board-placement-heading h2 {
   margin: 0;
   font-size: 17px;
   font-weight: 720;
   letter-spacing: -.015em;
+}
+
+.board-placement-heading p {
+  max-width: min(52vw, 620px);
+  margin: 0;
+  overflow: hidden;
+  color: var(--text-tertiary);
+  font-size: 11px;
+  font-weight: 540;
+  line-height: 1.3;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .board-placement-header button {
@@ -4755,6 +4780,30 @@ kbd {
 
 .board-placement-card.is-draft:active,
 .board-placement-nodes.is-dragging .board-placement-card.is-draft { cursor: grabbing; }
+
+.board-placement-card.is-already-present {
+  padding-right: 2.5rem;
+  border-color: color-mix(in srgb, var(--accent) 42%, var(--border-subtle));
+  box-shadow:
+    0 0 0 2px color-mix(in srgb, var(--accent) 10%, transparent),
+    var(--shadow-card);
+}
+
+.board-placement-card.is-already-present::after {
+  content: "✓";
+  position: absolute;
+  top: 7px;
+  right: 8px;
+  display: grid;
+  width: 18px;
+  height: 18px;
+  place-items: center;
+  border-radius: 50%;
+  color: var(--accent);
+  background: var(--surface-tint);
+  font-size: 11px;
+  font-weight: 800;
+}
 
 .board-placement-card-kind {
   display: grid;

@@ -14,6 +14,49 @@ function overlaps(first, second, gap) {
   );
 }
 
+function createPlacementSpatialIndex(cards, cellSize) {
+  const buckets = new Map();
+  const size = Math.max(1, cellSize);
+
+  function cellRange(rect) {
+    return {
+      left: Math.floor(rect.x / size),
+      right: Math.floor((rect.x + rect.width) / size),
+      top: Math.floor(rect.y / size),
+      bottom: Math.floor((rect.y + rect.height) / size),
+    };
+  }
+
+  function key(column, row) {
+    return `${column}:${row}`;
+  }
+
+  cards.forEach((card) => {
+    const range = cellRange(card);
+    for (let row = range.top; row <= range.bottom; row += 1) {
+      for (let column = range.left; column <= range.right; column += 1) {
+        const bucketKey = key(column, row);
+        const bucket = buckets.get(bucketKey) || [];
+        bucket.push(card);
+        buckets.set(bucketKey, bucket);
+      }
+    }
+  });
+
+  return {
+    query(rect) {
+      const range = cellRange(rect);
+      const matches = new Set();
+      for (let row = range.top; row <= range.bottom; row += 1) {
+        for (let column = range.left; column <= range.right; column += 1) {
+          (buckets.get(key(column, row)) || []).forEach((card) => matches.add(card));
+        }
+      }
+      return matches;
+    },
+  };
+}
+
 export function captureBoardPlacementGroup(
   placements,
   { cardWidth = 280, cardHeight = 96 } = {},
@@ -88,18 +131,31 @@ export function suggestBoardPlacementDraft({
   };
   const stepX = Math.max(48, cardWidth * 0.36);
   const stepY = Math.max(40, cardHeight * 0.72);
+  const spatialIndex = createPlacementSpatialIndex(
+    occupied,
+    Math.max(cardWidth, cardHeight) + gap * 2,
+  );
 
   const candidateIsFree = (anchor) => placeBoardGroupAtAnchor(group, anchor).every(
-    ({ x, y }) => occupied.every((card) => !overlaps(
-      { x, y, width: cardWidth, height: cardHeight },
-      card,
-      gap,
-    )),
+    ({ x, y }) => {
+      const candidate = { x, y, width: cardWidth, height: cardHeight };
+      const nearby = spatialIndex.query({
+        x: x - gap,
+        y: y - gap,
+        width: cardWidth + gap * 2,
+        height: cardHeight + gap * 2,
+      });
+      return [...nearby].every((card) => !overlaps(candidate, card, gap));
+    },
   );
 
   if (candidateIsFree(center)) return placeBoardGroupAtAnchor(group, center);
 
-  for (let ring = 1; ring <= 18; ring += 1) {
+  const searchRings = Math.min(
+    96,
+    Math.max(18, Math.ceil(Math.sqrt(occupied.length)) * 3),
+  );
+  for (let ring = 1; ring <= searchRings; ring += 1) {
     for (let row = -ring; row <= ring; row += 1) {
       for (const column of [-ring, ring]) {
         const anchor = {
@@ -120,6 +176,12 @@ export function suggestBoardPlacementDraft({
     }
   }
 
-  return placeBoardGroupAtAnchor(group, center);
+  const occupiedRight = occupied.length
+    ? Math.max(...occupied.map((card) => card.x + card.width))
+    : center.x;
+  return placeBoardGroupAtAnchor(group, {
+    x: occupiedRight + gap,
+    y: center.y,
+  });
 }
 

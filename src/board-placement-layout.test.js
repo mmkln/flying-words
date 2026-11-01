@@ -38,3 +38,21 @@ test('suggests a collision-free visible draft when the centre is occupied', () =
   assert.notDeepEqual(draft[0], { id: 'a', x: 360, y: 252 });
 });
 
+test('falls back outside dense occupied bounds instead of overlapping the centre', () => {
+  const draft = suggestBoardPlacementDraft({
+    sourcePlacements: [{ id: 'a', x: 0, y: 0 }],
+    occupiedCards: [{
+      id: 'dense-area',
+      x: -10_000,
+      y: -10_000,
+      width: 20_000,
+      height: 20_000,
+    }],
+    viewport: { x: 0, y: 0, width: 1000, height: 600 },
+    gap: 24,
+  });
+
+  assert.equal(draft.length, 1);
+  assert.ok(draft[0].x >= 10_024);
+});
+

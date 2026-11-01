@@ -9,6 +9,11 @@ export const BoardPlacementOperation = Object.freeze({
   MOVE: 'move',
 });
 
+export const BoardPlacementTargetKind = Object.freeze({
+  EXISTING: 'existing',
+  NEW: 'new',
+});
+
 function cloneCanvas(canvas) {
   if (!canvas || typeof canvas !== 'object') return null;
   return JSON.parse(JSON.stringify(canvas));
@@ -47,7 +52,7 @@ export function createBoardPlacementSession({
     operation,
     step: 'choosing-board',
     sourceBoardId,
-    targetBoardId: null,
+    target: null,
     thoughtIds,
     preexistingTargetIds: [],
     previousCanvasByThoughtId: Object.fromEntries(
@@ -64,26 +69,64 @@ export function createBoardPlacementSession({
   };
 }
 
-export function setBoardPlacementTarget(session, targetBoardId, thoughts) {
-  if (!session || typeof targetBoardId !== 'string' || !targetBoardId) return session;
-  if (targetBoardId === session.sourceBoardId) return session;
+export function setBoardPlacementTarget(session, target, thoughts) {
+  if (!session || !target || typeof target !== 'object') return session;
+
+  const existingTarget = target.kind === BoardPlacementTargetKind.EXISTING;
+  const newTarget = target.kind === BoardPlacementTargetKind.NEW;
+  if (!existingTarget && !newTarget) return session;
+
+  if (existingTarget) {
+    if (typeof target.boardId !== 'string' || !target.boardId) return session;
+    if (target.boardId === session.sourceBoardId) return session;
+  }
+
+  if (newTarget && (typeof target.title !== 'string' || !target.title.trim())) {
+    return session;
+  }
 
   const byId = thoughtMap(thoughts);
-  const preexistingTargetIds = session.thoughtIds.filter((thoughtId) => (
-    Boolean(getCanvasPlacement(byId.get(thoughtId), targetBoardId))
-  ));
+  const preexistingTargetIds = existingTarget
+    ? session.thoughtIds.filter((thoughtId) => (
+      Boolean(getCanvasPlacement(byId.get(thoughtId), target.boardId))
+    ))
+    : [];
 
   return {
     ...session,
     step: 'placing',
-    targetBoardId,
+    target: existingTarget
+      ? {
+        kind: BoardPlacementTargetKind.EXISTING,
+        boardId: target.boardId,
+      }
+      : {
+        kind: BoardPlacementTargetKind.NEW,
+        title: target.title.trim(),
+      },
     preexistingTargetIds,
     draftPositions: [],
   };
 }
 
+export function resolveBoardPlacementTarget(session, boardId) {
+  if (
+    session?.target?.kind !== BoardPlacementTargetKind.NEW
+    || typeof boardId !== 'string'
+    || !boardId
+  ) return session;
+
+  return {
+    ...session,
+    target: {
+      kind: BoardPlacementTargetKind.EXISTING,
+      boardId,
+    },
+  };
+}
+
 export function updateBoardPlacementDraft(session, positions) {
-  if (!session?.targetBoardId) return session;
+  if (!session || session.step !== 'placing' || !session.target) return session;
   const allowed = new Set(
     session.thoughtIds.filter((thoughtId) => !session.preexistingTargetIds.includes(thoughtId)),
   );
@@ -97,9 +140,12 @@ export function updateBoardPlacementDraft(session, positions) {
 }
 
 export function planBoardPlacementCommit(session, thoughts) {
+  const targetBoardId = session?.target?.kind === BoardPlacementTargetKind.EXISTING
+    ? session.target.boardId
+    : null;
   if (
-    !session?.targetBoardId
-    || session.targetBoardId === session.sourceBoardId
+    !targetBoardId
+    || targetBoardId === session.sourceBoardId
   ) return [];
 
   const byId = thoughtMap(thoughts);
@@ -118,10 +164,10 @@ export function planBoardPlacementCommit(session, thoughts) {
 
     const draft = drafts.get(thoughtId);
     const targetAlreadyExists = Boolean(
-      getCanvasPlacement(thought, session.targetBoardId),
+      getCanvasPlacement(thought, targetBoardId),
     );
     if (draft && !targetAlreadyExists) {
-      nextMeta = withCanvasPlacement(nextMeta, session.targetBoardId, draft);
+      nextMeta = withCanvasPlacement(nextMeta, targetBoardId, draft);
     }
 
     const previousCanvas = session.previousCanvasByThoughtId[thoughtId] || null;

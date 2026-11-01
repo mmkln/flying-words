@@ -89,8 +89,10 @@ import {
 } from './board-selection.js';
 import {
   BoardPlacementOperation,
+  BoardPlacementTargetKind,
   createBoardPlacementSession,
   planBoardPlacementCommit,
+  resolveBoardPlacementTarget,
   restoreBoardPlacementCanvas,
   setBoardPlacementTarget,
   updateBoardPlacementDraft,
@@ -248,7 +250,8 @@ const boardSelectButton = document.querySelector('#board-select-button');
 const boardArrangeButton = document.querySelector('#board-arrange-button');
 const boardSelectionMarqueeElement = document.querySelector('#board-selection-marquee');
 const boardActionToast = document.querySelector('#board-action-toast');
-const boardActionToastMessage = boardActionToast.querySelector('span');
+const boardActionToastMessage = document.querySelector('#board-action-message');
+const boardActionView = document.querySelector('#board-action-view');
 const boardActionUndo = document.querySelector('#board-action-undo');
 const boardConnectionsPopoverElement = document.querySelector('#board-connections-popover');
 const boardConnectionsList = document.querySelector('#board-connections-list');
@@ -449,7 +452,7 @@ let boardSelection = null;
 let boardSelectionDrag = null;
 let boardSelectionMarquee = null;
 let boardPlacementSession = null;
-let boardPlacementCreateInFlight = false;
+let boardPlacementCommitInFlight = false;
 let spacesOverviewPurpose = 'navigation';
 let boardSpacePressed = false;
 let canvasPan = null;
@@ -458,6 +461,7 @@ let canvasMinimapFrame = null;
 let boardArrangeAnimationFrame = null;
 let boardArrangeAnimationFinish = null;
 let boardArrangeInFlight = false;
+let boardActionViewHandler = null;
 let boardActionUndoHandler = null;
 let boardActionUndoKind = null;
 let boardActionToastTimer = null;
@@ -743,8 +747,10 @@ function renderBoardArrangeControl() {
 function hideBoardActionMessage() {
   window.clearTimeout(boardActionToastTimer);
   boardActionToastTimer = null;
+  boardActionViewHandler = null;
   boardActionUndoHandler = null;
   boardActionUndoKind = null;
+  boardActionView.hidden = true;
   boardActionToast.hidden = true;
 }
 
@@ -757,14 +763,18 @@ function showBoardArrangeUndo(snapshot) {
 }
 
 function showBoardActionMessage(message, {
+  onView = null,
   onUndo = null,
   undoKind = null,
   duration = 5_000,
 } = {}) {
   window.clearTimeout(boardActionToastTimer);
+  boardActionViewHandler = onView;
   boardActionUndoHandler = onUndo;
   boardActionUndoKind = undoKind;
   boardActionToastMessage.textContent = message;
+  boardActionView.hidden = !onView;
+  boardActionView.disabled = false;
   boardActionUndo.hidden = !onUndo;
   boardActionUndo.disabled = false;
   boardActionToast.hidden = false;
@@ -1766,6 +1776,17 @@ function boardPlacementVisibleWorld(boardId) {
   };
 }
 
+function boardPlacementDefaultWorld() {
+  const bounds = canvas.getBoundingClientRect();
+  return {
+    x: 0,
+    y: 0,
+    width: Math.max(1, bounds.width),
+    height: Math.max(1, bounds.height),
+    scale: 1,
+  };
+}
+
 function boardPlacementCards(boardId) {
   return thoughts.flatMap((thought) => {
     const position = getCanvasPlacement(thought, boardId);
@@ -1779,22 +1800,17 @@ function boardPlacementCards(boardId) {
   });
 }
 
-function openBoardPlacementTarget(targetBoardId) {
-  if (!boardPlacementSession || targetBoardId === boardPlacementSession.sourceBoardId) return;
-
-  const nextSession = setBoardPlacementTarget(
-    boardPlacementSession,
-    targetBoardId,
-    thoughts,
-  );
-  if (!nextSession?.targetBoardId) return;
-
-  const existingCards = boardPlacementCards(targetBoardId);
+function openBoardPlacementPreview({
+  session,
+  board,
+  existingCards,
+  visibleWorld = null,
+}) {
+  if (!session?.target) return;
   const existingIds = new Set(existingCards.map(({ thought }) => thought.id));
-  const sourcePlacements = nextSession.sourcePositions.filter(
+  const sourcePlacements = session.sourcePositions.filter(
     ({ id }) => !existingIds.has(id),
   );
-  const visibleWorld = boardPlacementVisibleWorld(targetBoardId);
   const draftPositions = suggestBoardPlacementDraft({
     sourcePlacements,
     occupiedCards: existingCards.map(({ thought, position, width, height }) => ({
@@ -1803,13 +1819,13 @@ function openBoardPlacementTarget(targetBoardId) {
       width,
       height,
     })),
-    viewport: visibleWorld,
+    viewport: visibleWorld || boardPlacementDefaultWorld(),
     cardWidth: boardGeometry.cardWidth,
     cardHeight: boardGeometry.cardHeight,
     gap: BOARD_INSERTION_GAP,
   });
   const draftById = new Map(draftPositions.map((position) => [position.id, position]));
-  const draftCards = nextSession.thoughtIds.flatMap((thoughtId) => {
+  const draftCards = session.thoughtIds.flatMap((thoughtId) => {
     const thought = getThoughtById(thoughtId);
     const position = draftById.get(thoughtId);
     return thought && position ? [{ thought, position }] : [];
@@ -1822,45 +1838,61 @@ function openBoardPlacementTarget(targetBoardId) {
     visibleIds.has(sourceId) && visibleIds.has(targetId)
   ));
 
-  boardPlacementSession = updateBoardPlacementDraft(nextSession, draftPositions);
+  boardPlacementSession = updateBoardPlacementDraft(session, draftPositions);
   closeSpacesOverview({ restoreFocus: false, preservePurpose: true });
   boardPlacementView.open({
-    board: getSpace(targetBoardId),
+    board,
     existingCards,
     draftCards,
     edges,
     geometry: boardGeometry,
-    selectedCount: nextSession.thoughtIds.length,
-    operation: nextSession.operation,
+    selectedCount: session.thoughtIds.length,
+    operation: session.operation,
     visibleWorld,
+    preexistingTargetIds: session.preexistingTargetIds,
     confirmWithoutDraft: (
-      nextSession.operation === BoardPlacementOperation.MOVE
-      && nextSession.preexistingTargetIds.length > 0
+      session.operation === BoardPlacementOperation.MOVE
+      && session.preexistingTargetIds.length > 0
     ),
   });
 }
 
-async function createBoardForPlacement() {
+function openBoardPlacementTarget(targetBoardId) {
+  if (!boardPlacementSession || targetBoardId === boardPlacementSession.sourceBoardId) return;
+
+  const nextSession = setBoardPlacementTarget(boardPlacementSession, {
+    kind: BoardPlacementTargetKind.EXISTING,
+    boardId: targetBoardId,
+  }, thoughts);
+  if (nextSession?.target?.boardId !== targetBoardId) return;
+
+  openBoardPlacementPreview({
+    session: nextSession,
+    board: getSpace(targetBoardId),
+    existingCards: boardPlacementCards(targetBoardId),
+    visibleWorld: boardPlacementVisibleWorld(targetBoardId),
+  });
+}
+
+function openNewBoardPlacementTarget() {
   if (
     !boardPlacementSession
-    || boardPlacementCreateInFlight
     || !auth
     || blockEditsDuringAccountSync()
   ) return;
 
-  boardPlacementCreateInFlight = true;
-  renderSpacesOverview();
-  try {
-    const board = await createBoardRecord(nextBoardTitle());
-    applyBoardRecords([...boards, board]);
-    announce(`${board.title} created.`);
-    openBoardPlacementTarget(board.id);
-  } catch (error) {
-    announce(`Could not create Board: ${error.message}`);
-  } finally {
-    boardPlacementCreateInFlight = false;
-    if (viewMode === 'spaces') renderSpacesOverview();
-  }
+  const title = nextBoardTitle();
+  const nextSession = setBoardPlacementTarget(boardPlacementSession, {
+    kind: BoardPlacementTargetKind.NEW,
+    title,
+  }, thoughts);
+  if (nextSession?.target?.kind !== BoardPlacementTargetKind.NEW) return;
+
+  openBoardPlacementPreview({
+    session: nextSession,
+    board: { label: title },
+    existingCards: [],
+  });
 }
 
 function refreshBoardAfterPlacement(changedThoughtIds) {
@@ -1897,49 +1929,76 @@ function undoBoardPlacement(changes) {
   announce('Board placement undone.');
 }
 
-function commitBoardPlacement(draftPositions) {
-  if (!boardPlacementSession || blockEditsDuringAccountSync()) return;
+async function commitBoardPlacement(draftPositions) {
+  if (
+    !boardPlacementSession
+    || boardPlacementCommitInFlight
+    || blockEditsDuringAccountSync()
+  ) return;
 
-  const session = updateBoardPlacementDraft(boardPlacementSession, draftPositions);
-  const changes = planBoardPlacementCommit(session, thoughts);
-  if (!changes.length) {
+  boardPlacementCommitInFlight = true;
+  boardPlacementView.setBusy(true);
+  try {
+    let session = updateBoardPlacementDraft(boardPlacementSession, draftPositions);
+
+    if (session.target?.kind === BoardPlacementTargetKind.NEW) {
+      const board = await createBoardRecord(session.target.title);
+      applyBoardRecords([...boards, board]);
+      session = resolveBoardPlacementTarget(session, board.id);
+      boardPlacementSession = session;
+    }
+
+    const targetBoardId = session.target?.boardId;
+    const changes = planBoardPlacementCommit(session, thoughts);
+    if (!targetBoardId || !changes.length) {
+      boardPlacementView.close();
+      boardPlacementSession = null;
+      spacesOverviewPurpose = 'navigation';
+      announce('These cards are already on that Board.');
+      return;
+    }
+
+    changes.forEach(({ thoughtId, nextMeta }) => {
+      const thought = getThoughtById(thoughtId);
+      if (!thought) return;
+      thought.meta = nextMeta;
+      if (isCloudMode()) enqueueThoughtMetaPatch(thought, ['canvas']);
+    });
+    saveThoughts();
+    refreshBoardAfterPlacement(changes.map(({ thoughtId }) => thoughtId));
     boardPlacementView.close();
     boardPlacementSession = null;
     spacesOverviewPurpose = 'navigation';
-    announce('These cards are already on that Board.');
-    return;
+
+    const targetName = getSpace(targetBoardId)?.label || 'Board';
+    const count = session.thoughtIds.length;
+    const verb = session.operation === BoardPlacementOperation.MOVE ? 'Moved' : 'Placed';
+    showBoardActionMessage(
+      `${verb} ${count} ${count === 1 ? 'card' : 'cards'} to “${targetName}”`,
+      {
+        onView: () => navigateToSpace(targetBoardId),
+        onUndo: () => undoBoardPlacement(changes),
+        undoKind: 'placement',
+        duration: 15_000,
+      },
+    );
+    announce(`${verb} ${count} ${count === 1 ? 'card' : 'cards'} to ${targetName}.`);
+  } catch (error) {
+    announce(`Could not complete Board placement: ${error.message}`);
+  } finally {
+    boardPlacementCommitInFlight = false;
+    boardPlacementView.setBusy(false);
   }
-
-  changes.forEach(({ thoughtId, nextMeta }) => {
-    const thought = getThoughtById(thoughtId);
-    if (!thought) return;
-    thought.meta = nextMeta;
-    if (isCloudMode()) enqueueThoughtMetaPatch(thought, ['canvas']);
-  });
-  saveThoughts();
-  refreshBoardAfterPlacement(changes.map(({ thoughtId }) => thoughtId));
-  boardPlacementView.close();
-  boardPlacementSession = null;
-  spacesOverviewPurpose = 'navigation';
-
-  const targetName = getSpace(session.targetBoardId)?.label || 'Board';
-  const verb = session.operation === BoardPlacementOperation.MOVE ? 'Moved' : 'Placed';
-  showBoardActionMessage(`${verb} on “${targetName}”`, {
-    onUndo: () => undoBoardPlacement(changes),
-    undoKind: 'placement',
-    duration: 15_000,
-  });
-  announce(`${verb} ${session.thoughtIds.length} cards on ${targetName}.`);
 }
 
 function cancelBoardPlacement() {
+  if (boardPlacementCommitInFlight) return;
   const session = boardPlacementSession;
   boardPlacementView.close();
   if (viewMode === 'spaces') {
     closeSpacesOverview({ restoreFocus: false });
   }
   boardPlacementSession = null;
-  boardPlacementCreateInFlight = false;
   spacesOverviewPurpose = 'navigation';
   restoreBoardPlacementSelection(session);
   announce('Board placement cancelled.');
@@ -7704,11 +7763,24 @@ function createSpaceTile(space, canvasWidth, canvasHeight) {
       && boardPlacementSession.operation === BoardPlacementOperation.PLACE
     )
   );
+  const placementTargetLabel = (
+    boardPlacementSession?.operation === BoardPlacementOperation.MOVE
+      ? `Move cards to ${space.label}`
+      : `Place cards on ${space.label}`
+  );
 
   tile.className = 'space-tile';
   tile.classList.toggle('is-board', isCanvasSpace(space.id));
   tile.classList.toggle('is-spatial', isSpatialSpace(space.id));
-  tile.classList.toggle('is-active', space.id === activeSpaceId);
+  tile.classList.toggle(
+    'is-active',
+    space.id === activeSpaceId && !choosingPlacementTarget,
+  );
+  tile.classList.toggle('is-placement-source', isSourceBoard);
+  tile.classList.toggle(
+    'is-placement-complete',
+    targetUnavailable && !isSourceBoard,
+  );
   tile.classList.toggle('is-placement-unavailable', targetUnavailable);
 
   openButton.type = 'button';
@@ -7717,7 +7789,7 @@ function createSpaceTile(space, canvasWidth, canvasHeight) {
   openButton.setAttribute('aria-label', choosingPlacementTarget
     ? targetUnavailable
       ? `${space.label}. ${isSourceBoard ? 'Current Board' : 'Cards already placed'}`
-      : `Place cards on ${space.label}`
+      : placementTargetLabel
     : isCanvasSpace(space.id) ? `Open Board: ${space.label}` : `Open ${space.label}`);
   openButton.disabled = targetUnavailable;
   if (space.id === activeSpaceId) openButton.setAttribute('aria-current', 'true');
@@ -7777,9 +7849,9 @@ function createNewBoardTile() {
   surface.append(icon);
   footer.append(label);
   button.append(surface);
-  button.disabled = boardPlacementCreateInFlight;
+  button.disabled = boardPlacementCommitInFlight;
   button.addEventListener('click', () => {
-    if (spacesOverviewPurpose === 'board-placement') void createBoardForPlacement();
+    if (spacesOverviewPurpose === 'board-placement') openNewBoardPlacementTarget();
     else void createBoard();
   });
   tile.append(button, footer);
@@ -8885,6 +8957,11 @@ boardSelectButton.addEventListener('click', () => {
   else openBoardSelection();
 });
 boardArrangeButton.addEventListener('click', () => void arrangeBoard());
+boardActionView.addEventListener('click', () => {
+  const view = boardActionViewHandler;
+  hideBoardActionMessage();
+  view?.();
+});
 boardActionUndo.addEventListener('click', () => {
   const undo = boardActionUndoHandler;
   if (!undo) return;

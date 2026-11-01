@@ -3,17 +3,19 @@ import { getThoughtKnowledgeKind } from './knowledge-kinds.js';
 import { getThoughtPresentation, isThoughtResolved } from './thought-content.js';
 import { createCanvasViewportController } from './canvas-viewport-controller.js';
 import { getConnectionPathData } from './connection-map-edge-geometry.js';
+import { BoardPlacementOperation } from './board-placement-session.js';
 
 const SVG_NAMESPACE = 'http://www.w3.org/2000/svg';
 const DRAG_THRESHOLD = 5;
 
-function createPlacementCard({ thought, draft }) {
+function createPlacementCard({ thought, draft, alreadyPresent = false }) {
   const element = document.createElement('article');
   const icon = document.createElement('span');
   const text = document.createElement('span');
 
   element.className = 'board-placement-card';
   element.classList.toggle('is-draft', draft);
+  element.classList.toggle('is-already-present', alreadyPresent);
   element.classList.toggle('is-resolved', isThoughtResolved(thought));
   element.dataset.thoughtId = thought.id;
   element.dataset.knowledgeKind = getThoughtKnowledgeKind(thought);
@@ -30,6 +32,7 @@ function createPlacementCard({ thought, draft }) {
 
 export function createBoardPlacementView({ dialog, onCancel, onConfirm }) {
   const title = dialog.querySelector('#board-placement-title');
+  const summary = dialog.querySelector('#board-placement-summary');
   const cancelButton = dialog.querySelector('#board-placement-cancel');
   const confirmButton = dialog.querySelector('#board-placement-confirm');
   const viewport = dialog.querySelector('#board-placement-viewport');
@@ -51,6 +54,8 @@ export function createBoardPlacementView({ dialog, onCancel, onConfirm }) {
   let cardWidth = 280;
   let cardHeight = 96;
   let canConfirm = false;
+  let busy = false;
+  let currentOperation = BoardPlacementOperation.PLACE;
 
   const viewportController = createCanvasViewportController({
     viewport,
@@ -180,10 +185,17 @@ export function createBoardPlacementView({ dialog, onCancel, onConfirm }) {
     element.addEventListener('pointercancel', finishDrag);
   }
 
-  function renderCards(cards, { draft = false } = {}) {
+  function renderCards(cards, {
+    draft = false,
+    alreadyPresentIds = new Set(),
+  } = {}) {
     cards.forEach(({ thought, position }) => {
       if (!thought || !position) return;
-      const element = createPlacementCard({ thought, draft });
+      const element = createPlacementCard({
+        thought,
+        draft,
+        alreadyPresent: alreadyPresentIds.has(thought.id),
+      });
       element.style.width = `${cardWidth}px`;
       element.style.minHeight = `${cardHeight}px`;
       positions.set(thought.id, { x: position.x, y: position.y });
@@ -210,6 +222,7 @@ export function createBoardPlacementView({ dialog, onCancel, onConfirm }) {
     selectedCount,
     operation,
     visibleWorld,
+    preexistingTargetIds = [],
     confirmWithoutDraft = false,
   }) {
     positions.clear();
@@ -220,11 +233,26 @@ export function createBoardPlacementView({ dialog, onCancel, onConfirm }) {
     cardWidth = geometry?.cardWidth || 280;
     cardHeight = geometry?.cardHeight || 96;
     canConfirm = draftCards.length > 0 || confirmWithoutDraft;
+    busy = false;
+    currentOperation = operation;
     confirmButton.disabled = !canConfirm;
-    title.textContent = `${board?.label || 'Board'} · ${selectedCount} ${selectedCount === 1 ? 'card' : 'cards'}`;
-    confirmButton.textContent = 'Place';
+    const moving = operation === BoardPlacementOperation.MOVE;
+    const boardLabel = board?.label || 'Board';
+    const newCount = draftCards.length;
+    const existingCount = preexistingTargetIds.length;
+    title.textContent = `${moving ? 'Move to' : 'Place on'} “${boardLabel}”`;
+    if (existingCount && !newCount && moving) {
+      summary.textContent = `${selectedCount} already here · moving removes ${selectedCount === 1 ? 'it' : 'them'} from the current Board`;
+    } else if (existingCount) {
+      summary.textContent = `${newCount} new · ${existingCount} already here`;
+    } else {
+      summary.textContent = `${selectedCount} ${selectedCount === 1 ? 'card' : 'cards'}`;
+    }
+    confirmButton.textContent = moving ? 'Move' : 'Place';
     dialog.dataset.operation = operation;
-    renderCards(existingCards);
+    renderCards(existingCards, {
+      alreadyPresentIds: new Set(preexistingTargetIds),
+    });
     renderCards(draftCards, { draft: true });
     viewportController.reset();
     dialog.showModal();
@@ -256,25 +284,43 @@ export function createBoardPlacementView({ dialog, onCancel, onConfirm }) {
     nodeElements.clear();
     draftIds.clear();
     renderedEdges = [];
+    busy = false;
     nodesLayer.replaceChildren();
     groupOutline.hidden = true;
     if (dialog.open) dialog.close();
   }
 
-  cancelButton.addEventListener('click', onCancel);
+  function setBusy(nextBusy) {
+    busy = Boolean(nextBusy);
+    cancelButton.disabled = busy;
+    confirmButton.disabled = busy || !canConfirm;
+    if (busy) {
+      confirmButton.textContent = currentOperation === BoardPlacementOperation.MOVE
+        ? 'Moving…'
+        : 'Placing…';
+    } else {
+      confirmButton.textContent = currentOperation === BoardPlacementOperation.MOVE
+        ? 'Move'
+        : 'Place';
+    }
+  }
+
+  cancelButton.addEventListener('click', () => {
+    if (!busy) onCancel();
+  });
   confirmButton.addEventListener('click', () => {
-    if (canConfirm) onConfirm(getDraftPositions());
+    if (canConfirm && !busy) onConfirm(getDraftPositions());
   });
   dialog.addEventListener('cancel', (event) => {
     event.preventDefault();
-    onCancel();
+    if (!busy) onCancel();
   });
   dialog.addEventListener('keydown', (event) => {
     if (event.key !== 'Enter' || event.isComposing || event.target.closest('button')) return;
     event.preventDefault();
-    if (canConfirm) onConfirm(getDraftPositions());
+    if (canConfirm && !busy) onConfirm(getDraftPositions());
   });
 
-  return { close, getDraftPositions, open };
+  return { close, getDraftPositions, open, setBusy };
 }
 
