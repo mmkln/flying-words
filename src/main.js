@@ -3808,9 +3808,7 @@ function renderRelationshipUi() {
   if (!getSpaceCapabilities(activeSpaceId).connections) connectionEditor = null;
 
   const boardSelecting = isBoardSelectionActive();
-  const canSearchConnectionTargets = Boolean(
-    isSpatialSpace(activeSpaceId) && connectionEditor,
-  );
+  const canSearchConnectionTargets = canUseConnectionSearch();
   const selectedTotal = boardSelecting
     ? boardSelection.selectedIds.size
     : magnetEditor
@@ -4037,6 +4035,13 @@ function renderConnectionThoughtState(thought) {
   });
 }
 
+function canUseConnectionSearch() {
+  return Boolean(
+    connectionEditor
+    && getSpaceCapabilities(activeSpaceId).connections
+  );
+}
+
 function renderConnectionUi() {
   renderRelationshipUi();
   if (isCanvasSpace(activeSpaceId)) rebuildConnectionLayer();
@@ -4243,6 +4248,29 @@ function renderPanelSkeletonRows(container, {
   container.append(skeleton);
 }
 
+function canLocateConnectionSearchThought(thought) {
+  if (isSpatialSpace(activeSpaceId)) return true;
+
+  return (
+    isCanvasSpace(activeSpaceId)
+    && hasCanvasPlacement(thought, activeSpaceId)
+  );
+}
+
+function locateConnectionSearchThought(thought) {
+  if (isSpatialSpace(activeSpaceId)) {
+    void navigateToSpatialThought(thought.id, { focus: true, remember: false });
+    return;
+  }
+
+  if (
+    isCanvasSpace(activeSpaceId)
+    && hasCanvasPlacement(thought, activeSpaceId)
+  ) {
+    focusCanvasThought(thought, 'Thought shown on Board.');
+  }
+}
+
 function renderConnectionSearchResults() {
   const matches = getConnectionSearchMatches();
   const isInitialLoading = auth && connectionSearchLoading && !matches.length;
@@ -4280,7 +4308,6 @@ function renderConnectionSearchResults() {
     const kindIcon = document.createElement('span');
     const text = document.createElement('span');
     const state = document.createElement('span');
-    const locateButton = document.createElement('button');
     const selected = connectionEditor?.selectedTargetIds.has(thought.id) === true;
 
     row.className = 'connection-search-result';
@@ -4310,15 +4337,23 @@ function renderConnectionSearchResults() {
     state.textContent = selected ? 'Selected' : '';
     selectButton.append(kindIcon, text, state);
 
-    locateButton.type = 'button';
-    locateButton.className = 'connection-search-locate';
-    locateButton.textContent = 'Locate';
-    locateButton.setAttribute('aria-label', `Locate ${presentation.primaryText} in Spatial`);
-    locateButton.addEventListener('click', () => {
-      void navigateToSpatialThought(thought.id, { focus: true, remember: false });
-    });
-
-    row.append(selectButton, locateButton);
+    row.append(selectButton);
+    if (canLocateConnectionSearchThought(thought)) {
+      const locateButton = document.createElement('button');
+      locateButton.type = 'button';
+      locateButton.className = 'connection-search-locate';
+      locateButton.textContent = 'Locate';
+      locateButton.setAttribute(
+        'aria-label',
+        isCanvasSpace(activeSpaceId)
+          ? `Locate ${presentation.primaryText} on Board`
+          : `Locate ${presentation.primaryText} in Spatial`,
+      );
+      locateButton.addEventListener('click', () => {
+        locateConnectionSearchThought(thought);
+      });
+      row.append(locateButton);
+    }
     connectionSearchResults.append(row);
   });
   renderConnectionSearchLoadMore();
@@ -4333,7 +4368,7 @@ function toggleActiveConnectionSearchMatch() {
 }
 
 function openConnectionSearch() {
-  if (!isSpatialSpace(activeSpaceId) || !connectionEditor) return;
+  if (!canUseConnectionSearch()) return;
 
   connectionSearchActiveIndex = 0;
   connectionSearchInput.value = '';
@@ -4375,7 +4410,6 @@ function toggleConnectionCandidate(thought) {
     }
 
     selected.add(thought.id);
-    showThought(thought);
   }
 
   renderConnectionUi();
@@ -6284,7 +6318,7 @@ function rerenderOpenThoughtPanels(snapshot = {}) {
   if (
     connectionEditorRestored
     && snapshot.connectionSearchOpen
-    && isSpatialSpace(activeSpaceId)
+    && canUseConnectionSearch()
   ) {
     connectionSearchInput.value = snapshot.connectionSearchQuery || '';
     connectionSearchActiveIndex = Number.isInteger(snapshot.connectionSearchActiveIndex)
@@ -9227,7 +9261,7 @@ document.addEventListener('visibilitychange', () => {
   void loadTelegramConnection({ preserveWaiting: true });
 });
 historyButton.addEventListener('click', () => {
-  if (connectionEditor && isSpatialSpace(activeSpaceId)) {
+  if (canUseConnectionSearch()) {
     if (isConnectionSearchOpen()) closeConnectionSearch();
     else openConnectionSearch();
     return;
@@ -9575,8 +9609,7 @@ window.addEventListener('keydown', (event) => {
   }
 
   if (
-    connectionEditor
-    && isSpatialSpace(activeSpaceId)
+    canUseConnectionSearch()
     && !typing
     && (event.ctrlKey || event.metaKey)
     && event.key.toLocaleLowerCase() === 'k'
