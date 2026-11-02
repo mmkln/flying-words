@@ -51,7 +51,10 @@ import { createConnectionMapView } from './connection-map-view.js';
 import { createBoardPlacementView } from './board-placement-view.js';
 import { matchesThoughtSearch } from './thought-search.js';
 import { getSpatialLinkSuggestions } from './spatial-link-suggestions.js';
-import { createSpatialConnectionsList } from './spatial-connections-list.js';
+import {
+  createThoughtConnectionsList,
+  getThoughtConnectionActionState,
+} from './thought-connections-list.js';
 import { createSpatialNavigationHistory } from './spatial-navigation-history.js';
 import { createCanvasMinimap } from './canvas-minimap.js';
 import { calculateBoardUsableRect } from './board-viewport-layout.js';
@@ -282,10 +285,10 @@ const spatialInspectorText = document.querySelector('#spatial-inspector-text');
 const spatialInspectorResource = document.querySelector('#spatial-inspector-resource');
 const spatialInspectorResourceTitle = document.querySelector('#spatial-inspector-resource-title');
 const spatialInspectorResourceHost = document.querySelector('#spatial-inspector-resource-host');
-const spatialInspectorConnections = document.querySelector('#spatial-inspector-connections');
-const spatialInspectorConnectionsToggle = document.querySelector('#spatial-inspector-connections-toggle');
-const spatialInspectorConnectionsCount = document.querySelector('#spatial-inspector-connections-count');
-const spatialInspectorConnectionList = document.querySelector('#spatial-inspector-connection-list');
+const thoughtInspectorConnections = document.querySelector('#thought-inspector-connections');
+const thoughtInspectorConnectionsToggle = document.querySelector('#thought-inspector-connections-toggle');
+const thoughtInspectorConnectionsCount = document.querySelector('#thought-inspector-connections-count');
+const thoughtInspectorConnectionList = document.querySelector('#thought-inspector-connection-list');
 const spatialInspectorSuggestions = document.querySelector('#spatial-inspector-suggestions');
 const spatialInspectorSuggestionList = document.querySelector('#spatial-inspector-suggestion-list');
 const spatialInspectorClose = document.querySelector('#spatial-inspector-close');
@@ -527,13 +530,13 @@ const connectionRenderer = createConnectionRenderer({
   getThoughtById,
 });
 
-const spatialConnectionsList = createSpatialConnectionsList({
-  section: spatialInspectorConnections,
-  toggle: spatialInspectorConnectionsToggle,
-  list: spatialInspectorConnectionList,
-  count: spatialInspectorConnectionsCount,
-  onNavigate(thoughtId) {
-    void navigateToSpatialThought(thoughtId, { focus: true });
+const thoughtConnectionsList = createThoughtConnectionsList({
+  section: thoughtInspectorConnections,
+  toggle: thoughtInspectorConnectionsToggle,
+  list: thoughtInspectorConnectionList,
+  count: thoughtInspectorConnectionsCount,
+  onAction({ type, thoughtId }) {
+    handleThoughtConnectionAction(type, thoughtId);
   },
 });
 
@@ -2293,12 +2296,46 @@ function openThoughtDeleteConfirmation(thought) {
   deleteThoughtDialog.showModal();
 }
 
-function renderSpatialConnections(thought, connectionIndex) {
+function handleThoughtConnectionAction(type, thoughtId) {
+  const thought = getThoughtById(thoughtId);
+  if (!thought) return;
+
+  if (type === 'navigate') {
+    if (isSpatialSpace(activeSpaceId)) {
+      void navigateToSpatialThought(thoughtId, { focus: true });
+      return;
+    }
+
+    if (
+      isCanvasSpace(activeSpaceId)
+      && hasCanvasPlacement(thought, activeSpaceId)
+    ) {
+      focusCanvasThought(thought);
+    }
+    return;
+  }
+
+  if (
+    type === 'place'
+    && isCanvasSpace(activeSpaceId)
+    && !hasCanvasPlacement(thought, activeSpaceId)
+  ) {
+    addOneConnectedThoughtToBoard(selectedThoughtId, thoughtId);
+  }
+}
+
+function renderThoughtConnections(thought, connectionIndex) {
+  const boardMode = isCanvasSpace(activeSpaceId);
   const items = connectionIndex
     .getNeighbours(thought.id)
     .map(({ thoughtId, direction }) => {
       const connectedThought = getThoughtById(thoughtId);
       if (!connectedThought) return null;
+
+      const placedOnBoard = (
+        boardMode
+        && hasCanvasPlacement(connectedThought, activeSpaceId)
+      );
 
       return {
         thoughtId,
@@ -2306,11 +2343,12 @@ function renderSpatialConnections(thought, connectionIndex) {
         text: getThoughtPresentation(connectedThought).primaryText,
         kind: getThoughtKnowledgeKind(connectedThought),
         resolved: isThoughtResolved(connectedThought),
+        ...getThoughtConnectionActionState({ boardMode, placedOnBoard }),
       };
     })
     .filter(Boolean);
 
-  spatialConnectionsList.render(items, {
+  thoughtConnectionsList.render(items, {
     disabled: Boolean(connectionEditor || magnetEditor),
   });
 }
@@ -2394,7 +2432,7 @@ function renderThoughtInspector() {
   spatialInspector.hidden = !visible;
   scheduleChromeLayoutUpdate();
   if (!visible) {
-    spatialConnectionsList.clear();
+    thoughtConnectionsList.clear();
     spatialInspectorSuggestions.hidden = true;
     closeSpatialInspectorMenu();
     return;
@@ -2433,14 +2471,14 @@ function renderThoughtInspector() {
   spatialInspectorAnchor.setAttribute('aria-label', spatialInspectorAnchor.title);
   spatialInspectorAnchor.setAttribute('aria-pressed', String(anchored));
 
+  const connectionIndex = buildConnectionIndex(thoughts);
+  renderThoughtConnections(thought, connectionIndex);
+
   if (!spatialMode) {
-    spatialConnectionsList.clear();
     spatialInspectorSuggestions.hidden = true;
     return;
   }
 
-  const connectionIndex = buildConnectionIndex(thoughts);
-  renderSpatialConnections(thought, connectionIndex);
   renderSpatialLinkSuggestions(thought, connectionIndex);
   spatialFocusButton.disabled = !canFocusSelectedSpatialThought();
   spatialBackButton.disabled = !canNavigateSpatialBack();

@@ -21,41 +21,68 @@ const CONNECTION_GROUPS = Object.freeze([
 
 const MOBILE_VIEWPORT_QUERY = '(max-width: 560px)';
 
+export function getThoughtConnectionActionState({ boardMode, placedOnBoard }) {
+  return Object.freeze({
+    navigable: !boardMode || placedOnBoard,
+    placeable: boardMode && !placedOnBoard,
+  });
+}
+
 function createConnectionRow(item, group, disabled) {
-  const button = document.createElement('button');
+  const row = document.createElement('div');
+  const primary = document.createElement('button');
   const direction = document.createElement('span');
   const kind = document.createElement('span');
   const text = document.createElement('span');
 
-  button.type = 'button';
-  button.className = 'spatial-connection-row';
-  button.dataset.thoughtId = item.thoughtId;
-  button.disabled = disabled;
-  button.title = item.text;
-  button.setAttribute('aria-label', `${group.label}: ${item.text}`);
+  row.className = 'thought-connection-row';
+  row.classList.toggle('is-off-board', item.placeable);
 
-  direction.className = 'spatial-connection-direction';
+  primary.type = 'button';
+  primary.className = 'thought-connection-primary';
+  primary.dataset.connectionAction = 'navigate';
+  primary.dataset.thoughtId = item.thoughtId;
+  primary.disabled = disabled || !item.navigable;
+  primary.title = item.text;
+  primary.setAttribute('aria-label', `${group.label}: ${item.text}`);
+
+  direction.className = 'thought-connection-direction';
   direction.textContent = group.symbol;
   direction.setAttribute('aria-hidden', 'true');
 
-  kind.className = 'spatial-connection-kind';
+  kind.className = 'thought-connection-kind';
   kind.append(createKnowledgeKindIcon(item.kind));
   kind.dataset.resolved = String(item.resolved === true);
   kind.setAttribute('aria-hidden', 'true');
 
-  text.className = 'spatial-connection-text';
+  text.className = 'thought-connection-text';
   text.textContent = item.text;
 
-  button.append(kind, text, direction);
-  return button;
+  primary.append(kind, text, direction);
+  row.append(primary);
+
+  if (item.placeable) {
+    const place = document.createElement('button');
+    place.type = 'button';
+    place.className = 'thought-connection-place';
+    place.dataset.connectionAction = 'place';
+    place.dataset.thoughtId = item.thoughtId;
+    place.disabled = disabled;
+    place.textContent = '+';
+    place.title = 'Add to this Board';
+    place.setAttribute('aria-label', `Add “${item.text}” to this Board`);
+    row.append(place);
+  }
+
+  return row;
 }
 
-export function createSpatialConnectionsList({
+export function createThoughtConnectionsList({
   section,
   toggle,
   list,
   count,
-  onNavigate,
+  onAction,
 }) {
   let collapsed = window.matchMedia(MOBILE_VIEWPORT_QUERY).matches;
 
@@ -71,10 +98,13 @@ export function createSpatialConnectionsList({
   });
 
   list.addEventListener('click', (event) => {
-    const row = event.target.closest('[data-thought-id]');
-    if (!row || row.disabled) return;
+    const action = event.target.closest('[data-connection-action]');
+    if (!action || action.disabled) return;
 
-    onNavigate(row.dataset.thoughtId);
+    onAction?.({
+      type: action.dataset.connectionAction,
+      thoughtId: action.dataset.thoughtId,
+    });
   });
 
   function clear() {
@@ -98,7 +128,7 @@ export function createSpatialConnectionsList({
       if (!groupItems.length) return;
 
       const groupElement = document.createElement('div');
-      groupElement.className = 'spatial-connection-group';
+      groupElement.className = 'thought-connection-group';
       groupElement.dataset.direction = group.direction;
 
       groupItems.forEach((item) => {

@@ -714,7 +714,7 @@ html[data-app-ready="false"] .composer-wrap {
 .thought-resource-copy small { color: var(--text-tertiary); font-size: 11px; }
 .thought-resource-external { width: 14px; height: 14px; color: var(--text-tertiary); }
 
-.spatial-connections-island {
+.thought-connections-island {
   display: grid;
   grid-template-rows: auto minmax(0, 1fr);
   width: 100%;
@@ -731,9 +731,9 @@ html[data-app-ready="false"] .composer-wrap {
   pointer-events: auto;
 }
 
-.spatial-connections-island[hidden] { display: none; }
+.thought-connections-island[hidden] { display: none; }
 
-.spatial-connections-toggle {
+.thought-connections-toggle {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto 16px;
   width: 100%;
@@ -751,15 +751,15 @@ html[data-app-ready="false"] .composer-wrap {
   text-align: left;
 }
 
-.spatial-connections-toggle:hover { color: var(--text-secondary); }
+.thought-connections-toggle:hover { color: var(--text-secondary); }
 
-.spatial-connections-toggle:focus-visible {
+.thought-connections-toggle:focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: -2px;
   border-radius: 8px;
 }
 
-.spatial-connections-toggle svg {
+.thought-connections-toggle svg {
   width: 14px;
   height: 14px;
   fill: none;
@@ -770,24 +770,24 @@ html[data-app-ready="false"] .composer-wrap {
   transition: transform 160ms ease;
 }
 
-.spatial-connections-island.is-collapsed .spatial-connections-toggle {
+.thought-connections-island.is-collapsed .thought-connections-toggle {
   padding-bottom: 1px;
 }
 
-.spatial-connections-island.is-collapsed .spatial-connections-toggle svg {
+.thought-connections-island.is-collapsed .thought-connections-toggle svg {
   transform: rotate(-90deg);
 }
 
-.spatial-connections-list {
+.thought-connections-list {
   min-height: 0;
   overflow-y: auto;
   overscroll-behavior: contain;
 }
 
-.spatial-connection-group + .spatial-connection-group { margin-top: 2px; }
+.thought-connection-group + .thought-connection-group { margin-top: 2px; }
 
-.spatial-connection-group[data-direction='incoming']
-+ .spatial-connection-group[data-direction='outgoing'] {
+.thought-connection-group[data-direction='incoming']
++ .thought-connection-group[data-direction='outgoing'] {
   margin-top: 7px;
   padding-top: 8px;
   border-top: 1px solid color-mix(
@@ -797,7 +797,14 @@ html[data-app-ready="false"] .composer-wrap {
   );
 }
 
-.spatial-connection-row {
+.thought-connection-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 4px;
+}
+
+.thought-connection-primary {
   display: grid;
   grid-template-columns: 22px minmax(0, 1fr) 18px;
   width: 100%;
@@ -814,27 +821,47 @@ html[data-app-ready="false"] .composer-wrap {
   text-align: left;
 }
 
-.spatial-connection-row:hover:not(:disabled) { background: var(--surface-tint); }
+.thought-connection-primary:hover:not(:disabled) { background: var(--surface-tint); }
 
-.spatial-connection-row:focus-visible {
+.thought-connection-primary:focus-visible,
+.thought-connection-place:focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: -2px;
 }
 
-.spatial-connection-row:disabled {
+.thought-connection-primary:disabled {
   cursor: default;
-  opacity: .45;
+  opacity: .55;
 }
 
-.spatial-connection-kind {
+.thought-connection-place {
+  display: grid;
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  place-items: center;
+  border: 0;
+  border-radius: 9px;
+  color: var(--accent);
+  cursor: pointer;
+  background: var(--surface-tint);
+  font: inherit;
+  font-size: 18px;
+  line-height: 1;
+}
+
+.thought-connection-place:hover:not(:disabled) { background: var(--surface-hover); }
+.thought-connection-place:disabled { cursor: default; opacity: .45; }
+
+.thought-connection-kind {
   display: grid;
   place-items: center;
   color: var(--accent);
 }
 
-.spatial-connection-kind svg { width: 17px; height: 17px; }
+.thought-connection-kind svg { width: 17px; height: 17px; }
 
-.spatial-connection-text {
+.thought-connection-text {
   overflow: hidden;
   font-size: 12px;
   line-height: 1.3;
@@ -842,9 +869,9 @@ html[data-app-ready="false"] .composer-wrap {
   white-space: nowrap;
 }
 
-.spatial-connection-direction { color: var(--text-tertiary); }
+.thought-connection-direction { color: var(--text-tertiary); }
 
-.spatial-connection-direction { font-size: 13px; text-align: center; }
+.thought-connection-direction { font-size: 13px; text-align: center; }
 
 .spatial-inspector-navigation {
   display: grid;
@@ -4190,7 +4217,7 @@ kbd { padding: 1px 4px; border: 1px solid rgba(114,104,143,.25); border-bottom-w
 .spatial-toolbar-actions,
 .spatial-layout-menu,
 .spatial-inspector,
-.spatial-connections-island {
+.thought-connections-island {
   border-color: var(--border-subtle);
   color: var(--text-primary);
   background: var(--surface-translucent);
@@ -4519,7 +4546,7 @@ kbd {
 .connection-map-result-kind[data-resolved="true"],
 .connection-search-kind-icon[data-resolved="true"],
 .spatial-inspector-kind[data-resolved="true"],
-.spatial-connection-kind[data-resolved="true"],
+.thought-connection-kind[data-resolved="true"],
 .thought-focus-kind-icon[data-resolved="true"] {
   --kind-color: var(--text-tertiary);
   color: var(--text-tertiary);
@@ -4532,7 +4559,7 @@ kbd {
 :root[data-theme="dark"] .connection-map-result-kind[data-resolved="true"],
 :root[data-theme="dark"] .connection-search-kind-icon[data-resolved="true"],
 :root[data-theme="dark"] .spatial-inspector-kind[data-resolved="true"],
-:root[data-theme="dark"] .spatial-connection-kind[data-resolved="true"],
+:root[data-theme="dark"] .thought-connection-kind[data-resolved="true"],
 :root[data-theme="dark"] .thought-focus-kind-icon[data-resolved="true"] {
   --kind-color: var(--text-tertiary);
   color: var(--text-tertiary);
@@ -5011,7 +5038,7 @@ kbd {
     padding: 12px;
     border-radius: 15px;
   }
-  .spatial-connections-island { max-height: min(30dvh, 250px); }
+  .thought-connections-island { max-height: min(30dvh, 250px); }
   .spaces-overview { padding: 48px 16px 22px; }
   .spaces-overview-actions {
     top: max(10px, env(safe-area-inset-top));
