@@ -431,6 +431,22 @@ html[data-app-ready="false"] .composer-wrap {
   background: rgba(225, 243, 255, .84);
 }
 
+.spatial-label.is-cluster {
+  width: 240px;
+  color: var(--text-primary);
+  font-size: 13px;
+  font-weight: 680;
+  letter-spacing: -.01em;
+  text-shadow: 0 1px 10px var(--surface-solid);
+}
+
+.spatial-label.is-cluster-neighbour {
+  color: var(--text-tertiary);
+  font-size: 11px;
+  font-weight: 600;
+  opacity: .72;
+}
+
 .spatial-canvas.is-connection-selecting,
 .spatial-canvas.is-connection-selecting.is-node-hovered {
   cursor: pointer;
@@ -2441,6 +2457,30 @@ html[data-app-ready="false"] .composer-wrap {
   font-size: 12px;
   font-weight: 600;
   text-align: center;
+}
+
+.space-tile-label.is-editable {
+  min-width: 0;
+  max-width: 100%;
+  padding: 3px 7px;
+  border: 0;
+  border-radius: 6px;
+  color: inherit;
+  background: transparent;
+  font: inherit;
+  line-height: inherit;
+  cursor: text;
+  appearance: none;
+}
+
+.space-tile-label.is-editable:hover {
+  color: var(--text-primary);
+  background: var(--surface-tint);
+}
+
+.space-tile-label.is-editable:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 1px;
 }
 
 .space-tile-label::before {

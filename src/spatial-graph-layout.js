@@ -302,6 +302,10 @@ export function createSpatialGraphLayout({
     return nodes.find((node) => node.id === nodeId) || null;
   }
 
+  function getPresentationPlan() {
+    return layoutPlan?.strategyPlan || null;
+  }
+
   function beginDrag(nodeId) {
     const node = getNode(nodeId);
     if (!node || disposed) return null;
@@ -389,6 +393,7 @@ export function createSpatialGraphLayout({
     getLinks: () => links,
     getNode,
     getNodes: () => nodes,
+    getPresentationPlan,
     reheat,
     setGraph,
     setPinned,

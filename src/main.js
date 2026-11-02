@@ -154,6 +154,12 @@ import {
 } from './spatial-layout-mode.js';
 import { SpatialGraphTransitionKind } from './spatial-graph-transition.js';
 import {
+  SpatialSceneLevel,
+  createSpatialClusterScene,
+  createSpatialDetailScene,
+  createSpatialOverviewScene,
+} from './spatial-scene-model.js';
+import {
   SpatialScopeMode,
   applySpatialScope,
   createAllSpatialScope,
@@ -507,6 +513,10 @@ let resolvedTheme = resolveTheme(themeMode, systemThemeQuery.matches);
 let spatialLayoutMode = loadSpatialLayoutMode();
 let spatialScope = createAllSpatialScope();
 let spatialScopeVisibleCount = 0;
+let spatialSceneState = spatialLayoutMode === SpatialLayoutMode.CONSTELLATIONS
+  ? createSpatialOverviewScene()
+  : createSpatialDetailScene();
+let spatialSceneSummary = null;
 let viewMode = 'canvas';
 let spacesOverviewReturnFocus = spacesButton;
 const initiallyRequestedSpaceId = readSpaceIdFromSearch(window.location.search);
@@ -521,6 +531,7 @@ let boardGeometry = applyBoardGeometryCss(DEFAULT_BOARD_GEOMETRY);
 let boards = [];
 let editingBoardId = null;
 let boardRenameInFlight = false;
+let boardRenameReturnFocus = 'actions';
 let pendingBoardDeletionId = null;
 let boardDeleteInFlight = false;
 let activeRenderableConnections = [];
@@ -899,6 +910,35 @@ function focusSelectedSpatialThought() {
   return spatialView.focusThought(selectedThoughtId);
 }
 
+function applyResolvedSpatialScene(result) {
+  if (!result) return;
+  spatialSceneState = result.state;
+  spatialSceneSummary = result.summary;
+  renderSpatialScopeControls();
+}
+
+function defaultSpatialSceneForLayout(mode = spatialLayoutMode) {
+  return mode === SpatialLayoutMode.CONSTELLATIONS
+    ? createSpatialOverviewScene()
+    : createSpatialDetailScene();
+}
+
+function openSpatialCluster(clusterId, summary = null) {
+  if (
+    !spatialView
+    || spatialLayoutMode !== SpatialLayoutMode.CONSTELLATIONS
+    || spatialScope.mode !== SpatialScopeMode.ALL
+  ) return false;
+
+  spatialSceneState = createSpatialClusterScene(clusterId);
+  spatialSceneSummary = summary;
+  if (selectedThoughtId) clearThoughtSelection();
+  applyResolvedSpatialScene(spatialView.setSceneState(spatialSceneState));
+  spatialView.fitAll();
+  announce(`Opened ${spatialSceneSummary?.label || 'thought'} cluster.`);
+  return true;
+}
+
 function setSpatialLayoutMode(mode) {
   const nextMode = normalizeSpatialLayoutMode(mode);
   if (nextMode === spatialLayoutMode) {
@@ -907,6 +947,8 @@ function setSpatialLayoutMode(mode) {
   }
 
   spatialLayoutMode = nextMode;
+  spatialSceneState = defaultSpatialSceneForLayout(nextMode);
+  spatialSceneSummary = null;
   clearSpatialNavigationHistory();
   storeSpatialLayoutMode();
   renderSpatialLayoutPicker();
@@ -962,10 +1004,19 @@ function isThoughtInSpatialScope(thoughtId, graph = buildSpatialSourceGraph()) {
 function renderSpatialScopeControls() {
   const spatialActive = isSpatialSpace(activeSpaceId) && viewMode !== 'spaces';
   const contextActive = spatialScope.mode === SpatialScopeMode.CONTEXT;
-  spatialScopeStatus.hidden = !spatialActive || !contextActive;
+  const clusterActive = (
+    spatialLayoutMode === SpatialLayoutMode.CONSTELLATIONS
+    && spatialSceneState.level === SpatialSceneLevel.CLUSTER
+  );
+  spatialScopeStatus.hidden = !spatialActive || (!contextActive && !clusterActive);
 
   if (contextActive) {
     spatialScopeSummary.textContent = `Context · ${spatialScopeVisibleCount} ${spatialScopeVisibleCount === 1 ? 'thought' : 'thoughts'}`;
+  } else if (clusterActive) {
+    const count = spatialSceneSummary?.count;
+    spatialScopeSummary.textContent = count
+      ? `${spatialSceneSummary.label} · ${count}`
+      : (spatialSceneSummary?.label || 'Thought cluster');
   }
 
   const canUseSelectedThought = Boolean(
@@ -989,6 +1040,8 @@ function showSpatialContext(rootId) {
   if (nextScope.mode !== SpatialScopeMode.CONTEXT) return false;
 
   spatialScope = nextScope;
+  spatialSceneState = createSpatialDetailScene();
+  spatialSceneSummary = null;
   clearSpatialNavigationHistory();
   refreshSpatialGraph({
     fitAfterLayout: true,
@@ -999,15 +1052,28 @@ function showSpatialContext(rootId) {
 }
 
 function showAllSpatialThoughts() {
-  if (spatialScope.mode === SpatialScopeMode.ALL) return;
+  const alreadyOverview = (
+    spatialScope.mode === SpatialScopeMode.ALL
+    && (
+      spatialLayoutMode !== SpatialLayoutMode.CONSTELLATIONS
+      || spatialSceneState.level === SpatialSceneLevel.OVERVIEW
+    )
+  );
+  if (alreadyOverview) return;
 
   spatialScope = createAllSpatialScope();
+  spatialSceneState = defaultSpatialSceneForLayout();
+  spatialSceneSummary = null;
   clearSpatialNavigationHistory();
   refreshSpatialGraph({
     fitAfterLayout: true,
     transition: { kind: SpatialGraphTransitionKind.REBUILD },
   });
-  announce('Showing all thoughts in Spatial.');
+  announce(
+    spatialLayoutMode === SpatialLayoutMode.CONSTELLATIONS
+      ? 'Showing Spatial overview.'
+      : 'Showing all thoughts in Spatial.',
+  );
 }
 
 async function ensureSpatialView() {
@@ -1021,6 +1087,9 @@ async function ensureSpatialView() {
           storageKey: `${SPATIAL_CAMERA_STORAGE_PREFIX}spatial-1`,
           layoutStorageKey: `${SPATIAL_LAYOUT_STORAGE_PREFIX}spatial-1:`,
           layoutMode: spatialLayoutMode,
+          onClusterOpen(clusterId, summary) {
+            openSpatialCluster(clusterId, summary);
+          },
           onThoughtSelect(thoughtId) {
             void navigateToSpatialThought(thoughtId, { focus: false });
           },
@@ -1074,6 +1143,7 @@ function refreshSpatialGraph({ fitAfterLayout = false, transition = null } = {})
     },
     { transition },
   );
+  applyResolvedSpatialScene(spatialView.setSceneState(spatialSceneState));
   spatialView.setSelectedThought(selectedThoughtId);
   renderThoughtInspector();
 }
@@ -1091,6 +1161,7 @@ async function activateSpatialView() {
     return;
   }
   view.setGraph(buildSpatialGraph());
+  applyResolvedSpatialScene(view.setSceneState(spatialSceneState));
   view.setSelectedThought(selectedThoughtId);
   view.activate();
   renderThoughtInspector();
@@ -5049,9 +5120,10 @@ function focusBoardTitleInput(boardId) {
   });
 }
 
-function startBoardRename(boardId) {
+function startBoardRename(boardId, { returnFocus = 'actions' } = {}) {
   if (boardRenameInFlight || !boards.some((board) => board.id === boardId)) return;
   editingBoardId = boardId;
+  boardRenameReturnFocus = returnFocus;
   renderSpacesOverview();
   focusBoardTitleInput(boardId);
 }
@@ -5063,9 +5135,10 @@ function cancelBoardRename({ restoreFocus = true } = {}) {
 
   if (!restoreFocus || !boardId) return;
   requestAnimationFrame(() => {
-    spacesGrid
-      .querySelector(`[data-board-actions="${boardId}"]`)
-      ?.focus();
+    const selector = boardRenameReturnFocus === 'title'
+      ? `[data-board-title="${boardId}"]`
+      : `[data-board-actions="${boardId}"]`;
+    spacesGrid.querySelector(selector)?.focus();
   });
 }
 
@@ -7440,6 +7513,13 @@ async function navigateToSpatialThought(
   if (!view.getThoughtPosition(thoughtId)) refreshSpatialGraph();
   if (!view.getThoughtPosition(thoughtId)) return false;
 
+  if (
+    spatialScope.mode === SpatialScopeMode.ALL
+    && spatialLayoutMode === SpatialLayoutMode.CONSTELLATIONS
+  ) {
+    applyResolvedSpatialScene(view.revealThought(thoughtId));
+  }
+
   if (remember && !scopeChanged && !connectionEditor && !magnetEditor) {
     spatialNavigationHistory.record({
       thoughtId: selectedThoughtId,
@@ -7477,6 +7557,12 @@ function canNavigateSpatialBack() {
 function navigateSpatialBack() {
   if (!canNavigateSpatialBack()) return false;
   const entry = spatialNavigationHistory.peek(canReturnToSpatialThought);
+  if (
+    spatialScope.mode === SpatialScopeMode.ALL
+    && spatialLayoutMode === SpatialLayoutMode.CONSTELLATIONS
+  ) {
+    applyResolvedSpatialScene(spatialView.revealThought(entry.thoughtId));
+  }
   if (!spatialView.restoreCameraState(entry.camera)) return false;
 
   ++spatialNavigationRequestId;
@@ -7909,12 +7995,25 @@ function openHistory() {
   if (auth) void loadHistoryPage({ reset: true });
 }
 
-function createSpaceLabel(space) {
-  const label = document.createElement('span');
+function createSpaceLabel(space, { editable = false } = {}) {
+  const label = document.createElement(editable ? 'button' : 'span');
   const text = document.createElement('span');
   label.className = 'space-tile-label';
   text.className = 'space-tile-label-text';
   text.textContent = space.label;
+
+  if (editable) {
+    label.type = 'button';
+    label.classList.add('is-editable');
+    label.dataset.boardTitle = space.id;
+    label.setAttribute('aria-label', `Rename Board: ${space.label}`);
+    label.addEventListener('click', (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      startBoardRename(space.id, { returnFocus: 'title' });
+    });
+  }
+
   label.append(text);
   return label;
 }
@@ -8155,7 +8254,9 @@ function createSpaceTile(space, canvasWidth, canvasHeight) {
   if (!choosingPlacementTarget && canRenameBoard && editingBoardId === space.id) {
     footer.append(createBoardTitleEditor(space));
   } else {
-    footer.append(createSpaceLabel(space));
+    footer.append(createSpaceLabel(space, {
+      editable: canRenameBoard && !choosingPlacementTarget,
+    }));
     if (targetUnavailable) {
       const status = document.createElement('span');
       status.className = 'space-tile-status';

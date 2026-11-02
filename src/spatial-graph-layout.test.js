@@ -217,6 +217,8 @@ test('adds layout anchors to Spatial nodes without changing semantic links', () 
     layout.getNode('a').layoutAnchor,
     layout.getNode('d').layoutAnchor,
   );
+  assert.equal(layout.getPresentationPlan().clusters.length, 2);
+  assert.equal(layout.getPresentationPlan().interClusterLinks.length, 1);
   layout.dispose();
 });
 
