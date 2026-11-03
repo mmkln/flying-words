@@ -2891,8 +2891,10 @@ html[data-app-ready="false"] .composer-wrap {
 
 .history-filter-tokens {
   display: flex;
+  flex: 0 0 auto;
   gap: 6px;
   margin: -6px 22px 14px;
+  min-height: 29px;
   padding: 1px;
   overflow-x: auto;
   scrollbar-width: none;
