@@ -2,14 +2,18 @@ export function buildThoughtListPath({
   limit,
   cursor = null,
   query = '',
-  knowledgeKind = '',
+  knowledgeKinds = [],
+  anchored = null,
+  resolved = null,
 } = {}) {
   const params = new URLSearchParams();
 
   if (limit) params.set('limit', String(limit));
   if (cursor) params.set('cursor', cursor);
   if (query.trim()) params.set('q', query.trim());
-  if (knowledgeKind) params.set('knowledge_kind', knowledgeKind);
+  knowledgeKinds.forEach((kind) => params.append('knowledge_kind', kind));
+  if (typeof anchored === 'boolean') params.set('anchored', String(anchored));
+  if (typeof resolved === 'boolean') params.set('resolved', String(resolved));
 
   const queryString = params.toString();
   return queryString ? `/thoughts/?${queryString}` : '/thoughts/';

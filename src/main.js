@@ -185,6 +185,11 @@ import {
   getHistoryPaginationState,
   shouldObserveHistoryPagination,
 } from './history-pagination.js';
+import {
+  createHistoryFilters,
+  matchesHistoryFilters,
+} from './history-filters.js';
+import { createHistoryFilterControls } from './history-filter-controls.js';
 
 const pageLoadDiagnostics = createPageLoadDiagnostics();
 pageLoadDiagnostics.mark('module:evaluated');
@@ -335,6 +340,14 @@ const historyDialog = document.querySelector('#history-dialog');
 const historyClose = document.querySelector('#history-close');
 const historyRefresh = document.querySelector('#history-refresh');
 const historySearch = document.querySelector('#history-search');
+const historyFilterTrigger = document.querySelector('#history-filter-trigger');
+const historyFilterCount = document.querySelector('#history-filter-count');
+const historyFilterTokens = document.querySelector('#history-filter-tokens');
+const historyFilterPopover = document.querySelector('#history-filter-popover');
+const historyFilterKindOptions = document.querySelector('#history-filter-kind-options');
+const historyFilterAnchored = document.querySelector('#history-filter-anchored');
+const historyFilterResolved = document.querySelector('#history-filter-resolved');
+const historyFilterClear = document.querySelector('#history-filter-clear');
 const historyScroll = document.querySelector('#history-scroll');
 const historyList = document.querySelector('#history-list');
 const historyPreview = document.querySelector('#history-preview');
@@ -443,6 +456,7 @@ let historyLoading = false;
 let historyLoadError = false;
 let historyRequestId = 0;
 let historySearchTimer = null;
+let historyFilters = createHistoryFilters();
 let historyPaginationObserver = null;
 let connectionSearchThoughtIds = [];
 let connectionSearchNextCursor = null;
@@ -529,6 +543,18 @@ let activeRenderableConnections = [];
 const connectionRenderer = createConnectionRenderer({
   layer: connectionLayer,
   getThoughtById,
+});
+
+const historyFilterControls = createHistoryFilterControls({
+  trigger: historyFilterTrigger,
+  count: historyFilterCount,
+  tokens: historyFilterTokens,
+  popover: historyFilterPopover,
+  kindOptions: historyFilterKindOptions,
+  anchoredInput: historyFilterAnchored,
+  resolvedInput: historyFilterResolved,
+  clearButton: historyFilterClear,
+  onChange: applyHistoryFilters,
 });
 
 const thoughtConnectionsList = createThoughtConnectionsList({
@@ -1496,17 +1522,29 @@ function currentThoughtStorageKey() {
   return auth ? accountStorageKey(auth.id) : STORAGE_KEY;
 }
 
-function resetPaginatedThoughtState() {
+function resetHistoryResults() {
   window.clearTimeout(historySearchTimer);
-  window.clearTimeout(connectionSearchTimer);
-  serverThoughtsRequestId += 1;
-  serverThoughtsNextCursor = null;
   historyThoughtIds = [];
   historyNextCursor = null;
   historyHasMore = false;
   historyLoading = false;
   historyLoadError = false;
   historyRequestId += 1;
+}
+
+function applyHistoryFilters(nextFilters) {
+  historyFilters = createHistoryFilters(nextFilters);
+  historyFilterControls.render(historyFilters);
+  resetHistoryResults();
+  renderHistory();
+  if (auth) void loadHistoryPage({ reset: true });
+}
+
+function resetPaginatedThoughtState() {
+  window.clearTimeout(connectionSearchTimer);
+  serverThoughtsRequestId += 1;
+  serverThoughtsNextCursor = null;
+  resetHistoryResults();
   connectionSearchThoughtIds = [];
   connectionSearchNextCursor = null;
   connectionSearchHasMore = false;
@@ -5856,13 +5894,17 @@ async function requestThoughtListPage({
   limit,
   cursor = null,
   query = '',
-  knowledgeKind = '',
+  knowledgeKinds = [],
+  anchored = null,
+  resolved = null,
 } = {}) {
   const payload = await requestApi(buildThoughtListPath({
     limit,
     cursor,
     query,
-    knowledgeKind,
+    knowledgeKinds,
+    anchored,
+    resolved,
   }));
   return normalizeThoughtListResponse(payload);
 }
@@ -6310,6 +6352,7 @@ function captureManualRefreshUiSnapshot() {
   return {
     historyOpen: historyDialog.open,
     historyQuery: historySearch.value,
+    historyFilters,
     historyScrollTop: historyScroll.scrollTop,
     connectionSearchOpen: isConnectionSearchOpen(),
     connectionSearchQuery: connectionSearchInput.value,
@@ -6372,13 +6415,10 @@ function rerenderOpenThoughtPanels(snapshot = {}) {
 
   if (snapshot.historyOpen && historyDialog.open) {
     historySearch.value = snapshot.historyQuery || '';
+    historyFilters = createHistoryFilters(snapshot.historyFilters);
+    historyFilterControls.render(historyFilters);
     if (auth) {
-      historyThoughtIds = [];
-      historyNextCursor = null;
-      historyHasMore = false;
-      historyLoading = false;
-      historyLoadError = false;
-      historyRequestId += 1;
+      resetHistoryResults();
       renderHistory();
       void loadHistoryPage({ reset: true });
     } else {
@@ -7597,7 +7637,10 @@ function getLocalHistoryMatches() {
   const query = historySearch.value;
 
   return [...thoughts]
-    .filter((thought) => matchesThoughtSearch(getThoughtSearchText(thought), query))
+    .filter((thought) => (
+      matchesHistoryFilters(thought, historyFilters)
+      && matchesThoughtSearch(getThoughtSearchText(thought), query)
+    ))
     .sort((first, second) => (
       validCreatedAt(second.createdAt) - validCreatedAt(first.createdAt)
     ));
@@ -7608,7 +7651,14 @@ function getHistoryThoughts() {
 
   return historyThoughtIds
     .map(getThoughtById)
-    .filter(Boolean);
+    .filter((thought) => (
+      thought
+      && matchesHistoryFilters(thought, historyFilters)
+      && matchesThoughtSearch(
+        getThoughtSearchText(thought),
+        historySearch.value,
+      )
+    ));
 }
 
 let historyPreviewTimer = null;
@@ -7669,6 +7719,9 @@ async function loadHistoryPage({ reset = false } = {}) {
       limit: HISTORY_PAGE_SIZE,
       cursor: reset ? null : historyNextCursor,
       query: historySearch.value,
+      knowledgeKinds: historyFilters.kinds,
+      anchored: historyFilters.anchored ? true : null,
+      resolved: historyFilters.resolved ? true : null,
     });
 
     if (requestId !== historyRequestId) return false;
@@ -7891,12 +7944,8 @@ function openAnchors() {
 function openHistory() {
   knowledgeKindPicker.close();
   historySearch.value = '';
-  historyThoughtIds = [];
-  historyNextCursor = null;
-  historyHasMore = false;
-  historyLoading = false;
-  historyLoadError = false;
-  historyRequestId += 1;
+  resetHistoryResults();
+  historyFilterControls.render(historyFilters);
   renderHistory();
   updateManualRefreshControls();
   historyDialog.showModal();
@@ -9502,18 +9551,14 @@ historyList.addEventListener('focusout', hideHistoryPreview);
 historyScroll.addEventListener('scroll', hideHistoryPreview, { passive: true });
 historyDialog.addEventListener('close', () => {
   hideHistoryPreview();
+  historyFilterControls.close();
   renderHistoryPagination();
 });
 setupPanelRefreshButton(historyRefresh);
 composerRelationClear.addEventListener('click', clearComposerRelation);
 historySearch.addEventListener('input', () => {
   if (auth) {
-    historyThoughtIds = [];
-    historyNextCursor = null;
-    historyHasMore = false;
-    historyLoading = false;
-    historyLoadError = false;
-    historyRequestId += 1;
+    resetHistoryResults();
     renderHistory();
     scheduleHistorySearch();
     return;

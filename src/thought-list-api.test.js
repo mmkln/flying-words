@@ -16,9 +16,23 @@ test('builds a paginated thought list path with cursor and query', () => {
       limit: 50,
       cursor: 'next-page',
       query: ' marketing ',
-      knowledgeKind: 'question',
+      knowledgeKinds: ['question', 'hypothesis'],
+      anchored: true,
+      resolved: true,
     }),
-    '/thoughts/?limit=50&cursor=next-page&q=marketing&knowledge_kind=question',
+    '/thoughts/?limit=50&cursor=next-page&q=marketing&knowledge_kind=question&knowledge_kind=hypothesis&anchored=true&resolved=true',
+  );
+});
+
+test('omits inactive thought filters from the list path', () => {
+  assert.equal(
+    buildThoughtListPath({
+      limit: 50,
+      knowledgeKinds: [],
+      anchored: null,
+      resolved: null,
+    }),
+    '/thoughts/?limit=50',
   );
 });
 
