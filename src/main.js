@@ -129,6 +129,7 @@ import {
   isThoughtAvailableInSpace,
   setBoardSpaces,
 } from './spaces.js';
+import { deriveAppChromeState } from './app-chrome-state.js';
 import {
   buildSpaceUrl,
   readSpaceIdFromSearch,
@@ -645,14 +646,7 @@ function getCanvasMinimapSnapshot() {
 }
 
 function renderCanvasMinimapNow() {
-  const visible = (
-    isCanvasSpace(activeSpaceId)
-    && viewMode !== 'spaces'
-    && getBoardThoughts().length > 0
-  );
-  navigationHud.hidden = !visible;
-
-  if (!visible) return;
+  if (navigationHud.hidden) return;
   renderCanvasHud();
   canvasMinimap.render(getCanvasMinimapSnapshot());
 }
@@ -8318,7 +8312,7 @@ function closeSpacesOverview({ restoreFocus = true, preservePurpose = false } = 
   spacesOverviewReturnFocus = spacesButton;
   viewMode = 'canvas';
   if (!preservePurpose) spacesOverviewPurpose = 'navigation';
-  renderBoardContext();
+  renderAppChrome();
   renderCanvasCamera();
   spacesOverview.hidden = true;
   if (isSpatialSpace(activeSpaceId)) void activateSpatialView();
@@ -8400,6 +8394,7 @@ function activateSpace(spaceId) {
   saveCanvasCamera();
 
   activeSpaceId = spaceId;
+  renderAppChrome();
   canvasCamera = loadCanvasCamera(activeSpaceId);
   renderCanvasCamera();
   if (isFlowSpace(activeSpaceId)) refreshFlowGeometry();
@@ -8492,7 +8487,7 @@ function openSpacesOverview({
     ? 'board-placement'
     : 'navigation';
   viewMode = 'spaces';
-  renderBoardContext();
+  renderAppChrome();
   renderCanvasCamera();
   renderThoughtInspector();
   renderSpacesOverview();
@@ -8509,16 +8504,19 @@ function openSpacesOverview({
   else if (isSpatialSpace(activeSpaceId)) spacesSpatialAction.focus();
 }
 
-function renderBoardContext() {
-  const visible = (
-    applicationReady
-    && viewMode === 'canvas'
-    && isCanvasSpace(activeSpaceId)
-  );
+function renderAppChrome() {
+  const chrome = deriveAppChromeState({
+    applicationReady,
+    viewMode,
+    canvasActive: isCanvasSpace(activeSpaceId),
+    boardThoughtCount: getBoardThoughts().length,
+  });
 
-  boardContext.hidden = !visible;
-  spacesButton.hidden = visible;
-  if (!visible) {
+  boardContext.hidden = !chrome.boardContextVisible;
+  spacesButton.hidden = !chrome.spacesButtonVisible;
+  navigationHud.hidden = !chrome.navigationHudVisible;
+
+  if (!chrome.boardContextVisible) {
     boardContextTitle.textContent = '';
     boardContext.removeAttribute('title');
     boardContext.removeAttribute('aria-label');
@@ -8538,7 +8536,7 @@ function updateUi() {
   const boardActive = isCanvasSpace(activeSpaceId);
   const spatialActive = isSpatialSpace(activeSpaceId);
   if (!boardActive) boardConnectionsPopover.close();
-  renderBoardContext();
+  renderAppChrome();
   const anchorsAvailable = boardActive || spatialActive;
   anchorsButton.hidden = !anchorsAvailable;
   if (!anchorsAvailable && anchorsDialog.open) anchorsDialog.close();
