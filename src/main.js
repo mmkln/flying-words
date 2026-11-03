@@ -367,7 +367,6 @@ const accountMenuAvatar = document.querySelector('#account-menu-avatar');
 const accountEmail = document.querySelector('#account-email');
 const telegramSettingsMenuItem = document.querySelector('#telegram-settings');
 const switchAccountMenuItem = document.querySelector('#switch-account');
-const signInMenuItem = document.querySelector('#sign-in-menu');
 const signOutMenuItem = document.querySelector('#sign-out');
 const appearancePicker = document.querySelector('#appearance-picker');
 const appearanceOptions = [
@@ -8821,49 +8820,67 @@ async function disconnectTelegram() {
 }
 
 function toggleAccountMenu() {
+  if (!auth) return;
+
   const willOpen = accountPopover.hidden;
   accountPopover.hidden = !willOpen;
   accountTrigger.setAttribute('aria-expanded', String(willOpen));
-  if (willOpen) {
-    if (auth) telegramSettingsMenuItem.focus();
-    else signInMenuItem.focus();
-  }
+  if (willOpen) telegramSettingsMenuItem.focus();
 }
 
 function updateAccountControl() {
+  closeAccountMenu();
+
   if (!sessionValidated) {
+    accountTrigger.disabled = true;
+    accountTriggerLabel.hidden = false;
     accountTriggerLabel.textContent = 'Checking…';
     accountTrigger.title = 'Checking your sign-in session';
-    accountTrigger.disabled = true;
+
+    accountTrigger.removeAttribute('aria-haspopup');
+    accountTrigger.setAttribute('aria-expanded', 'false');
+    accountTrigger.classList.remove('is-authenticated');
     accountAvatar.hidden = true;
     accountChevron.hidden = true;
-    closeAccountMenu();
+    accountAuthenticatedContent.hidden = true;
+    signOutMenuItem.hidden = true;
     return;
   }
 
   accountTrigger.disabled = false;
-  const isAuthenticated = Boolean(auth);
-  accountTrigger.classList.toggle('is-authenticated', isAuthenticated);
-  accountAvatar.hidden = !isAuthenticated;
-  accountChevron.hidden = false;
-  accountAuthenticatedContent.hidden = !isAuthenticated;
-  signInMenuItem.hidden = isAuthenticated;
-  signOutMenuItem.hidden = !isAuthenticated;
 
   if (!auth) {
     accountTriggerLabel.hidden = false;
     accountTriggerLabel.textContent = 'Sign in';
-    accountTrigger.title = 'Account and appearance';
+    accountTrigger.title = 'Sign in';
+
+    accountTrigger.removeAttribute('aria-haspopup');
+    accountTrigger.removeAttribute('aria-expanded');
+    accountTrigger.classList.remove('is-authenticated');
+    accountAvatar.hidden = true;
+    accountChevron.hidden = true;
+    accountAuthenticatedContent.hidden = true;
+    signOutMenuItem.hidden = true;
+
     if (telegramSettingsDialog.open) telegramSettingsDialog.close();
     return;
   }
 
   const initial = auth.email.trim().charAt(0).toUpperCase() || 'M';
+
+  accountTrigger.classList.add('is-authenticated');
+  accountTrigger.setAttribute('aria-haspopup', 'dialog');
+  accountTrigger.setAttribute('aria-expanded', 'false');
+  accountTrigger.title = `Account: ${auth.email}`;
+
   accountTriggerLabel.hidden = true;
+  accountAvatar.hidden = false;
   accountAvatar.textContent = initial;
+  accountChevron.hidden = false;
+  accountAuthenticatedContent.hidden = false;
   accountMenuAvatar.textContent = initial;
   accountEmail.textContent = auth.email;
-  accountTrigger.title = `Account: ${auth.email}`;
+  signOutMenuItem.hidden = false;
 }
 
 function startLogin({ switchAccount = false } = {}) {
@@ -9265,6 +9282,13 @@ deleteBoardDialog.addEventListener('close', () => {
 });
 
 accountTrigger.addEventListener('click', () => {
+  if (!sessionValidated) return;
+
+  if (!auth) {
+    startLogin();
+    return;
+  }
+
   if (boardArrangeInFlight) {
     announce('Wait until the Board finishes arranging.');
     return;
@@ -9273,7 +9297,6 @@ accountTrigger.addEventListener('click', () => {
   if (connectionEditor) closeConnectionEditor();
   toggleAccountMenu();
 });
-signInMenuItem.addEventListener('click', () => startLogin());
 telegramSettingsMenuItem.addEventListener('click', openTelegramSettings);
 switchAccountMenuItem.addEventListener('click', () => {
   switchAccount();
