@@ -13,12 +13,6 @@ import {
 import { readSpatialGamepad } from './gamepad-input.js';
 import { createSpatialOrientation } from './spatial-orientation.js';
 import { MAX_THOUGHTS } from './app-limits.js';
-import {
-  SpatialSceneLevel,
-  buildSpatialScene,
-  createSpatialClusterScene,
-  createSpatialDetailScene,
-} from './spatial-scene-model.js';
 
 const MAX_VISIBLE_LABELS = 60;
 const MAX_VISIBLE_CONNECTIONS = 8000;
@@ -35,8 +29,6 @@ const GAMEPAD_ROLL_SPEED = 1.6;
 const GAMEPAD_UI_TIMEOUT = 2200;
 const CONNECTION_SOURCE_COLOR = 0x7055c5;
 const CONNECTION_TARGET_COLOR = 0x248af0;
-const CLUSTER_COLOR = 0x7860d8;
-const CLUSTER_NEIGHBOUR_COLOR = 0x9a8fd1;
 
 const KEYBOARD_PAN_CODES = new Set([
   'KeyW',
@@ -134,7 +126,6 @@ export function createSpatialView({
   layoutStorageKey,
   layoutMode = SpatialLayoutMode.CONSTELLATIONS,
   onThoughtSelect = () => {},
-  onClusterOpen = () => {},
   onConnectionTargetToggle = () => {},
   onThoughtActivate = () => {},
   onThoughtMove = () => {},
@@ -217,32 +208,6 @@ export function createSpatialView({
   hitMesh.count = 0;
   scene.add(hitMesh);
 
-  const clusterGeometry = new THREE.IcosahedronGeometry(1, 3);
-  const clusterMaterial = new THREE.MeshBasicMaterial({
-    color: CLUSTER_COLOR,
-    transparent: true,
-    opacity: 0.78,
-  });
-  const clusterMesh = new THREE.InstancedMesh(
-    clusterGeometry,
-    clusterMaterial,
-    MAX_THOUGHTS,
-  );
-  clusterMesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
-  clusterMesh.frustumCulled = false;
-  clusterMesh.count = 0;
-  scene.add(clusterMesh);
-
-  const clusterHitMesh = new THREE.InstancedMesh(
-    clusterGeometry,
-    hitMaterial,
-    MAX_THOUGHTS,
-  );
-  clusterHitMesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
-  clusterHitMesh.frustumCulled = false;
-  clusterHitMesh.count = 0;
-  scene.add(clusterHitMesh);
-
   const edgeGeometry = new THREE.BufferGeometry();
   const edgeMaterial = new THREE.LineBasicMaterial({
     color: theme === 'dark' ? 0xaaa4bd : 0x8d91aa,
@@ -265,19 +230,6 @@ export function createSpatialView({
   );
   activeEdgeLines.frustumCulled = false;
   scene.add(activeEdgeLines);
-
-  const clusterEdgeGeometry = new THREE.BufferGeometry();
-  const clusterEdgeMaterial = new THREE.LineBasicMaterial({
-    color: theme === 'dark' ? 0x77708d : 0x9992ad,
-    transparent: true,
-    opacity: theme === 'dark' ? 0.3 : 0.24,
-  });
-  const clusterEdgeLines = new THREE.LineSegments(
-    clusterEdgeGeometry,
-    clusterEdgeMaterial,
-  );
-  clusterEdgeLines.frustumCulled = false;
-  scene.add(clusterEdgeLines);
 
   const raycaster = new THREE.Raycaster();
   const pointer = new THREE.Vector2();
@@ -307,22 +259,11 @@ export function createSpatialView({
 
   let nodes = [];
   let links = [];
-  let renderNodes = [];
-  let renderLinks = [];
-  let renderClusters = [];
-  let renderClusterLinks = [];
   let nodesById = new Map();
   let thoughtIdByInstance = [];
   let instanceByThoughtId = new Map();
-  let clusterIdByInstance = [];
-  let clusterInstanceById = new Map();
-  let clusterById = new Map();
-  let clusterAnchorById = new Map();
-  let sceneState = createSpatialDetailScene();
-  let visibleScene = null;
   let selectedThoughtId = null;
   let hoveredThoughtId = null;
-  let hoveredClusterId = null;
   let neighbourIds = new Set();
   let connectionSelection = null;
   let active = false;
@@ -345,7 +286,6 @@ export function createSpatialView({
   let initialFitPending = !storedCamera;
   let fitAfterLayout = false;
   let nodeInstancesDirty = true;
-  let clusterInstancesDirty = true;
   let edgeGeometryDirty = true;
   let graphBoundsDirty = true;
   let cachedGraphBounds = null;
@@ -362,7 +302,7 @@ export function createSpatialView({
     if (!graphBoundsDirty) return cachedGraphBounds;
     graphBoundsDirty = false;
     graphBoundsBox.makeEmpty();
-    for (const node of renderNodes) {
+    for (const node of nodes) {
       if (!finitePosition(node)) continue;
       const radius = Math.max(5, node.radius || 7);
       graphBoundsBox.expandByPoint(boundsPoint.set(
@@ -371,17 +311,6 @@ export function createSpatialView({
       graphBoundsBox.expandByPoint(boundsPoint.set(
         node.x + radius, node.y + radius, node.z + radius,
       ));
-    }
-    if (sceneState.level !== SpatialSceneLevel.CLUSTER || !renderNodes.length) {
-      for (const cluster of renderClusters) {
-        const radius = Math.max(12, cluster.radius || 24);
-        graphBoundsBox.expandByPoint(boundsPoint.set(
-          cluster.x - radius, cluster.y - radius, cluster.z - radius,
-        ));
-        graphBoundsBox.expandByPoint(boundsPoint.set(
-          cluster.x + radius, cluster.y + radius, cluster.z + radius,
-        ));
-      }
     }
     cachedGraphBounds = graphBoundsBox.isEmpty()
       ? null
@@ -440,53 +369,6 @@ export function createSpatialView({
     });
   }
 
-  function rebuildVisibleScene() {
-    const forcedThoughtIds = connectionSelection
-      ? [connectionSelection.sourceId, ...connectionSelection.targetIds]
-      : [];
-    visibleScene = buildSpatialScene({
-      nodes,
-      links,
-      clusterPlan: layout.getPresentationPlan(),
-      sceneState: activeLayoutMode === SpatialLayoutMode.CONSTELLATIONS
-        ? sceneState
-        : createSpatialDetailScene(),
-      forcedThoughtIds,
-    });
-    sceneState = visibleScene.state;
-
-    renderNodes = nodes.filter(({ id }) => visibleScene.thoughtIds.has(id));
-    renderLinks = visibleScene.thoughtLinks;
-    renderClusters = visibleScene.clusters.slice(0, MAX_THOUGHTS);
-    renderClusterLinks = visibleScene.clusterLinks;
-
-    thoughtIdByInstance = renderNodes.map(({ id }) => id);
-    instanceByThoughtId = new Map(
-      thoughtIdByInstance.map((thoughtId, instanceId) => [thoughtId, instanceId]),
-    );
-    clusterIdByInstance = renderClusters.map(({ id }) => id);
-    clusterInstanceById = new Map(
-      clusterIdByInstance.map((clusterId, instanceId) => [clusterId, instanceId]),
-    );
-    clusterById = new Map(renderClusters.map((cluster) => [cluster.id, cluster]));
-    clusterAnchorById = new Map(
-      visibleScene.clusterAnchors.map((cluster) => [cluster.id, cluster]),
-    );
-
-    nodeMesh.count = renderNodes.length;
-    hitMesh.count = renderNodes.length;
-    clusterMesh.count = renderClusters.length;
-    clusterHitMesh.count = renderClusters.length;
-    graphBoundsDirty = true;
-    nodeInstancesDirty = true;
-    clusterInstancesDirty = true;
-    edgeGeometryDirty = true;
-    return {
-      state: structuredClone(sceneState),
-      summary: visibleScene.summary ? { ...visibleScene.summary } : null,
-    };
-  }
-
   function requestRender() {
     if (!active || renderFrame !== null) return;
     renderFrame = requestAnimationFrame(renderNow);
@@ -499,12 +381,9 @@ export function createSpatialView({
     edgeMaterial.color.set(dark ? 0xaaa4bd : 0x8d91aa);
     edgeMaterial.opacity = dark ? 0.5 : 0.42;
     activeEdgeMaterial.color.set(dark ? 0x9d84ef : 0x7055c5);
-    clusterEdgeMaterial.color.set(dark ? 0x77708d : 0x9992ad);
     edgeMaterial.needsUpdate = true;
     activeEdgeMaterial.needsUpdate = true;
-    clusterEdgeMaterial.needsUpdate = true;
     nodeInstancesDirty = true;
-    clusterInstancesDirty = true;
     edgeGeometryDirty = true;
     requestRender();
   }
@@ -560,23 +439,11 @@ export function createSpatialView({
     raycaster.setFromCamera(pointer, camera);
   }
 
-  function pickEntityAtNdc(x, y) {
+  function pickThoughtAtNdc(x, y) {
     updateRaycaster(x, y);
-    const [thoughtHit] = raycaster.intersectObject(hitMesh);
-    if (thoughtHit?.instanceId !== undefined) {
-      return {
-        type: 'thought',
-        id: thoughtIdByInstance[thoughtHit.instanceId],
-      };
-    }
-    const [clusterHit] = raycaster.intersectObject(clusterHitMesh);
-    if (clusterHit?.instanceId !== undefined) {
-      return {
-        type: 'cluster',
-        id: clusterIdByInstance[clusterHit.instanceId],
-      };
-    }
-    return null;
+    const [hit] = raycaster.intersectObject(hitMesh);
+    if (hit?.instanceId === undefined) return null;
+    return thoughtIdByInstance[hit.instanceId] || null;
   }
 
   function updatePointer(event) {
@@ -587,28 +454,16 @@ export function createSpatialView({
     );
   }
 
-  function pickEntity(event) {
+  function pickThought(event) {
     updatePointer(event);
-    const [thoughtHit] = raycaster.intersectObject(hitMesh);
-    if (thoughtHit?.instanceId !== undefined) {
-      return {
-        type: 'thought',
-        id: thoughtIdByInstance[thoughtHit.instanceId],
-      };
-    }
-    const [clusterHit] = raycaster.intersectObject(clusterHitMesh);
-    if (clusterHit?.instanceId !== undefined) {
-      return {
-        type: 'cluster',
-        id: clusterIdByInstance[clusterHit.instanceId],
-      };
-    }
-    return null;
+    const [hit] = raycaster.intersectObject(hitMesh);
+    if (hit?.instanceId === undefined) return null;
+    return thoughtIdByInstance[hit.instanceId] || null;
   }
 
   function updateNodeInstances() {
     if (!nodeInstancesDirty) return;
-    renderNodes.forEach((node) => {
+    nodes.forEach((node) => {
       const instanceId = instanceByThoughtId.get(node.id);
       if (instanceId === undefined) return;
 
@@ -669,45 +524,12 @@ export function createSpatialView({
     nodeInstancesDirty = false;
   }
 
-  function updateClusterInstances() {
-    if (!clusterInstancesDirty) return;
-    renderClusters.forEach((cluster) => {
-      const instanceId = clusterInstanceById.get(cluster.id);
-      if (instanceId === undefined) return;
-      const hovered = cluster.id === hoveredClusterId;
-      const visualScale = hovered ? 1.1 : 1;
-      const radius = Math.max(12, cluster.radius || 24) * visualScale;
-
-      position.set(cluster.x, cluster.y, cluster.z);
-      scale.setScalar(radius);
-      matrix.compose(position, identityQuaternion, scale);
-      clusterMesh.setMatrixAt(instanceId, matrix);
-
-      scale.setScalar(radius + NODE_HIT_PADDING);
-      matrix.compose(position, identityQuaternion, scale);
-      clusterHitMesh.setMatrixAt(instanceId, matrix);
-
-      color.setHex(
-        cluster.opacity < 0.5 ? CLUSTER_NEIGHBOUR_COLOR : CLUSTER_COLOR,
-      );
-      if (hovered) color.lerp(white, 0.18);
-      else if (cluster.opacity < 0.5) color.lerp(backgroundColor, 0.5);
-      clusterMesh.setColorAt(instanceId, color);
-    });
-
-    clusterMesh.instanceMatrix.needsUpdate = true;
-    clusterHitMesh.instanceMatrix.needsUpdate = true;
-    clusterHitMesh.computeBoundingSphere();
-    if (clusterMesh.instanceColor) clusterMesh.instanceColor.needsUpdate = true;
-    clusterInstancesDirty = false;
-  }
-
   function updateEdgeGeometry() {
     if (!edgeGeometryDirty) return;
     const basePositions = [];
     const activePositions = [];
 
-    renderLinks.slice(0, MAX_VISIBLE_CONNECTIONS).forEach((link) => {
+    links.slice(0, MAX_VISIBLE_CONNECTIONS).forEach((link) => {
       const source = typeof link.source === 'object'
         ? link.source
         : nodesById.get(link.sourceId);
@@ -761,20 +583,6 @@ export function createSpatialView({
       'position',
       new THREE.Float32BufferAttribute(activePositions, 3),
     );
-    const clusterPositions = [];
-    renderClusterLinks.forEach((link) => {
-      const source = clusterAnchorById.get(link.source);
-      const target = clusterAnchorById.get(link.target);
-      if (!source || !target) return;
-      clusterPositions.push(
-        source.x, source.y, source.z,
-        target.x, target.y, target.z,
-      );
-    });
-    clusterEdgeGeometry.setAttribute(
-      'position',
-      new THREE.Float32BufferAttribute(clusterPositions, 3),
-    );
     edgeMaterial.opacity = selectedThoughtId || connectionSelection ? 0.1 : 0.42;
     edgeGeometryDirty = false;
   }
@@ -785,21 +593,25 @@ export function createSpatialView({
 
     const width = Math.max(1, container.clientWidth);
     const height = Math.max(1, container.clientHeight);
-    const clusterCandidates = renderClusters
-      .filter((cluster) => {
-        position.set(cluster.x, cluster.y, cluster.z);
-        return frustum.containsPoint(position);
-      })
-      .map((cluster) => ({
-        entityType: 'cluster',
-        entity: cluster,
-        text: `${cluster.label} · ${cluster.count}`,
-        priority: cluster.id === hoveredClusterId ? 0 : 1,
-      }));
-    const thoughtCandidates = renderNodes
+    const candidates = nodes
       .filter((node) => {
         position.set(node.x, node.y, node.z);
         return frustum.containsPoint(position);
+      })
+      .sort((first, second) => {
+        const priority = (node) => {
+          if (node.id === connectionSelection?.sourceId) return 0;
+          if (connectionSelection?.targetIds.has(node.id)) return 1;
+          if (node.id === selectedThoughtId) return 0;
+          if (neighbourIds.has(node.id)) return 2;
+          if (node.id === hoveredThoughtId) return 3;
+          return 4;
+        };
+        const priorityDifference = priority(first) - priority(second);
+        if (priorityDifference) return priorityDifference;
+        const connectionDifference = (second.connectionCount || 0) - (first.connectionCount || 0);
+        if (connectionDifference) return connectionDifference;
+        return camera.position.distanceToSquared(first) - camera.position.distanceToSquared(second);
       })
       .filter((node) => (
         connectionSelection
@@ -809,46 +621,11 @@ export function createSpatialView({
         || node.id === hoveredThoughtId
       ))
       .map((node) => {
-        const priority = (() => {
-          if (node.id === connectionSelection?.sourceId) return 0;
-          if (connectionSelection?.targetIds.has(node.id)) return 1;
-          if (node.id === selectedThoughtId) return 0;
-          if (neighbourIds.has(node.id)) return 2;
-          if (node.id === hoveredThoughtId) return 3;
-          return 4;
-        })();
+        projected.set(node.x, node.y, node.z).project(camera);
+        const distance = camera.position.distanceTo(node);
+        const labelScale = THREE.MathUtils.clamp(760 / Math.max(520, distance), 0.72, 1);
         return {
-          entityType: 'thought',
-          entity: node,
-          text: node.text,
-          priority,
-        };
-      });
-    const candidates = [...clusterCandidates, ...thoughtCandidates]
-      .sort((first, second) => {
-        const priorityDifference = first.priority - second.priority;
-        if (priorityDifference) return priorityDifference;
-        const connectionDifference = (
-          second.entity.connectionCount || second.entity.count || 0
-        ) - (
-          first.entity.connectionCount || first.entity.count || 0
-        );
-        if (connectionDifference) return connectionDifference;
-        return camera.position.distanceToSquared(first.entity)
-          - camera.position.distanceToSquared(second.entity);
-      })
-      .map((candidate) => {
-        const { entity } = candidate;
-        projected.set(entity.x, entity.y, entity.z).project(camera);
-        const distance = camera.position.distanceTo(entity);
-        const baseScale = candidate.entityType === 'cluster' ? 1.08 : 1;
-        const labelScale = THREE.MathUtils.clamp(
-          (760 / Math.max(520, distance)) * baseScale,
-          0.72,
-          candidate.entityType === 'cluster' ? 1.15 : 1,
-        );
-        return {
-          ...candidate,
+          node,
           x: (projected.x * 0.5 + 0.5) * width,
           y: (-projected.y * 0.5 + 0.5) * height,
           labelScale,
@@ -859,10 +636,8 @@ export function createSpatialView({
     const visible = [];
     candidates.some((candidate) => {
       if (visible.length >= MAX_VISIBLE_LABELS) return true;
-      const {
-        entity, text, x, y, labelScale,
-      } = candidate;
-      const estimatedWidth = THREE.MathUtils.clamp(text.length * 6.4, 42, 240)
+      const { node, x, y, labelScale } = candidate;
+      const estimatedWidth = THREE.MathUtils.clamp(node.text.length * 6.4, 42, 220)
         * labelScale;
       const box = {
         left: x - (estimatedWidth / 2) - 7,
@@ -877,11 +652,10 @@ export function createSpatialView({
         || box.top > other.bottom
       ));
       const isPriority = (
-        candidate.entityType === 'cluster'
-        || entity.id === connectionSelection?.sourceId
-        || connectionSelection?.targetIds.has(entity.id)
-        || entity.id === selectedThoughtId
-        || entity.id === hoveredThoughtId
+        node.id === connectionSelection?.sourceId
+        || connectionSelection?.targetIds.has(node.id)
+        || node.id === selectedThoughtId
+        || node.id === hoveredThoughtId
       );
       if (!overlaps || isPriority) {
         visible.push(candidate);
@@ -898,36 +672,22 @@ export function createSpatialView({
       }
 
       const {
-        entityType, entity, text, x, y, labelScale,
+        node, x, y, labelScale,
       } = candidate;
-      const isCluster = entityType === 'cluster';
 
       label.hidden = false;
-      label.textContent = text;
-      label.classList.toggle('is-cluster', isCluster);
-      label.classList.toggle('is-cluster-neighbour', isCluster && entity.opacity < 0.5);
-      label.classList.toggle('is-selected', !isCluster && entity.id === selectedThoughtId);
-      label.classList.toggle('is-neighbour', !isCluster && neighbourIds.has(entity.id));
-      label.classList.toggle(
-        'is-connection-source',
-        !isCluster && entity.id === connectionSelection?.sourceId,
-      );
+      label.textContent = node.text;
+      label.dataset.thoughtId = node.id;
+      label.classList.toggle('is-selected', node.id === selectedThoughtId);
+      label.classList.toggle('is-neighbour', neighbourIds.has(node.id));
+      label.classList.toggle('is-connection-source', node.id === connectionSelection?.sourceId);
       label.classList.toggle(
         'is-connection-target',
-        !isCluster && connectionSelection?.targetIds.has(entity.id) === true,
+        connectionSelection?.targetIds.has(node.id) === true,
       );
-      if (isCluster) {
-        delete label.dataset.thoughtId;
-        label.dataset.clusterId = entity.id;
-      } else {
-        delete label.dataset.clusterId;
-        label.dataset.thoughtId = entity.id;
-      }
       label.style.setProperty(
         '--spatial-kind-color',
-        isCluster
-          ? '#7860d8'
-          : KIND_CSS_COLORS[entity.kind] || KIND_CSS_COLORS.thought,
+        KIND_CSS_COLORS[node.kind] || KIND_CSS_COLORS.thought,
       );
       label.style.transform = `translate(-50%, calc(-100% - 12px)) translate3d(${x}px, ${y}px, 0) scale(${labelScale})`;
     });
@@ -1110,20 +870,11 @@ export function createSpatialView({
   }
 
   function updateGamepadAim() {
-    const entity = pickEntityAtNdc(0, 0);
-    setGamepadAim(entity?.type === 'thought' ? entity.id : null);
+    setGamepadAim(pickThoughtAtNdc(0, 0));
   }
 
   function selectThoughtAtGamepadAim() {
-    const entity = pickEntityAtNdc(0, 0);
-    if (entity?.type === 'cluster') {
-      const cluster = clusterById.get(entity.id);
-      onClusterOpen(entity.id, cluster
-        ? { label: cluster.label, count: cluster.count }
-        : null);
-      return true;
-    }
-    const thoughtId = entity?.type === 'thought' ? entity.id : null;
+    const thoughtId = pickThoughtAtNdc(0, 0);
     setGamepadAim(thoughtId);
     if (!thoughtId) return false;
 
@@ -1315,7 +1066,6 @@ export function createSpatialView({
     camera.updateMatrixWorld();
     orientation.update({ camera, graphCenter: getGraphBounds()?.center ?? null });
     updateNodeInstances();
-    updateClusterInstances();
     updateEdgeGeometry();
     updateLabels();
     renderer.render(scene, camera);
@@ -1364,6 +1114,13 @@ export function createSpatialView({
       && availableIds.has(link.targetId)
     ));
 
+    thoughtIdByInstance = preparedNodes.map((node) => node.id);
+    instanceByThoughtId = new Map(
+      thoughtIdByInstance.map((thoughtId, instanceId) => [thoughtId, instanceId]),
+    );
+    nodeMesh.count = preparedNodes.length;
+    hitMesh.count = preparedNodes.length;
+
     layout.setGraph(
       {
         nodes: preparedNodes,
@@ -1378,31 +1135,10 @@ export function createSpatialView({
     nodesById = new Map(nodes.map((node) => [node.id, node]));
     if (!nodesById.has(selectedThoughtId)) selectedThoughtId = null;
     updateNeighbourIds();
-    rebuildVisibleScene();
+    nodeInstancesDirty = true;
+    edgeGeometryDirty = true;
     if (initialFitPending && nodes.length) fitAll();
     requestRender();
-  }
-
-  function setSceneState(nextState) {
-    sceneState = nextState || createSpatialDetailScene();
-    const resolved = rebuildVisibleScene();
-    requestRender();
-    return resolved;
-  }
-
-  function getSceneState() {
-    return structuredClone(sceneState);
-  }
-
-  function revealThought(thoughtId) {
-    if (!nodesById.has(thoughtId)) return null;
-    const clusterPlan = layout.getPresentationPlan();
-    const cluster = clusterPlan?.clusterByNodeId?.get(thoughtId);
-    return setSceneState(
-      activeLayoutMode === SpatialLayoutMode.CONSTELLATIONS && cluster
-        ? createSpatialClusterScene(cluster.id)
-        : createSpatialDetailScene(),
-    );
   }
 
   function setSelectedThought(thoughtId) {
@@ -1431,7 +1167,8 @@ export function createSpatialView({
       'is-connection-selecting',
       Boolean(connectionSelection),
     );
-    rebuildVisibleScene();
+    nodeInstancesDirty = true;
+    edgeGeometryDirty = true;
     requestRender();
   }
 
@@ -1621,20 +1358,8 @@ export function createSpatialView({
 
   function handlePointerDown(event) {
     if (!active || event.button !== 0) return;
-    const entity = pickEntity(event);
-    if (!entity) return;
-
-    if (entity.type === 'cluster') {
-      if (connectionSelection) return;
-      event.preventDefault();
-      event.stopImmediatePropagation();
-      const cluster = clusterById.get(entity.id);
-      onClusterOpen(entity.id, cluster
-        ? { label: cluster.label, count: cluster.count }
-        : null);
-      return;
-    }
-    const thoughtId = entity.id;
+    const thoughtId = pickThought(event);
+    if (!thoughtId) return;
 
     if (connectionSelection) {
       event.preventDefault();
@@ -1680,22 +1405,13 @@ export function createSpatialView({
   function handlePointerMove(event) {
     hideGamepadUi();
     if (!drag) {
-      const entity = active ? pickEntity(event) : null;
-      const nextHoveredThoughtId = entity?.type === 'thought' ? entity.id : null;
-      const nextHoveredClusterId = entity?.type === 'cluster' ? entity.id : null;
+      const nextHoveredThoughtId = active ? pickThought(event) : null;
       if (nextHoveredThoughtId !== hoveredThoughtId) {
         hoveredThoughtId = nextHoveredThoughtId;
         nodeInstancesDirty = true;
+        renderer.domElement.classList.toggle('is-node-hovered', Boolean(hoveredThoughtId));
+        requestRender();
       }
-      if (nextHoveredClusterId !== hoveredClusterId) {
-        hoveredClusterId = nextHoveredClusterId;
-        clusterInstancesDirty = true;
-      }
-      renderer.domElement.classList.toggle(
-        'is-node-hovered',
-        Boolean(hoveredThoughtId || hoveredClusterId),
-      );
-      requestRender();
       return;
     }
     if (event.pointerId !== drag.pointerId) return;
@@ -1722,19 +1438,17 @@ export function createSpatialView({
 
   function handleDoubleClick(event) {
     if (connectionSelection) return;
-    const entity = pickEntity(event);
-    if (entity?.type !== 'thought') return;
+    const thoughtId = pickThought(event);
+    if (!thoughtId) return;
     event.preventDefault();
     event.stopImmediatePropagation();
-    onThoughtActivate(entity.id);
+    onThoughtActivate(thoughtId);
   }
 
   function handlePointerLeave() {
-    if (drag || (!hoveredThoughtId && !hoveredClusterId)) return;
+    if (drag || !hoveredThoughtId) return;
     hoveredThoughtId = null;
-    hoveredClusterId = null;
     nodeInstancesDirty = true;
-    clusterInstancesDirty = true;
     renderer.domElement.classList.remove('is-node-hovered');
     requestRender();
   }
@@ -1785,14 +1499,10 @@ export function createSpatialView({
     nodeGeometry.dispose();
     nodeMaterial.dispose();
     hitMaterial.dispose();
-    clusterGeometry.dispose();
-    clusterMaterial.dispose();
     edgeGeometry.dispose();
     edgeMaterial.dispose();
     activeEdgeGeometry.dispose();
     activeEdgeMaterial.dispose();
-    clusterEdgeGeometry.dispose();
-    clusterEdgeMaterial.dispose();
     renderer.dispose();
     renderer.domElement.removeEventListener('pointerdown', interruptCameraTween, true);
     renderer.domElement.removeEventListener('wheel', interruptCameraTween, true);
@@ -1846,16 +1556,13 @@ export function createSpatialView({
     fitAll,
     focusThought,
     getCameraState,
-    getSceneState,
     getThoughtPosition,
-    revealThought,
     resetView,
     restoreCameraState,
     resize,
     setGraph,
     setConnectionSelection,
     setSelectedThought,
-    setSceneState,
     setTheme,
     setThoughtPinned,
   };

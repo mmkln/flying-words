@@ -154,12 +154,6 @@ import {
 } from './spatial-layout-mode.js';
 import { SpatialGraphTransitionKind } from './spatial-graph-transition.js';
 import {
-  SpatialSceneLevel,
-  createSpatialClusterScene,
-  createSpatialDetailScene,
-  createSpatialOverviewScene,
-} from './spatial-scene-model.js';
-import {
   SpatialScopeMode,
   applySpatialScope,
   createAllSpatialScope,
@@ -513,10 +507,6 @@ let resolvedTheme = resolveTheme(themeMode, systemThemeQuery.matches);
 let spatialLayoutMode = loadSpatialLayoutMode();
 let spatialScope = createAllSpatialScope();
 let spatialScopeVisibleCount = 0;
-let spatialSceneState = spatialLayoutMode === SpatialLayoutMode.CONSTELLATIONS
-  ? createSpatialOverviewScene()
-  : createSpatialDetailScene();
-let spatialSceneSummary = null;
 let viewMode = 'canvas';
 let spacesOverviewReturnFocus = spacesButton;
 const initiallyRequestedSpaceId = readSpaceIdFromSearch(window.location.search);
@@ -910,35 +900,6 @@ function focusSelectedSpatialThought() {
   return spatialView.focusThought(selectedThoughtId);
 }
 
-function applyResolvedSpatialScene(result) {
-  if (!result) return;
-  spatialSceneState = result.state;
-  spatialSceneSummary = result.summary;
-  renderSpatialScopeControls();
-}
-
-function defaultSpatialSceneForLayout(mode = spatialLayoutMode) {
-  return mode === SpatialLayoutMode.CONSTELLATIONS
-    ? createSpatialOverviewScene()
-    : createSpatialDetailScene();
-}
-
-function openSpatialCluster(clusterId, summary = null) {
-  if (
-    !spatialView
-    || spatialLayoutMode !== SpatialLayoutMode.CONSTELLATIONS
-    || spatialScope.mode !== SpatialScopeMode.ALL
-  ) return false;
-
-  spatialSceneState = createSpatialClusterScene(clusterId);
-  spatialSceneSummary = summary;
-  if (selectedThoughtId) clearThoughtSelection();
-  applyResolvedSpatialScene(spatialView.setSceneState(spatialSceneState));
-  spatialView.fitAll();
-  announce(`Opened ${spatialSceneSummary?.label || 'thought'} cluster.`);
-  return true;
-}
-
 function setSpatialLayoutMode(mode) {
   const nextMode = normalizeSpatialLayoutMode(mode);
   if (nextMode === spatialLayoutMode) {
@@ -947,8 +908,6 @@ function setSpatialLayoutMode(mode) {
   }
 
   spatialLayoutMode = nextMode;
-  spatialSceneState = defaultSpatialSceneForLayout(nextMode);
-  spatialSceneSummary = null;
   clearSpatialNavigationHistory();
   storeSpatialLayoutMode();
   renderSpatialLayoutPicker();
@@ -1004,19 +963,10 @@ function isThoughtInSpatialScope(thoughtId, graph = buildSpatialSourceGraph()) {
 function renderSpatialScopeControls() {
   const spatialActive = isSpatialSpace(activeSpaceId) && viewMode !== 'spaces';
   const contextActive = spatialScope.mode === SpatialScopeMode.CONTEXT;
-  const clusterActive = (
-    spatialLayoutMode === SpatialLayoutMode.CONSTELLATIONS
-    && spatialSceneState.level === SpatialSceneLevel.CLUSTER
-  );
-  spatialScopeStatus.hidden = !spatialActive || (!contextActive && !clusterActive);
+  spatialScopeStatus.hidden = !spatialActive || !contextActive;
 
   if (contextActive) {
     spatialScopeSummary.textContent = `Context · ${spatialScopeVisibleCount} ${spatialScopeVisibleCount === 1 ? 'thought' : 'thoughts'}`;
-  } else if (clusterActive) {
-    const count = spatialSceneSummary?.count;
-    spatialScopeSummary.textContent = count
-      ? `${spatialSceneSummary.label} · ${count}`
-      : (spatialSceneSummary?.label || 'Thought cluster');
   }
 
   const canUseSelectedThought = Boolean(
@@ -1040,8 +990,6 @@ function showSpatialContext(rootId) {
   if (nextScope.mode !== SpatialScopeMode.CONTEXT) return false;
 
   spatialScope = nextScope;
-  spatialSceneState = createSpatialDetailScene();
-  spatialSceneSummary = null;
   clearSpatialNavigationHistory();
   refreshSpatialGraph({
     fitAfterLayout: true,
@@ -1052,28 +1000,15 @@ function showSpatialContext(rootId) {
 }
 
 function showAllSpatialThoughts() {
-  const alreadyOverview = (
-    spatialScope.mode === SpatialScopeMode.ALL
-    && (
-      spatialLayoutMode !== SpatialLayoutMode.CONSTELLATIONS
-      || spatialSceneState.level === SpatialSceneLevel.OVERVIEW
-    )
-  );
-  if (alreadyOverview) return;
+  if (spatialScope.mode === SpatialScopeMode.ALL) return;
 
   spatialScope = createAllSpatialScope();
-  spatialSceneState = defaultSpatialSceneForLayout();
-  spatialSceneSummary = null;
   clearSpatialNavigationHistory();
   refreshSpatialGraph({
     fitAfterLayout: true,
     transition: { kind: SpatialGraphTransitionKind.REBUILD },
   });
-  announce(
-    spatialLayoutMode === SpatialLayoutMode.CONSTELLATIONS
-      ? 'Showing Spatial overview.'
-      : 'Showing all thoughts in Spatial.',
-  );
+  announce('Showing all thoughts in Spatial.');
 }
 
 async function ensureSpatialView() {
@@ -1087,9 +1022,6 @@ async function ensureSpatialView() {
           storageKey: `${SPATIAL_CAMERA_STORAGE_PREFIX}spatial-1`,
           layoutStorageKey: `${SPATIAL_LAYOUT_STORAGE_PREFIX}spatial-1:`,
           layoutMode: spatialLayoutMode,
-          onClusterOpen(clusterId, summary) {
-            openSpatialCluster(clusterId, summary);
-          },
           onThoughtSelect(thoughtId) {
             void navigateToSpatialThought(thoughtId, { focus: false });
           },
@@ -1143,7 +1075,6 @@ function refreshSpatialGraph({ fitAfterLayout = false, transition = null } = {})
     },
     { transition },
   );
-  applyResolvedSpatialScene(spatialView.setSceneState(spatialSceneState));
   spatialView.setSelectedThought(selectedThoughtId);
   renderThoughtInspector();
 }
@@ -1161,7 +1092,6 @@ async function activateSpatialView() {
     return;
   }
   view.setGraph(buildSpatialGraph());
-  applyResolvedSpatialScene(view.setSceneState(spatialSceneState));
   view.setSelectedThought(selectedThoughtId);
   view.activate();
   renderThoughtInspector();
@@ -7513,13 +7443,6 @@ async function navigateToSpatialThought(
   if (!view.getThoughtPosition(thoughtId)) refreshSpatialGraph();
   if (!view.getThoughtPosition(thoughtId)) return false;
 
-  if (
-    spatialScope.mode === SpatialScopeMode.ALL
-    && spatialLayoutMode === SpatialLayoutMode.CONSTELLATIONS
-  ) {
-    applyResolvedSpatialScene(view.revealThought(thoughtId));
-  }
-
   if (remember && !scopeChanged && !connectionEditor && !magnetEditor) {
     spatialNavigationHistory.record({
       thoughtId: selectedThoughtId,
@@ -7557,12 +7480,6 @@ function canNavigateSpatialBack() {
 function navigateSpatialBack() {
   if (!canNavigateSpatialBack()) return false;
   const entry = spatialNavigationHistory.peek(canReturnToSpatialThought);
-  if (
-    spatialScope.mode === SpatialScopeMode.ALL
-    && spatialLayoutMode === SpatialLayoutMode.CONSTELLATIONS
-  ) {
-    applyResolvedSpatialScene(spatialView.revealThought(entry.thoughtId));
-  }
   if (!spatialView.restoreCameraState(entry.camera)) return false;
 
   ++spatialNavigationRequestId;
