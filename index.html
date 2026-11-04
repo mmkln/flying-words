@@ -38,8 +38,8 @@
           : '#f9f8fe';
       })();
     </script>
-    <script type="module" crossorigin src="/assets/index-wVhTWXpS.js"></script>
-    <link rel="stylesheet" crossorigin href="/assets/index-BT6ePzoy.css">
+    <script type="module" crossorigin src="/assets/index-CI8iDrzD.js"></script>
+    <link rel="stylesheet" crossorigin href="/assets/index-CNS5eNq4.css">
   </head>
   <body>
     <main class="app-shell">
@@ -373,10 +373,10 @@
               <section
                 class="spatial-inspector-suggestions spatial-only"
                 id="spatial-inspector-suggestions"
-                aria-label="Suggested links"
+                aria-label="Suggested connections"
                 hidden
               >
-                <span class="spatial-inspector-suggestions-title">Suggested links</span>
+                <span class="spatial-inspector-suggestions-title">Suggested connections</span>
                 <div id="spatial-inspector-suggestion-list"></div>
               </section>
             </div>
@@ -587,6 +587,33 @@
                 />
               </label>
               <div class="connection-map-results" id="connection-map-results" hidden></div>
+              <section
+                class="connection-map-create-panel"
+                id="connection-map-create-panel"
+                hidden
+              >
+                <div class="connection-map-create-main">
+                  <button
+                    class="connection-map-create-kind"
+                    id="connection-map-create-kind"
+                    type="button"
+                    aria-haspopup="listbox"
+                    aria-expanded="false"
+                  ></button>
+                  <div class="connection-map-create-copy">
+                    <small>New thought</small>
+                    <strong id="connection-map-create-text"></strong>
+                  </div>
+                </div>
+                <div class="connection-map-create-footer">
+                  <div id="connection-map-create-link-fields"></div>
+                  <button
+                    class="connection-map-create-action"
+                    id="connection-map-create-action"
+                    type="button"
+                  >Create</button>
+                </div>
+              </section>
             </div>
 
             <div class="connection-map-viewport" id="connection-map-viewport">
@@ -633,6 +660,7 @@
           </header>
 
           <div class="board-placement-stage">
+            <p class="board-placement-error" id="board-placement-error" role="alert" hidden></p>
             <div class="board-placement-viewport" id="board-placement-viewport">
               <div class="board-placement-world" id="board-placement-world">
                 <svg class="board-placement-edges" id="board-placement-edges" aria-hidden="true">
@@ -1001,7 +1029,13 @@
         ></button>
         <div class="thought-copy">
           <p class="thought-text"></p>
-          <small class="thought-resource-host" hidden></small>
+          <a
+            class="thought-resource-host"
+            data-thought-resource-link
+            target="_blank"
+            rel="noopener noreferrer"
+            hidden
+          ></a>
         </div>
         <button class="anchor-btn anchor-button" type="button" title="Add to anchors" aria-label="Add to anchors" aria-pressed="false" hidden>
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
@@ -1045,21 +1079,25 @@
           class="link-control-trigger"
           type="button"
           data-link-trigger
-          aria-label="Attach link"
+          aria-label="Attach web link"
           aria-haspopup="dialog"
           aria-expanded="false"
-          aria-pressed="false"
         >
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
             <path d="M10 13a5 5 0 0 0 7.54.54l2-2a5 5 0 0 0-7.07-7.07l-1.15 1.15"></path>
             <path d="M14 11a5 5 0 0 0-7.54-.54l-2 2a5 5 0 0 0 7.07 7.07l1.15-1.15"></path>
           </svg>
-          <span class="link-control-trigger-label" data-link-trigger-label>Add link</span>
-          <span class="link-control-indicator" data-link-indicator hidden></span>
+          <span class="link-control-trigger-label" data-link-trigger-label>Add web link</span>
         </button>
 
         <div class="link-control-preview" data-link-preview hidden>
-          <button class="link-control-preview-summary" type="button" data-link-edit>
+          <button
+            class="link-control-preview-summary"
+            type="button"
+            data-link-edit
+            aria-haspopup="dialog"
+            aria-expanded="false"
+          >
             <span class="link-control-preview-icon" aria-hidden="true">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">
                 <path d="M10 13a5 5 0 0 0 7.54.54l2-2a5 5 0 0 0-7.07-7.07l-1.15 1.15"></path>
@@ -1068,44 +1106,78 @@
             </span>
             <span class="link-control-preview-copy">
               <strong data-link-preview-title></strong>
+              <span data-link-preview-separator aria-hidden="true">·</span>
               <small data-link-preview-host></small>
             </span>
           </button>
-          <button class="link-control-remove" type="button" data-link-remove aria-label="Remove attached link">×</button>
+          <button class="link-control-remove" type="button" data-link-remove aria-label="Remove web link">×</button>
         </div>
 
-        <div class="link-control-popover" data-link-popover role="dialog" aria-label="Attach link" hidden>
-          <div class="link-control-url-row">
-            <label class="link-control-url-field">
-              <span class="sr-only">URL</span>
-              <input
-                type="url"
-                data-link-url
-                inputmode="url"
-                autocomplete="url"
-                maxlength="2048"
-                placeholder="Paste a link"
-              />
-            </label>
-            <button class="link-control-confirm" type="button" data-link-confirm>Add</button>
+        <div class="link-control-popover" data-link-popover role="dialog" aria-label="Web link" hidden>
+          <div class="link-control-form" data-link-editor>
+            <header class="link-control-header">
+              <strong>Web link</strong>
+              <button
+                class="link-control-close"
+                type="button"
+                data-link-cancel
+                aria-label="Cancel web link editing"
+              >×</button>
+            </header>
+
+            <div class="link-control-fields">
+              <label class="link-control-field">
+                <span>URL</span>
+                <input
+                  type="url"
+                  data-link-url
+                  inputmode="url"
+                  autocomplete="url"
+                  maxlength="2048"
+                  placeholder="https://example.com"
+                />
+              </label>
+
+              <label class="link-control-field">
+                <span>Title <small>Optional</small></span>
+                <input
+                  type="text"
+                  data-link-title
+                  maxlength="300"
+                />
+              </label>
+
+              <small
+                class="link-control-status"
+                data-link-status
+                aria-live="polite"
+                hidden
+              ></small>
+            </div>
+
+            <footer class="link-control-footer">
+              <button
+                class="link-control-delete"
+                type="button"
+                data-link-remove
+                hidden
+              >Remove</button>
+
+              <span class="link-control-footer-spacer"></span>
+
+              <button
+                class="link-control-cancel"
+                type="button"
+                data-link-cancel
+              >Cancel</button>
+
+              <button
+                class="link-control-save"
+                type="button"
+                data-link-save
+              >Add</button>
+            </footer>
           </div>
-
-          <small class="link-control-status" data-link-status aria-live="polite" hidden></small>
-
-          <div class="link-control-secondary-actions" data-link-actions hidden>
-            <button type="button" data-link-title-toggle>Edit title</button>
-            <button class="is-destructive" type="button" data-link-remove>Remove</button>
-          </div>
-
-          <label class="link-control-title-field" data-link-title-field hidden>
-            <span>Custom title</span>
-            <input
-              type="text"
-              data-link-title
-              maxlength="300"
-              placeholder="Optional"
-            />
-          </label>
         </div>
       </section>
     </template>
