@@ -26,6 +26,7 @@ import {
 } from './knowledge-kind-picker.js';
 import { createThoughtEditor } from './thought-editor.js';
 import { createLinkFields } from './link-fields.js';
+import { renderThoughtTextLinks } from './thought-text-links.js';
 import { renderWebResourceLink } from './web-resource-link.js';
 import {
   createThoughtContentPatch,
@@ -34,6 +35,7 @@ import {
   getThoughtPresentation,
   getThoughtSearchText,
   isThoughtResolved,
+  normalizeHttpUrl,
   validateThoughtDraft,
 } from './thought-content.js';
 import {
@@ -2510,17 +2512,29 @@ function renderThoughtInspector() {
     resolved: isThoughtResolved(thought),
   });
   spatialInspectorKindLabel.textContent = getKnowledgeKindLabel(kind);
-  spatialInspectorText.textContent = thought.text;
+  const inlineHrefs = renderThoughtTextLinks(
+    spatialInspectorText,
+    thought.text,
+  );
   const resource = presentation.resource;
-  spatialInspectorResource.hidden = !resource;
-  spatialInspectorResourceTitle.textContent = resource?.displayTitle || '';
-  spatialInspectorResourceHost.textContent = resource?.displaySubtitle || '';
-  spatialInspectorResourceHost.hidden = !resource?.displaySubtitle;
-  if (resource) {
-    spatialInspectorResource.href = resource.href;
+  const normalizedResourceHref = resource
+    ? normalizeHttpUrl(resource.href)
+    : null;
+  const visibleResource = (
+    normalizedResourceHref
+    && inlineHrefs.has(normalizedResourceHref)
+  )
+    ? null
+    : resource;
+  spatialInspectorResource.hidden = !visibleResource;
+  spatialInspectorResourceTitle.textContent = visibleResource?.displayTitle || '';
+  spatialInspectorResourceHost.textContent = visibleResource?.displaySubtitle || '';
+  spatialInspectorResourceHost.hidden = !visibleResource?.displaySubtitle;
+  if (visibleResource) {
+    spatialInspectorResource.href = visibleResource.href;
     spatialInspectorResource.setAttribute(
       'aria-label',
-      `Open web link: ${resource.accessibleLabel}`,
+      `Open web link: ${visibleResource.accessibleLabel}`,
     );
   } else {
     spatialInspectorResource.removeAttribute('href');

@@ -698,6 +698,34 @@ html[data-app-ready="false"] .composer-wrap {
   white-space: pre-wrap;
 }
 
+#spatial-inspector-text .thought-inline-link {
+  color: var(--accent);
+  text-decoration-line: underline;
+  text-decoration-color: color-mix(
+    in srgb,
+    var(--accent) 58%,
+    transparent
+  );
+  text-decoration-thickness: 1px;
+  text-underline-offset: 3px;
+  overflow-wrap: anywhere;
+}
+
+#spatial-inspector-text .thought-inline-link:hover {
+  color: color-mix(
+    in srgb,
+    var(--accent) 82%,
+    var(--text-primary)
+  );
+  text-decoration-color: currentColor;
+}
+
+#spatial-inspector-text .thought-inline-link:focus-visible {
+  outline: 3px solid var(--focus-ring);
+  outline-offset: 2px;
+  border-radius: 3px;
+}
+
 #spatial-inspector-resource {
   grid-template-columns: 26px minmax(0, 1fr) 14px;
   min-height: 42px;
