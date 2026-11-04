@@ -593,7 +593,11 @@ html[data-app-ready="false"] .composer-wrap {
 }
 
 .thought-inspector-stack[data-mode='board'] .spatial-inspector-header {
-  grid-template-columns: 24px 1fr 28px 28px 28px;
+  grid-template-columns: 22px minmax(0, 1fr) repeat(3, 26px);
+}
+
+.thought-inspector-stack[data-mode='board'] .spatial-inspector footer {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
 }
 
 .spatial-inspector {
@@ -604,10 +608,11 @@ html[data-app-ready="false"] .composer-wrap {
   width: 100%;
   min-height: 0;
   max-height: min(56dvh, 520px);
-  padding: 14px;
+  padding: 12px;
+  row-gap: 12px;
   overflow: visible;
   border: 1px solid rgba(86, 67, 143, .16);
-  border-radius: 17px;
+  border-radius: 16px;
   color: #39334e;
   background: rgba(255, 255, 255, .82);
   box-shadow: 0 16px 42px rgba(61, 43, 111, .12);
@@ -619,27 +624,30 @@ html[data-app-ready="false"] .composer-wrap {
 
 .spatial-inspector > .spatial-inspector-header {
   display: grid;
-  grid-template-columns: 24px 1fr 28px 28px 28px 28px;
+  grid-template-columns: 22px minmax(0, 1fr) repeat(4, 26px);
   align-items: center;
-  gap: 7px;
+  gap: 5px;
 }
 
 .spatial-inspector-body {
+  display: grid;
+  align-content: start;
   min-height: 0;
+  gap: 10px;
   overflow-y: auto;
   overscroll-behavior: contain;
-  scrollbar-gutter: stable;
+  scrollbar-width: thin;
 }
 
 .spatial-inspector-kind {
   display: grid;
-  width: 24px;
-  height: 24px;
+  width: 22px;
+  height: 22px;
   place-items: center;
   color: #7055c5;
 }
 
-.spatial-inspector-kind svg { width: 18px; height: 18px; }
+.spatial-inspector-kind svg { width: 17px; height: 17px; }
 
 .spatial-inspector-kind-label {
   color: #6a6380;
@@ -652,8 +660,8 @@ html[data-app-ready="false"] .composer-wrap {
 #spatial-inspector-more,
 #spatial-inspector-close {
   display: grid;
-  width: 28px;
-  height: 28px;
+  width: 26px;
+  height: 26px;
   padding: 0;
   place-items: center;
   border: 0;
@@ -681,14 +689,39 @@ html[data-app-ready="false"] .composer-wrap {
 #spatial-inspector-more:disabled { cursor: default; opacity: .42; }
 
 #spatial-inspector-text {
-  margin: 13px 2px 15px;
+  margin: 0 2px;
   overflow-wrap: anywhere;
   cursor: text;
   font-size: 14px;
-  line-height: 1.52;
+  line-height: 1.45;
   user-select: text;
   white-space: pre-wrap;
 }
+
+#spatial-inspector-resource {
+  grid-template-columns: 26px minmax(0, 1fr) 14px;
+  min-height: 42px;
+  margin: 0;
+  padding: 6px 8px;
+  gap: 8px;
+  border-radius: 10px;
+}
+
+#spatial-inspector-resource .thought-resource-icon {
+  width: 26px;
+  height: 26px;
+  border-radius: 8px;
+}
+
+#spatial-inspector-resource .thought-resource-icon svg {
+  width: 14px;
+  height: 14px;
+}
+
+#spatial-inspector-resource .thought-resource-copy { gap: 1px; }
+#spatial-inspector-resource .thought-resource-copy strong { font-size: 12px; }
+#spatial-inspector-resource .thought-resource-copy small { font-size: 10px; }
+#spatial-inspector-resource .thought-resource-external { width: 13px; height: 13px; }
 
 .thought-resource {
   display: grid;
@@ -886,9 +919,9 @@ html[data-app-ready="false"] .composer-wrap {
 
 .spatial-inspector-navigation {
   display: grid;
-  grid-template-columns: auto minmax(0, 1fr);
-  gap: 8px;
-  margin-bottom: 14px;
+  grid-template-columns: 72px minmax(0, 1fr);
+  gap: 6px;
+  margin: 0;
 }
 
 .spatial-inspector-focus,
@@ -896,11 +929,11 @@ html[data-app-ready="false"] .composer-wrap {
   display: grid;
   grid-template-columns: 18px minmax(0, 1fr) auto;
   width: 100%;
-  min-height: 42px;
+  min-height: 38px;
   min-width: 0;
   margin: 0;
-  padding: 8px 11px;
-  gap: 8px;
+  padding: 6px 9px;
+  gap: 7px;
   align-items: center;
   border: 1px solid var(--border-subtle);
   border-radius: 11px;
@@ -914,7 +947,8 @@ html[data-app-ready="false"] .composer-wrap {
 }
 
 .spatial-inspector-back {
-  grid-template-columns: 18px auto;
+  grid-template-columns: 16px auto;
+  padding-inline: 8px;
 }
 
 .spatial-inspector-focus:hover:not(:disabled),
@@ -936,8 +970,8 @@ html[data-app-ready="false"] .composer-wrap {
 
 .spatial-inspector-focus svg,
 .spatial-inspector-back svg {
-  width: 17px;
-  height: 17px;
+  width: 16px;
+  height: 16px;
   fill: none;
   stroke: currentColor;
   stroke-width: 1.8;
@@ -970,7 +1004,7 @@ html[data-app-ready="false"] .composer-wrap {
 .spatial-inspector-suggestions {
   display: grid;
   gap: 8px;
-  margin: 0 2px 14px;
+  margin: 0;
   padding: 10px;
   border: 1px solid rgba(112, 85, 197, .1);
   border-radius: 12px;
@@ -1027,11 +1061,16 @@ html[data-app-ready="false"] .composer-wrap {
   background: transparent;
 }
 
-.spatial-inspector footer { display: flex; padding-top: 2px; gap: 7px; }
+.spatial-inspector footer {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 6px;
+}
 
 .spatial-inspector footer button {
-  flex: 1;
-  padding: 7px 10px;
+  min-width: 0;
+  min-height: 34px;
+  padding: 6px 9px;
   border: 1px solid rgba(86, 67, 143, .16);
   border-radius: 10px;
   color: #625c7d;
