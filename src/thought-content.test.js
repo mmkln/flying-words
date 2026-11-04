@@ -146,9 +146,15 @@ test('presentation keeps authored text primary for link thoughts', () => {
     kind: KnowledgeKind.LINK,
     primaryText: 'Personal note',
     secondaryText: '',
-    hostname: 'example.com',
-    href: 'https://www.example.com/article',
-    resourceTitle: 'Page title',
+    resource: {
+      href: 'https://www.example.com/article',
+      hostname: 'example.com',
+      explicitTitle: 'Page title',
+      displayTitle: 'Page title',
+      displaySubtitle: 'example.com',
+      cardLabel: 'example.com',
+      accessibleLabel: 'Page title, example.com',
+    },
   });
 });
 
@@ -199,8 +205,8 @@ test('an attached resource does not replace the authored text of another kind', 
 
   assert.equal(presentation.primaryText, 'Why does this happen?');
   assert.equal(presentation.secondaryText, '');
-  assert.equal(presentation.href, 'https://example.com/');
-  assert.equal(presentation.resourceTitle, 'Source title');
+  assert.equal(presentation.resource.href, 'https://example.com/');
+  assert.equal(presentation.resource.displayTitle, 'Source title');
 });
 
 test('search corpus includes the note, page title, and URL', () => {

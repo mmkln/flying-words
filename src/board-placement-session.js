@@ -186,3 +186,53 @@ export function restoreBoardPlacementCanvas(meta, canvas) {
   return restoreCanvas(meta, canvas);
 }
 
+function placementMutation(thoughtId, baseRevision, meta, boardIds) {
+  const placementThought = { meta };
+  return {
+    thought_id: thoughtId,
+    base_revision: baseRevision,
+    placements: [...new Set(boardIds)].map((boardId) => ({
+      board_id: boardId,
+      position: getCanvasPlacement(placementThought, boardId),
+    })),
+  };
+}
+
+export function buildBoardPlacementBatchChanges(session, changes, thoughts) {
+  const targetBoardId = session?.target?.kind === BoardPlacementTargetKind.EXISTING
+    ? session.target.boardId
+    : null;
+  if (!session?.sourceBoardId || !targetBoardId) return [];
+
+  const byId = thoughtMap(thoughts);
+  return (changes || []).flatMap(({ thoughtId, nextMeta }) => {
+    const thought = byId.get(thoughtId);
+    if (!thought || !Number.isInteger(thought.revision) || thought.revision < 1) return [];
+    return [placementMutation(
+      thoughtId,
+      thought.revision,
+      nextMeta,
+      [session.sourceBoardId, targetBoardId],
+    )];
+  });
+}
+
+export function buildBoardPlacementUndoBatchChanges(session, changes, thoughts) {
+  const targetBoardId = session?.target?.kind === BoardPlacementTargetKind.EXISTING
+    ? session.target.boardId
+    : null;
+  if (!session?.sourceBoardId || !targetBoardId) return [];
+
+  const byId = thoughtMap(thoughts);
+  return (changes || []).flatMap(({ thoughtId, previousCanvas }) => {
+    const thought = byId.get(thoughtId);
+    if (!thought || !Number.isInteger(thought.revision) || thought.revision < 1) return [];
+    return [placementMutation(
+      thoughtId,
+      thought.revision,
+      restoreCanvas(thought.meta, previousCanvas),
+      [session.sourceBoardId, targetBoardId],
+    )];
+  });
+}
+

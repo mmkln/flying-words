@@ -35,6 +35,7 @@ export function createBoardPlacementView({ dialog, onCancel, onConfirm }) {
   const summary = dialog.querySelector('#board-placement-summary');
   const cancelButton = dialog.querySelector('#board-placement-cancel');
   const confirmButton = dialog.querySelector('#board-placement-confirm');
+  const errorMessage = dialog.querySelector('#board-placement-error');
   const viewport = dialog.querySelector('#board-placement-viewport');
   const world = dialog.querySelector('#board-placement-world');
   const edgesLayer = dialog.querySelector('#board-placement-edges');
@@ -234,6 +235,8 @@ export function createBoardPlacementView({ dialog, onCancel, onConfirm }) {
     cardHeight = geometry?.cardHeight || 96;
     canConfirm = draftCards.length > 0 || confirmWithoutDraft;
     busy = false;
+    errorMessage.textContent = '';
+    errorMessage.hidden = true;
     currentOperation = operation;
     confirmButton.disabled = !canConfirm;
     const moving = operation === BoardPlacementOperation.MOVE;
@@ -285,6 +288,8 @@ export function createBoardPlacementView({ dialog, onCancel, onConfirm }) {
     draftIds.clear();
     renderedEdges = [];
     busy = false;
+    errorMessage.textContent = '';
+    errorMessage.hidden = true;
     nodesLayer.replaceChildren();
     groupOutline.hidden = true;
     if (dialog.open) dialog.close();
@@ -305,6 +310,11 @@ export function createBoardPlacementView({ dialog, onCancel, onConfirm }) {
     }
   }
 
+  function setError(message = '') {
+    errorMessage.textContent = message;
+    errorMessage.hidden = !message;
+  }
+
   cancelButton.addEventListener('click', () => {
     if (!busy) onCancel();
   });
@@ -321,6 +331,12 @@ export function createBoardPlacementView({ dialog, onCancel, onConfirm }) {
     if (canConfirm && !busy) onConfirm(getDraftPositions());
   });
 
-  return { close, getDraftPositions, open, setBusy };
+  return {
+    close,
+    getDraftPositions,
+    open,
+    setBusy,
+    setError,
+  };
 }
 

@@ -1,31 +1,42 @@
 import { normalizeLinkInput } from './thought-content.js';
+import { getWebResourcePresentation } from './web-resource-presentation.js';
 
-function hostnameFor(value) {
-  try {
-    return new URL(value).hostname.replace(/^www\./, '');
-  } catch {
-    return '';
-  }
+const EMPTY_LINK = Object.freeze({
+  url: '',
+  title: '',
+});
+
+function copyLink(value = EMPTY_LINK) {
+  const source = value ?? EMPTY_LINK;
+
+  return {
+    url: typeof source.url === 'string' ? source.url : '',
+    title: typeof source.title === 'string' ? source.title : '',
+  };
+}
+
+function linksEqual(first, second) {
+  return first.url === second.url && first.title === second.title;
 }
 
 export function createLinkFields({
   root,
   requestPreview,
-  presentation = 'detail',
+  variant = 'detail',
 }) {
   const trigger = root.querySelector('[data-link-trigger]');
   const triggerLabel = root.querySelector('[data-link-trigger-label]');
-  const indicator = root.querySelector('[data-link-indicator]');
   const preview = root.querySelector('[data-link-preview]');
   const editButton = root.querySelector('[data-link-edit]');
   const previewTitle = root.querySelector('[data-link-preview-title]');
   const previewHost = root.querySelector('[data-link-preview-host]');
+  const previewSeparator = root.querySelector('[data-link-preview-separator]');
   const popover = root.querySelector('[data-link-popover]');
-  const confirmButton = root.querySelector('[data-link-confirm]');
-  const secondaryActions = root.querySelector('[data-link-actions]');
-  const titleToggle = root.querySelector('[data-link-title-toggle]');
-  const titleField = root.querySelector('[data-link-title-field]');
+  const editor = root.querySelector('[data-link-editor]');
+  const saveButton = root.querySelector('[data-link-save]');
+  const deleteButton = popover?.querySelector('[data-link-remove]');
   const removeButtons = [...root.querySelectorAll('[data-link-remove]')];
+  const cancelButtons = [...root.querySelectorAll('[data-link-cancel]')];
   const urlInput = root.querySelector('[data-link-url]');
   const titleInput = root.querySelector('[data-link-title]');
   const status = root.querySelector('[data-link-status]');
@@ -33,34 +44,34 @@ export function createLinkFields({
   if (
     !trigger
     || !triggerLabel
-    || !indicator
     || !preview
     || !editButton
     || !previewTitle
     || !previewHost
+    || !previewSeparator
     || !popover
-    || !confirmButton
-    || !secondaryActions
-    || !titleToggle
-    || !titleField
+    || !editor
+    || !saveButton
+    || !deleteButton
     || !removeButtons.length
+    || !cancelButtons.length
     || !urlInput
     || !titleInput
     || !status
   ) {
-    throw new Error('Link attachment markup is incomplete.');
+    throw new Error('Web link markup is incomplete.');
   }
 
-  root.dataset.presentation = presentation;
+  root.dataset.variant = variant;
 
-  let link = { url: '', title: '' };
+  let committedLink = copyLink();
+  let draftLink = copyLink();
   let popoverOpen = false;
-  let titleEditorOpen = false;
-  let titleWasEdited = false;
+  let titleTouched = false;
   let requestId = 0;
 
-  function hasLink() {
-    return Boolean(link.url);
+  function hasCommittedLink() {
+    return Boolean(committedLink.url);
   }
 
   function setStatus(message = '') {
@@ -68,42 +79,67 @@ export function createLinkFields({
     status.hidden = !message;
   }
 
+  function syncDraftFields() {
+    urlInput.value = draftLink.url;
+    titleInput.value = draftLink.title;
+  }
+
   function renderPreview() {
-    const hostname = hostnameFor(link.url);
-    previewTitle.textContent = link.title || hostname || 'Link';
-    previewHost.textContent = hostname || link.url;
+    const presentation = getWebResourcePresentation(committedLink);
+    const hasSubtitle = Boolean(presentation.displaySubtitle);
+
+    previewTitle.textContent = presentation.displayTitle;
+    previewHost.textContent = presentation.displaySubtitle;
+    previewHost.hidden = !hasSubtitle;
+    previewSeparator.hidden = !hasSubtitle;
+    editButton.setAttribute(
+      'aria-label',
+      `Edit web link: ${presentation.accessibleLabel}`,
+    );
+  }
+
+  function renderFormState() {
+    const attached = hasCommittedLink();
+    const dirty = !linksEqual(draftLink, committedLink);
+
+    saveButton.textContent = attached ? 'Done' : 'Add';
+    saveButton.disabled = !dirty;
+    deleteButton.hidden = !attached;
   }
 
   function render() {
-    const attached = hasLink();
-    const controlOnly = presentation === 'control';
+    const attached = hasCommittedLink();
 
-    root.dataset.state = popoverOpen ? 'open' : attached ? 'attached' : 'empty';
-    trigger.hidden = !controlOnly && attached;
-    trigger.classList.toggle('is-attached', attached);
+    root.dataset.state = popoverOpen
+      ? 'open'
+      : attached
+        ? 'attached'
+        : 'empty';
+
+    trigger.hidden = attached;
     trigger.setAttribute('aria-expanded', String(popoverOpen));
-    trigger.setAttribute('aria-pressed', String(attached));
-    trigger.setAttribute('aria-label', attached ? 'Edit attached link' : 'Attach link');
-    triggerLabel.textContent = attached ? 'Edit link' : 'Add link';
-    indicator.hidden = !attached;
+    trigger.setAttribute(
+      'aria-label',
+      attached ? 'Edit web link' : 'Attach web link',
+    );
+    triggerLabel.textContent = attached ? 'Edit web link' : 'Add web link';
+    editButton.setAttribute('aria-expanded', String(popoverOpen));
 
-    preview.hidden = controlOnly || !attached;
+    preview.hidden = !attached;
     popover.hidden = !popoverOpen;
     urlInput.disabled = !popoverOpen;
     titleInput.disabled = !popoverOpen;
-    confirmButton.textContent = attached ? 'Done' : 'Add';
-    secondaryActions.hidden = !attached;
-    titleToggle.hidden = titleEditorOpen;
-    titleField.hidden = !titleEditorOpen;
+
     renderPreview();
+    renderFormState();
   }
 
   function open() {
+    draftLink = copyLink(committedLink);
     popoverOpen = true;
-    titleEditorOpen = false;
-    titleWasEdited = false;
-    urlInput.value = link.url;
-    titleInput.value = link.title;
+    titleTouched = false;
+
+    syncDraftFields();
     setStatus();
     render();
 
@@ -113,28 +149,31 @@ export function createLinkFields({
     });
   }
 
-  function collapse({ restoreFocus = true } = {}) {
+  function cancel({ restoreFocus = true } = {}) {
     if (!popoverOpen) return;
+
+    draftLink = copyLink(committedLink);
     popoverOpen = false;
-    titleEditorOpen = false;
-    titleWasEdited = false;
+    titleTouched = false;
+
+    syncDraftFields();
     setStatus();
     render();
 
     if (restoreFocus) {
-      const target = presentation === 'control' || !hasLink() ? trigger : editButton;
+      const target = hasCommittedLink() ? editButton : trigger;
       target.focus({ preventScroll: true });
     }
   }
 
   function remove({ restoreFocus = true } = {}) {
     requestId += 1;
-    link = { url: '', title: '' };
+    committedLink = copyLink();
+    draftLink = copyLink();
     popoverOpen = false;
-    titleEditorOpen = false;
-    titleWasEdited = false;
-    urlInput.value = '';
-    titleInput.value = '';
+    titleTouched = false;
+
+    syncDraftFields();
     delete root.dataset.previewState;
     setStatus();
     render();
@@ -143,21 +182,44 @@ export function createLinkFields({
   }
 
   async function loadPreview(url) {
-    if (!url || typeof requestPreview !== 'function' || link.title) return;
+    if (
+      !url
+      || typeof requestPreview !== 'function'
+      || committedLink.title
+    ) {
+      return;
+    }
 
     const currentRequestId = ++requestId;
     root.dataset.previewState = 'loading';
 
     try {
       const result = await requestPreview(url);
-      if (currentRequestId !== requestId || link.url !== url || link.title) return;
 
-      if (result?.title) {
-        link = { ...link, title: result.title.trim() };
-        titleInput.value = link.title;
+      if (
+        currentRequestId !== requestId
+        || committedLink.url !== url
+        || committedLink.title
+        || !result?.title
+      ) {
+        return;
+      }
+
+      committedLink = {
+        ...committedLink,
+        title: result.title.trim(),
+      };
+
+      if (
+        popoverOpen
+        && draftLink.url === url
+        && !titleTouched
+      ) {
+        draftLink.title = committedLink.title;
+        titleInput.value = committedLink.title;
       }
     } catch {
-      // The URL remains valid when its remote metadata is unavailable.
+      // The web link remains valid when remote metadata is unavailable.
     } finally {
       if (currentRequestId === requestId) {
         delete root.dataset.previewState;
@@ -166,105 +228,123 @@ export function createLinkFields({
     }
   }
 
-  function confirm() {
-    const normalizedUrl = normalizeLinkInput(urlInput.value);
+  function commit() {
+    const normalizedUrl = normalizeLinkInput(draftLink.url);
+
     if (!normalizedUrl) {
       setStatus('Enter a valid web address.');
+      urlInput.focus({ preventScroll: true });
       return false;
     }
 
-    const urlChanged = normalizedUrl !== link.url;
-    const nextTitle = titleWasEdited
-      ? titleInput.value.trim()
-      : urlChanged
-        ? ''
-        : link.title;
-
+    const previousUrl = committedLink.url;
     requestId += 1;
-    link = { url: normalizedUrl, title: nextTitle };
+    committedLink = {
+      url: normalizedUrl,
+      title: draftLink.title.trim(),
+    };
+    draftLink = copyLink(committedLink);
     popoverOpen = false;
-    titleEditorOpen = false;
-    titleWasEdited = false;
+    titleTouched = false;
+
+    syncDraftFields();
     setStatus();
     render();
-    void loadPreview(normalizedUrl);
+    editButton.focus({ preventScroll: true });
+
+    if (!committedLink.title && committedLink.url !== previousUrl) {
+      void loadPreview(committedLink.url);
+    }
+
     return true;
   }
 
-  function handleFieldKeyDown(event) {
-    if (event.isComposing) return;
-
-    if (event.key === 'Enter') {
-      event.preventDefault();
-      event.stopPropagation();
-      confirm();
-      return;
-    }
-
-    if (event.key === 'Escape') {
-      event.preventDefault();
-      event.stopPropagation();
-      collapse();
-    }
+  function toggle() {
+    if (popoverOpen) cancel();
+    else open();
   }
 
-  trigger.addEventListener('click', () => {
-    if (popoverOpen) collapse();
-    else open();
+  trigger.addEventListener('click', toggle);
+  editButton.addEventListener('click', toggle);
+
+  saveButton.addEventListener('click', commit);
+
+  urlInput.addEventListener('input', () => {
+    const nextUrl = urlInput.value;
+
+    if (nextUrl !== committedLink.url && !titleTouched) {
+      draftLink.title = '';
+      titleInput.value = '';
+    }
+
+    draftLink.url = nextUrl;
+    setStatus();
+    renderFormState();
   });
-  editButton.addEventListener('click', open);
-  confirmButton.addEventListener('click', confirm);
-  titleToggle.addEventListener('click', () => {
-    titleEditorOpen = true;
-    render();
-    titleInput.focus({ preventScroll: true });
-    titleInput.select();
+
+  titleInput.addEventListener('input', () => {
+    titleTouched = true;
+    draftLink.title = titleInput.value;
+    renderFormState();
   });
+
+  for (const button of cancelButtons) {
+    button.addEventListener('click', () => cancel());
+  }
 
   for (const button of removeButtons) {
     button.addEventListener('click', () => remove());
   }
 
-  urlInput.addEventListener('input', () => setStatus());
-  urlInput.addEventListener('keydown', handleFieldKeyDown);
-  titleInput.addEventListener('input', () => {
-    titleWasEdited = true;
+  root.addEventListener('keydown', (event) => {
+    if (!popoverOpen || event.isComposing) return;
+
+    if (event.key === 'Escape') {
+      event.preventDefault();
+      event.stopPropagation();
+      cancel();
+      return;
+    }
+
+    if (event.key === 'Enter' && event.target.matches('input')) {
+      event.preventDefault();
+      event.stopPropagation();
+      commit();
+    }
   });
-  titleInput.addEventListener('keydown', handleFieldKeyDown);
 
   document.addEventListener('pointerdown', (event) => {
     if (!popoverOpen || root.contains(event.target)) return;
-    collapse({ restoreFocus: false });
+    cancel({ restoreFocus: false });
   });
 
   render();
 
   return {
-    collapse,
+    open,
+    remove,
+    collapse: cancel,
 
     focus() {
       open();
     },
 
     getValue() {
-      return { ...link };
+      return copyLink(committedLink);
     },
-
-    open,
-    remove,
 
     reset() {
       remove({ restoreFocus: false });
     },
 
-    setValue({ url = '', title = '' } = {}) {
+    setValue(value = EMPTY_LINK) {
       requestId += 1;
-      link = { url, title };
+      committedLink = copyLink(value);
+      draftLink = copyLink(committedLink);
       popoverOpen = false;
-      titleEditorOpen = false;
-      titleWasEdited = false;
-      urlInput.value = url;
-      titleInput.value = title;
+      titleTouched = false;
+
+      syncDraftFields();
       delete root.dataset.previewState;
       setStatus();
       render();

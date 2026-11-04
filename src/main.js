@@ -26,6 +26,7 @@ import {
 } from './knowledge-kind-picker.js';
 import { createThoughtEditor } from './thought-editor.js';
 import { createLinkFields } from './link-fields.js';
+import { renderWebResourceLink } from './web-resource-link.js';
 import {
   createThoughtContentPatch,
   createThoughtDraft,
@@ -49,6 +50,7 @@ import { findConnectionSearchResults } from './connection-search.js';
 import { createConnectionMapDraft } from './connection-map-draft.js';
 import { createConnectionMapView } from './connection-map-view.js';
 import { createBoardPlacementView } from './board-placement-view.js';
+import { createBoardMutationService } from './board-mutation-service.js';
 import { matchesThoughtSearch } from './thought-search.js';
 import { getSpatialLinkSuggestions } from './spatial-link-suggestions.js';
 import {
@@ -96,10 +98,11 @@ import {
 import {
   BoardPlacementOperation,
   BoardPlacementTargetKind,
+  buildBoardPlacementBatchChanges,
+  buildBoardPlacementUndoBatchChanges,
   createBoardPlacementSession,
   planBoardPlacementCommit,
   resolveBoardPlacementTarget,
-  restoreBoardPlacementCanvas,
   setBoardPlacementTarget,
   updateBoardPlacementDraft,
 } from './board-placement-session.js';
@@ -422,6 +425,9 @@ const thoughtFocusDiscard = document.querySelector('#thought-focus-discard');
 const linkFieldsTemplate = document.querySelector('#link-fields-template');
 const composerLinkFieldsRoot = document.querySelector('#composer-link-fields');
 const thoughtFocusLinkFieldsRoot = document.querySelector('#thought-focus-link-fields');
+const connectionMapCreateLinkFieldsRoot = document.querySelector(
+  '#connection-map-create-link-fields',
+);
 
 let auth = null;
 let accessToken = null;
@@ -588,6 +594,11 @@ const boardPlacementView = createBoardPlacementView({
   dialog: boardPlacementDialog,
   onCancel: cancelBoardPlacement,
   onConfirm: commitBoardPlacement,
+});
+
+const boardMutationService = createBoardMutationService({
+  request: requestApi,
+  prepare: prepareCloudBoardMutation,
 });
 
 const canvasMinimap = createCanvasMinimap({
@@ -1135,12 +1146,12 @@ const knowledgeKindPicker = createKnowledgeKindPicker({
   },
 });
 
-function mountLinkFields(host, { presentation = 'detail' } = {}) {
+function mountLinkFields(host, { variant = 'detail' } = {}) {
   host.append(linkFieldsTemplate.content.cloneNode(true));
   return createLinkFields({
     root: host.firstElementChild,
     requestPreview: requestLinkPreview,
-    presentation,
+    variant,
   });
 }
 
@@ -1153,11 +1164,17 @@ async function requestLinkPreview(url) {
 }
 
 const composerLinkFields = mountLinkFields(composerLinkFieldsRoot, {
-  presentation: 'control',
+  variant: 'compact',
 });
 const editorLinkFields = mountLinkFields(thoughtFocusLinkFieldsRoot, {
-  presentation: 'detail',
+  variant: 'detail',
 });
+const connectionMapCreateLinkFields = mountLinkFields(
+  connectionMapCreateLinkFieldsRoot,
+  {
+    variant: 'compact',
+  },
+);
 
 const thoughtEditor = createThoughtEditor({
   dialog: thoughtFocusDialog,
@@ -1974,24 +1991,25 @@ function refreshBoardAfterPlacement(changedThoughtIds) {
   updateUi();
 }
 
-function undoBoardPlacement(changes) {
+async function undoBoardPlacement(session, changes) {
   if (blockEditsDuringAccountSync()) {
     hideBoardActionMessage();
     return;
   }
 
-  const changedThoughtIds = [];
-  changes.forEach(({ thoughtId, previousCanvas }) => {
-    const thought = getThoughtById(thoughtId);
-    if (!thought) return;
-    thought.meta = restoreBoardPlacementCanvas(thought.meta, previousCanvas);
-    changedThoughtIds.push(thoughtId);
-    if (isCloudMode()) enqueueThoughtMetaPatch(thought, ['canvas']);
-  });
-  saveThoughts();
-  refreshBoardAfterPlacement(changedThoughtIds);
-  hideBoardActionMessage();
-  announce('Board placement undone.');
+  try {
+    const result = await boardMutationService.applyPlacements(
+      changes.map(({ thoughtId }) => thoughtId),
+      () => buildBoardPlacementUndoBatchChanges(session, changes, thoughts),
+    );
+    mergeServerThoughts(result.thoughts);
+    refreshBoardAfterPlacement(changes.map(({ thoughtId }) => thoughtId));
+    hideBoardActionMessage();
+    announce('Board placement undone.');
+  } catch (error) {
+    if (error.status === 409) mergeServerThoughts(error.payload?.current);
+    announce(`Could not undo Board placement: ${error.message}`);
+  }
 }
 
 async function commitBoardPlacement(draftPositions) {
@@ -2003,6 +2021,7 @@ async function commitBoardPlacement(draftPositions) {
 
   boardPlacementCommitInFlight = true;
   boardPlacementView.setBusy(true);
+  boardPlacementView.setError('');
   try {
     let session = updateBoardPlacementDraft(boardPlacementSession, draftPositions);
 
@@ -2014,8 +2033,7 @@ async function commitBoardPlacement(draftPositions) {
     }
 
     const targetBoardId = session.target?.boardId;
-    const changes = planBoardPlacementCommit(session, thoughts);
-    if (!targetBoardId || !changes.length) {
+    if (!targetBoardId) {
       boardPlacementView.close();
       boardPlacementSession = null;
       spacesOverviewPurpose = 'navigation';
@@ -2023,13 +2041,23 @@ async function commitBoardPlacement(draftPositions) {
       return;
     }
 
-    changes.forEach(({ thoughtId, nextMeta }) => {
-      const thought = getThoughtById(thoughtId);
-      if (!thought) return;
-      thought.meta = nextMeta;
-      if (isCloudMode()) enqueueThoughtMetaPatch(thought, ['canvas']);
-    });
-    saveThoughts();
+    let changes = [];
+    const result = await boardMutationService.applyPlacements(
+      session.thoughtIds,
+      () => {
+        changes = planBoardPlacementCommit(session, thoughts);
+        return buildBoardPlacementBatchChanges(session, changes, thoughts);
+      },
+    );
+    if (!changes.length) {
+      boardPlacementView.close();
+      boardPlacementSession = null;
+      spacesOverviewPurpose = 'navigation';
+      announce('These cards are already on that Board.');
+      return;
+    }
+
+    mergeServerThoughts(result.thoughts);
     refreshBoardAfterPlacement(changes.map(({ thoughtId }) => thoughtId));
     boardPlacementView.close();
     boardPlacementSession = null;
@@ -2042,13 +2070,15 @@ async function commitBoardPlacement(draftPositions) {
       `${verb} ${count} ${count === 1 ? 'card' : 'cards'} to “${targetName}”`,
       {
         onView: () => navigateToSpace(targetBoardId),
-        onUndo: () => undoBoardPlacement(changes),
+        onUndo: () => undoBoardPlacement(session, changes),
         undoKind: 'placement',
         duration: 15_000,
       },
     );
     announce(`${verb} ${count} ${count === 1 ? 'card' : 'cards'} to ${targetName}.`);
   } catch (error) {
+    if (error.status === 409) mergeServerThoughts(error.payload?.current);
+    boardPlacementView.setError(`Could not complete Board placement: ${error.message}`);
     announce(`Could not complete Board placement: ${error.message}`);
   } finally {
     boardPlacementCommitInFlight = false;
@@ -2481,11 +2511,21 @@ function renderThoughtInspector() {
   });
   spatialInspectorKindLabel.textContent = getKnowledgeKindLabel(kind);
   spatialInspectorText.textContent = thought.text;
-  spatialInspectorResource.hidden = !presentation.href;
-  spatialInspectorResourceTitle.textContent = presentation.resourceTitle;
-  spatialInspectorResourceHost.textContent = presentation.hostname;
-  if (presentation.href) spatialInspectorResource.href = presentation.href;
-  else spatialInspectorResource.removeAttribute('href');
+  const resource = presentation.resource;
+  spatialInspectorResource.hidden = !resource;
+  spatialInspectorResourceTitle.textContent = resource?.displayTitle || '';
+  spatialInspectorResourceHost.textContent = resource?.displaySubtitle || '';
+  spatialInspectorResourceHost.hidden = !resource?.displaySubtitle;
+  if (resource) {
+    spatialInspectorResource.href = resource.href;
+    spatialInspectorResource.setAttribute(
+      'aria-label',
+      `Open web link: ${resource.accessibleLabel}`,
+    );
+  } else {
+    spatialInspectorResource.removeAttribute('href');
+    spatialInspectorResource.removeAttribute('aria-label');
+  }
 
   const anchored = hasAnchor(thought);
   const editingConnections = Boolean(connectionEditor);
@@ -2665,6 +2705,7 @@ function openConnectionMap(rootId) {
   if (!root) return;
 
   closeSpatialInspectorMenu();
+  connectionMapCreateLinkFields.reset();
   const draft = createConnectionMapDraft(thoughts, rootId);
   connectionMapSession = {
     rootId,
@@ -2691,6 +2732,7 @@ function closeConnectionMap() {
 
   finishConnectionMapEditing({ render: false });
   knowledgeKindPicker.close();
+  connectionMapCreateLinkFields.reset();
   connectionMapSession = null;
   connectionMapView.close();
   if (isSpatialSpace(activeSpaceId)) {
@@ -2815,6 +2857,7 @@ function selectConnectionMapSearchThought(thoughtId) {
   const wasVisible = session.visibleIds.has(thoughtId);
   session.visibleIds.add(thoughtId);
   if (!wasVisible) session.spawnAnchorById.set(thoughtId, session.rootId);
+  connectionMapCreateLinkFields.reset();
   session.query = '';
   if (
     session.editor
@@ -2887,6 +2930,7 @@ function finishConnectionMapEditing({ render = true } = {}) {
 
 function changeConnectionMapQuery(query) {
   if (!connectionMapSession) return;
+  if (!query.trim()) connectionMapCreateLinkFields.reset();
   connectionMapSession.query = query;
   renderConnectionMap();
 }
@@ -2931,8 +2975,11 @@ function createConnectionMapThought(rawText) {
   const text = rawText.trim();
   if (!session || !text) return false;
 
+  const webLink = connectionMapCreateLinkFields.getValue();
   const draft = createThoughtDraft(null, { kind: session.createKind });
   draft.text = text;
+  draft.linkUrl = webLink.url || '';
+  draft.linkTitle = webLink.title || '';
   const validation = validateThoughtDraft(draft, {
     maximumTextLength: MAX_THOUGHT_TEXT_LENGTH,
   });
@@ -2991,6 +3038,7 @@ function createConnectionMapThought(rawText) {
     }
   }
   session.draft = createConnectionMapDraft(thoughts, session.rootId);
+  connectionMapCreateLinkFields.reset();
   session.query = '';
   renderConnectionMap();
   announce('New thought added.');
@@ -5193,14 +5241,9 @@ async function deleteBoard(boardId) {
     if (!navigator.onLine) {
       throw new Error('Connect to the internet before deleting this Board.');
     }
-    const remainingOperations = await flushAndWaitForOutbox(accountId);
-    if (remainingOperations.length) {
-      throw new Error(
-        'Some thought changes are paused. Resolve or refresh them before deleting this Board.',
-      );
-    }
+    await waitForOutboxToSettle(accountId);
 
-    await requestApi(`/boards/${boardId}/`, { method: 'DELETE' });
+    await boardMutationService.deleteBoard(boardId);
     deleteBoardDialog.close();
     if (auth?.id !== accountId) return;
 
@@ -5710,6 +5753,36 @@ async function waitForOutboxToSettle(accountId) {
   throw new Error(
     'A paused text, relationship, creation, or deletion change must be resolved before arranging the Board.',
   );
+}
+
+async function prepareCloudBoardMutation(thoughtIds) {
+  if (!isCloudMode()) {
+    throw new Error('Wait until your saved thoughts finish loading.');
+  }
+  if (!navigator.onLine) {
+    throw new Error('Connect to the internet before changing a saved Board.');
+  }
+
+  const compatible = await ensureSyncCapabilities();
+  if (compatible && !syncCapabilities?.board_placement_batch?.includes(1)) {
+    syncCapabilities = null;
+    await ensureSyncCapabilities();
+  }
+  if (!syncCapabilities?.board_placement_batch?.includes(1)) {
+    throw new Error('The server needs the Board placement update first.');
+  }
+
+  const accountId = auth.id;
+  await waitForOutboxToSettle(accountId);
+  if (auth?.id !== accountId) throw new Error('The signed-in account changed.');
+
+  const missingRevision = [...new Set(thoughtIds)].some((thoughtId) => {
+    const thought = getThoughtById(thoughtId);
+    return !thought || !Number.isInteger(thought.revision) || thought.revision < 1;
+  });
+  if (missingRevision) {
+    throw new Error('Some selected cards are not ready to sync yet.');
+  }
 }
 
 async function prepareCloudBoardLayout() {
@@ -7236,13 +7309,12 @@ function renderThought(thought) {
   if (!thought.element) return;
   const canvasThought = isCanvasSpace(activeSpaceId);
   const textElement = thought.element.querySelector('.thought-text');
-  const resourceHost = thought.element.querySelector('.thought-resource-host');
+  const resourceLink = thought.element.querySelector('[data-thought-resource-link]');
   const presentation = getThoughtPresentation(thought);
   textElement.textContent = getThoughtCardPreviewText(
     presentation.primaryText,
   );
-  resourceHost.hidden = !presentation.hostname;
-  resourceHost.textContent = presentation.hostname;
+  renderWebResourceLink(resourceLink, presentation.resource);
 
   thought.element.classList.toggle('is-pinned', thought.pinned);
   thought.element.classList.toggle('is-canvas-card', canvasThought);

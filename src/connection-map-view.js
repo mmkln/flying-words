@@ -13,6 +13,7 @@ import {
   getConnectionActionState,
   renderConnectionActionButton,
 } from './connection-action-button.js';
+import { renderWebResourceLink } from './web-resource-link.js';
 
 const SVG_NAMESPACE = 'http://www.w3.org/2000/svg';
 const CARD_WIDTH = 280;
@@ -44,7 +45,9 @@ function createThoughtCard(
   const presentation = getThoughtPresentation(thought);
   const element = document.createElement('article');
   const icon = document.createElement('button');
+  const copy = document.createElement('div');
   const text = document.createElement('span');
+  const resource = document.createElement('a');
   const connectButton = document.createElement('button');
 
   element.className = 'connection-map-card';
@@ -65,16 +68,25 @@ function createThoughtCard(
   });
   icon.addEventListener('click', () => onEditKind(thought.id, icon));
 
+  copy.className = 'connection-map-card-copy';
   text.className = 'connection-map-card-text';
   text.textContent = presentation.primaryText;
   text.title = 'Click again to edit';
+  resource.className = 'connection-map-card-resource';
+  renderWebResourceLink(resource, presentation.resource);
+  copy.append(text, resource);
+
   let textWasPressed = false;
   let editArmed = false;
   element.addEventListener('pointerdown', (event) => {
+    if (event.target.closest('button, a')) {
+      textWasPressed = false;
+      return;
+    }
     textWasPressed = text.contains(event.target);
   });
   element.addEventListener('click', (event) => {
-    if (event.target.closest('button')) return;
+    if (event.target.closest('button, a')) return;
     const clickedText = textWasPressed || text.contains(event.target);
     textWasPressed = false;
     if (editArmed && clickedText) {
@@ -110,7 +122,7 @@ function createThoughtCard(
   });
   connectButton.addEventListener('click', () => onConnectionAction(thought.id));
 
-  element.append(icon, text, connectButton);
+  element.append(icon, copy, connectButton);
 
   if (!root && !node.editing) {
     const hideButton = document.createElement('button');
@@ -176,35 +188,6 @@ function createSearchResult({ thought, selected }, onSelect) {
   return button;
 }
 
-function createThoughtProposal(
-  { text, kind },
-  onCreateThought,
-  onCreateKind,
-) {
-  const row = document.createElement('div');
-  const kindButton = document.createElement('button');
-  const createButton = document.createElement('button');
-
-  row.className = 'connection-map-create-result';
-  row.dataset.knowledgeKind = kind;
-
-  kindButton.type = 'button';
-  kindButton.className = 'connection-map-create-kind';
-  kindButton.setAttribute('aria-haspopup', 'listbox');
-  kindButton.setAttribute('aria-expanded', 'false');
-  renderKnowledgeKindTrigger(kindButton, kind);
-  kindButton.addEventListener('click', () => onCreateKind(kindButton));
-
-  createButton.type = 'button';
-  createButton.className = 'connection-map-create-action';
-  createButton.textContent = `Create “${text}”`;
-  createButton.title = createButton.textContent;
-  createButton.addEventListener('click', () => onCreateThought(text));
-
-  row.append(kindButton, createButton);
-  return row;
-}
-
 export function createConnectionMapView({
   dialog,
   onSearchSelect,
@@ -224,6 +207,10 @@ export function createConnectionMapView({
   const closeButton = dialog.querySelector('#connection-map-close');
   const searchInput = dialog.querySelector('#connection-map-search');
   const searchResults = dialog.querySelector('#connection-map-results');
+  const createPanel = dialog.querySelector('#connection-map-create-panel');
+  const createKindButton = dialog.querySelector('#connection-map-create-kind');
+  const createTextElement = dialog.querySelector('#connection-map-create-text');
+  const createActionButton = dialog.querySelector('#connection-map-create-action');
   const viewport = dialog.querySelector('#connection-map-viewport');
   const stage = dialog.querySelector('.connection-map-stage');
   const world = dialog.querySelector('#connection-map-world');
@@ -240,6 +227,7 @@ export function createConnectionMapView({
   const positions = new Map();
   const nodeElements = new Map();
   let rootId = null;
+  let createText = '';
   let renderedEdges = [];
   let edgeFrame = null;
   const viewportController = createCanvasViewportController({
@@ -395,7 +383,7 @@ export function createConnectionMapView({
     let suppressClick = false;
 
     element.addEventListener('pointerdown', (event) => {
-      if (event.button !== 0 || event.target.closest('button')) return;
+      if (event.button !== 0 || event.target.closest('button, a')) return;
       event.stopPropagation();
       const position = positions.get(thoughtId);
       if (!position) return;
@@ -466,6 +454,10 @@ export function createConnectionMapView({
   saveBoardButton.addEventListener('click', onSaveBoard);
   closeButton.addEventListener('click', onClose);
   selectionFinish.addEventListener('click', onFinishConnectionEditing);
+  createKindButton.addEventListener('click', () => onCreateKind(createKindButton));
+  createActionButton.addEventListener('click', () => {
+    if (createText) onCreateThought(createText);
+  });
   searchInput.addEventListener('input', () => onQueryChange(searchInput.value));
   searchInput.addEventListener('keydown', (event) => {
     if (event.key !== 'Enter' || event.isComposing || !searchInput.value.trim()) return;
@@ -513,6 +505,23 @@ export function createConnectionMapView({
     stage.inert = savingBoard;
     if (searchInput.value !== query) searchInput.value = query;
 
+    createText = createProposal?.text || '';
+    createPanel.hidden = !createProposal;
+    if (createProposal) {
+      createPanel.dataset.knowledgeKind = createProposal.kind;
+      renderKnowledgeKindTrigger(createKindButton, createProposal.kind);
+      createTextElement.textContent = createProposal.text;
+      createActionButton.textContent = 'Create';
+      createActionButton.title = `Create “${createProposal.text}”`;
+      createActionButton.setAttribute('aria-label', createActionButton.title);
+    } else {
+      delete createPanel.dataset.knowledgeKind;
+      createTextElement.textContent = '';
+      createActionButton.textContent = 'Create';
+      createActionButton.removeAttribute('title');
+      createActionButton.removeAttribute('aria-label');
+    }
+
     const activeIds = new Set(nodes.map(({ thought }) => thought.id));
     [...positions.keys()].forEach((thoughtId) => {
       if (!activeIds.has(thoughtId)) positions.delete(thoughtId);
@@ -555,15 +564,8 @@ export function createConnectionMapView({
     results.forEach((result) => {
       resultFragment.append(createSearchResult(result, onSearchSelect));
     });
-    if (createProposal) {
-      resultFragment.append(createThoughtProposal(
-        createProposal,
-        onCreateThought,
-        onCreateKind,
-      ));
-    }
     searchResults.replaceChildren(resultFragment);
-    searchResults.hidden = results.length === 0 && !createProposal;
+    searchResults.hidden = results.length === 0;
   }
 
   function focusThought(thoughtId, { kind = false } = {}) {

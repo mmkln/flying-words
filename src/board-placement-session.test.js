@@ -3,6 +3,8 @@ import assert from 'node:assert/strict';
 import {
   BoardPlacementOperation,
   BoardPlacementTargetKind,
+  buildBoardPlacementBatchChanges,
+  buildBoardPlacementUndoBatchChanges,
   createBoardPlacementSession,
   planBoardPlacementCommit,
   resolveBoardPlacementTarget,
@@ -14,6 +16,7 @@ import {
 function thought(id, placements) {
   return {
     id,
+    revision: 7,
     meta: {
       knowledge: { kind: 'thought' },
       canvas: { version: 2, placements },
@@ -192,5 +195,64 @@ test('restoring a placement snapshot preserves current non-canvas metadata', () 
     knowledge: { kind: 'question' },
     canvas: { version: 2, placements: { source: { x: 1, y: 2 } } },
   });
+});
+
+test('batch changes contain only the affected Board placements and revision', () => {
+  const thoughts = [thought('a', { source: { x: 10, y: 20 } })];
+  let session = createBoardPlacementSession({
+    operation: BoardPlacementOperation.MOVE,
+    sourceBoardId: 'source',
+    selectedIds: ['a'],
+    thoughts,
+  });
+  session = setBoardPlacementTarget(session, {
+    kind: BoardPlacementTargetKind.EXISTING,
+    boardId: 'target',
+  }, thoughts);
+  session = updateBoardPlacementDraft(session, [{ id: 'a', x: 300, y: 400 }]);
+  const changes = planBoardPlacementCommit(session, thoughts);
+
+  assert.deepEqual(buildBoardPlacementBatchChanges(session, changes, thoughts), [{
+    thought_id: 'a',
+    base_revision: 7,
+    placements: [
+      { board_id: 'source', position: null },
+      { board_id: 'target', position: { x: 300, y: 400 } },
+    ],
+  }]);
+});
+
+test('undo batch restores the original Board placements using current revision', () => {
+  const originalThoughts = [thought('a', { source: { x: 10, y: 20 } })];
+  let session = createBoardPlacementSession({
+    operation: BoardPlacementOperation.MOVE,
+    sourceBoardId: 'source',
+    selectedIds: ['a'],
+    thoughts: originalThoughts,
+  });
+  session = setBoardPlacementTarget(session, {
+    kind: BoardPlacementTargetKind.EXISTING,
+    boardId: 'target',
+  }, originalThoughts);
+  session = updateBoardPlacementDraft(session, [{ id: 'a', x: 300, y: 400 }]);
+  const changes = planBoardPlacementCommit(session, originalThoughts);
+  const currentThoughts = [{
+    ...originalThoughts[0],
+    revision: 8,
+    meta: changes[0].nextMeta,
+  }];
+
+  assert.deepEqual(buildBoardPlacementUndoBatchChanges(
+    session,
+    changes,
+    currentThoughts,
+  ), [{
+    thought_id: 'a',
+    base_revision: 8,
+    placements: [
+      { board_id: 'source', position: { x: 10, y: 20 } },
+      { board_id: 'target', position: null },
+    ],
+  }]);
 });
 

@@ -3,6 +3,7 @@ import {
   getThoughtKnowledgeKind,
   normalizeKnowledgeKind,
 } from './knowledge-kinds.js';
+import { getWebResourcePresentation } from './web-resource-presentation.js';
 
 export const LINK_META_VERSION = 1;
 export const MAX_LINK_URL_LENGTH = 2048;
@@ -101,13 +102,13 @@ export function validateThoughtDraft(draft, { maximumTextLength = 2000 } = {}) {
   if (!rawUrl) {
     return {
       valid: false,
-      message: 'Enter a URL for the attached link.',
+      message: 'Enter a URL for the attached web link.',
     };
   }
   if (rawUrl.length > MAX_LINK_URL_LENGTH) {
     return {
       valid: false,
-      message: `A link URL can contain up to ${MAX_LINK_URL_LENGTH} characters.`,
+      message: `A web link URL can contain up to ${MAX_LINK_URL_LENGTH} characters.`,
     };
   }
   if (!normalizeHttpUrl(rawUrl)) {
@@ -119,7 +120,7 @@ export function validateThoughtDraft(draft, { maximumTextLength = 2000 } = {}) {
   if (rawTitle.length > MAX_LINK_TITLE_LENGTH) {
     return {
       valid: false,
-      message: `A link title can contain up to ${MAX_LINK_TITLE_LENGTH} characters.`,
+      message: `A web link title can contain up to ${MAX_LINK_TITLE_LENGTH} characters.`,
     };
   }
 
@@ -151,31 +152,11 @@ export function getThoughtPresentation(thought) {
   const text = typeof thought?.text === 'string' ? thought.text : '';
   const link = getThoughtLink(thought);
 
-  if (!link) {
-    return {
-      kind,
-      primaryText: text,
-      secondaryText: '',
-      hostname: '',
-      href: '',
-      resourceTitle: '',
-    };
-  }
-
-  let hostname = '';
-  try {
-    hostname = new URL(link.url).hostname.replace(/^www\./, '');
-  } catch {
-    // Stored legacy data can still be displayed while the backend remains authoritative.
-  }
-
   return {
     kind,
     primaryText: text,
     secondaryText: '',
-    hostname,
-    href: link.url,
-    resourceTitle: link.title || hostname,
+    resource: link ? getWebResourcePresentation(link) : null,
   };
 }
 
