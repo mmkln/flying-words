@@ -256,6 +256,7 @@ const refreshIconSvg = `
 `;
 
 const canvas = document.querySelector('#canvas');
+const boardViewport = document.querySelector('#board-viewport');
 const canvasWorld = document.querySelector('#canvas-world');
 const navigationHud = document.querySelector('#navigation-hud');
 const boardMinimapCanvas = document.querySelector('#board-minimap-canvas');
@@ -1103,7 +1104,7 @@ async function activateSpatialView() {
     blocking: false,
     thoughtCount: thoughts.length,
   });
-  canvasWorld.hidden = true;
+  boardViewport.hidden = true;
   spatialWorld.hidden = false;
   const view = await ensureSpatialView();
   if (!view || !isSpatialSpace(activeSpaceId)) {
@@ -1123,7 +1124,7 @@ function deactivateSpatialView() {
   thoughtInspectorStack.hidden = true;
   spatialInspector.hidden = true;
   spatialWorld.hidden = true;
-  canvasWorld.hidden = false;
+  boardViewport.hidden = false;
   renderSpatialScopeControls();
 }
 
@@ -1699,7 +1700,7 @@ function updateCanvasPlacement(thought) {
 }
 
 function clientPointToCanvasWorld(clientX, clientY) {
-  const bounds = canvas.getBoundingClientRect();
+  const bounds = boardViewport.getBoundingClientRect();
   return clientPointToBoardWorld({ x: clientX, y: clientY }, bounds, canvasCamera);
 }
 
@@ -7041,7 +7042,7 @@ function beginBoardSelectionMarquee(event) {
     baseIds,
   };
   renderBoardSelectionMarquee(boardSelectionRectangle(start, start));
-  canvas.setPointerCapture(event.pointerId);
+  boardViewport.setPointerCapture(event.pointerId);
   renderBoardSelectionUi();
   event.preventDefault();
   return true;
@@ -7099,7 +7100,10 @@ function beginCanvasPointerInteraction(event) {
 
 function beginCanvasPan(event) {
   if (!isCanvasSpace(activeSpaceId)) return;
-  if (event.button !== 0 || event.target.closest('.thought-card, button, input')) return;
+  if (
+    event.button !== 0
+    || event.target.closest('.thought-card, button, input, textarea, a')
+  ) return;
 
   canvasPan = {
     pointerId: event.pointerId,
@@ -7108,8 +7112,8 @@ function beginCanvasPan(event) {
     cameraX: canvasCamera.x,
     cameraY: canvasCamera.y,
   };
-  canvas.setPointerCapture(event.pointerId);
-  canvas.classList.add('is-panning');
+  boardViewport.setPointerCapture(event.pointerId);
+  boardViewport.classList.add('is-panning');
 }
 
 function moveCanvasPan(event) {
@@ -7124,7 +7128,7 @@ function moveCanvasPan(event) {
 function stopCanvasPan(event) {
   if (!canvasPan || (event && event.pointerId !== canvasPan.pointerId)) return;
   canvasPan = null;
-  canvas.classList.remove('is-panning');
+  boardViewport.classList.remove('is-panning');
   saveCanvasCamera();
 }
 
@@ -7134,7 +7138,7 @@ function setCanvasScale(nextScale, clientX, clientY, { persist = true } = {}) {
   const scale = Math.min(MAX_CANVAS_SCALE, Math.max(MIN_CANVAS_SCALE, nextScale));
   if (scale === canvasCamera.scale) return;
 
-  const bounds = canvas.getBoundingClientRect();
+  const bounds = boardViewport.getBoundingClientRect();
   canvasCamera = zoomBoardCameraAtClientPoint(
     canvasCamera,
     scale,
@@ -9576,24 +9580,24 @@ anchorsClose.addEventListener('click', () => anchorsDialog.close());
 anchorsDialog.addEventListener('click', (event) => {
   if (event.target === anchorsDialog) anchorsDialog.close();
 });
-canvas.addEventListener('pointerdown', beginCanvasPointerInteraction);
-canvas.addEventListener('pointermove', (event) => {
+boardViewport.addEventListener('pointerdown', beginCanvasPointerInteraction);
+boardViewport.addEventListener('pointermove', (event) => {
   if (moveBoardSelectionMarquee(event)) return;
   if (!moveCanvasPan(event)) moveDrag(event);
 });
-canvas.addEventListener('pointerup', (event) => {
+boardViewport.addEventListener('pointerup', (event) => {
   if (finishBoardSelectionMarquee(event)) return;
   const wasPanning = Boolean(canvasPan);
   stopCanvasPan(event);
   if (!wasPanning) stopDrag(event);
 });
-canvas.addEventListener('pointercancel', (event) => {
+boardViewport.addEventListener('pointercancel', (event) => {
   if (finishBoardSelectionMarquee(event, { cancelled: true })) return;
   const wasPanning = Boolean(canvasPan);
   stopCanvasPan(event);
   if (!wasPanning) stopDrag(event, { cancelled: true });
 });
-canvas.addEventListener('wheel', handleCanvasWheel, { passive: false });
+boardViewport.addEventListener('wheel', handleCanvasWheel, { passive: false });
 
 function getCanvasViewportCenter() {
   const usable = getBoardUsableRect();

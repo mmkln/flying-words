@@ -236,6 +236,15 @@ button { -webkit-tap-highlight-color: transparent; }
   overflow: hidden;
 }
 
+.board-viewport {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  touch-action: none;
+}
+
+.board-viewport[hidden] { display: none; }
+
 html[data-app-ready="false"] #canvas {
   visibility: hidden;
 }
@@ -674,8 +683,10 @@ html[data-app-ready="false"] .composer-wrap {
 #spatial-inspector-text {
   margin: 13px 2px 15px;
   overflow-wrap: anywhere;
+  cursor: text;
   font-size: 14px;
   line-height: 1.52;
+  user-select: text;
   white-space: pre-wrap;
 }
 
@@ -1796,12 +1807,11 @@ html[data-app-ready="false"] .composer-wrap {
 .connection-map-controls button:disabled { cursor: default; opacity: .36; }
 #connection-map-zoom-reset { min-width: 52px; color: var(--text-tertiary); font-size: 11px; font-variant-numeric: tabular-nums; }
 
-.thought-space.is-static-canvas {
+.thought-space.is-static-canvas .board-viewport {
   cursor: grab;
-  touch-action: none;
 }
 
-.thought-space.is-static-canvas.is-panning { cursor: grabbing; }
+.thought-space.is-static-canvas .board-viewport.is-panning { cursor: grabbing; }
 
 .thought-space.is-static-canvas .magnet-btn,
 .thought-space.is-static-canvas .pin-btn { display: none; }
