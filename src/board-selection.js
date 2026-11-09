@@ -9,17 +9,125 @@ export const BoardSelectionGesturePhase = Object.freeze({
   MARQUEE: 'marquee',
 });
 
+export const BoardSelectionGestureIntent = Object.freeze({
+  QUICK: 'quick',
+  TOOL: 'tool',
+});
+
+export const BoardSelectionTool = Object.freeze({
+  DEFAULT: 'default',
+  SELECT: 'select',
+});
+
+export function createBoardSelectionSession({
+  tool = BoardSelectionTool.DEFAULT,
+} = {}) {
+  return {
+    selectedIds: new Set(),
+    tool,
+  };
+}
+
+export function ensureBoardSelectionSession(
+  session,
+  { tool = BoardSelectionTool.DEFAULT } = {},
+) {
+  if (!session) return createBoardSelectionSession({ tool });
+  if (
+    session.tool === BoardSelectionTool.SELECT
+    || tool === BoardSelectionTool.DEFAULT
+  ) return session;
+
+  return {
+    ...session,
+    tool,
+  };
+}
+
+export function setBoardSelectionTool(session, tool) {
+  if (!session) return createBoardSelectionSession({ tool });
+  return {
+    ...session,
+    tool,
+  };
+}
+
+export function toggleBoardSelectionSessionId(session, thoughtId) {
+  if (!session || !thoughtId) return session;
+  return {
+    ...session,
+    selectedIds: toggleBoardSelection(session.selectedIds, thoughtId),
+  };
+}
+
+export function removeBoardSelectionSessionId(session, thoughtId) {
+  if (!session?.selectedIds.has(thoughtId)) return session;
+
+  const selectedIds = new Set(session.selectedIds);
+  selectedIds.delete(thoughtId);
+  return {
+    ...session,
+    selectedIds,
+  };
+}
+
+export function clearBoardSelectionSession(session) {
+  if (!session) return null;
+  return {
+    ...session,
+    selectedIds: new Set(),
+  };
+}
+
+export function setBoardSelectionSessionIds(session, selectedIds) {
+  if (!session) return session;
+  return {
+    ...session,
+    selectedIds: new Set(selectedIds || []),
+  };
+}
+
+export function boardSelectionUsesTool(session) {
+  return session?.tool === BoardSelectionTool.SELECT;
+}
+
+export function resolveBoardSelectionGestureIntent({
+  button,
+  pointerType,
+  toolActive,
+  cardId,
+  spacePressed,
+}) {
+  if (button === 0 && toolActive && !cardId && !spacePressed) {
+    return BoardSelectionGestureIntent.TOOL;
+  }
+  if (button === 2 && pointerType === 'mouse') {
+    return BoardSelectionGestureIntent.QUICK;
+  }
+  return null;
+}
+
+export function boardSelectionGestureCanBecomeMarquee(gesture) {
+  return Boolean(
+    gesture
+    && !(
+      gesture.intent === BoardSelectionGestureIntent.QUICK
+      && gesture.cardId
+    ),
+  );
+}
+
 export function createBoardSelectionGesture({
   pointerId,
-  button,
+  intent,
   startClient,
   startWorld,
   cardId = null,
   additive = false,
-  immediate = false,
 }) {
   if (
     !Number.isInteger(pointerId)
+    || !Object.values(BoardSelectionGestureIntent).includes(intent)
     || !finitePoint(startClient)
     || !finitePoint(startWorld)
   ) {
@@ -28,8 +136,8 @@ export function createBoardSelectionGesture({
 
   return {
     pointerId,
-    button,
-    phase: immediate
+    intent,
+    phase: intent === BoardSelectionGestureIntent.TOOL
       ? BoardSelectionGesturePhase.MARQUEE
       : BoardSelectionGesturePhase.PENDING,
     startClient: { ...startClient },
