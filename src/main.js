@@ -91,8 +91,12 @@ import {
   zoomBoardCameraAtClientPoint,
 } from './board-coordinate-space.js';
 import {
+  BoardSelectionGesturePhase,
+  activateBoardSelectionGesture,
   boardSelectionRectangle,
+  boardSelectionGesturePassedThreshold,
   captureBoardSelectionOrigins,
+  createBoardSelectionGesture,
   selectBoardCardsInRectangle,
   toggleBoardSelection,
   translateBoardSelectionOrigins,
@@ -486,7 +490,7 @@ let dragCandidate = null;
 let dragOffset = { x: 0, y: 0 };
 let boardSelection = null;
 let boardSelectionDrag = null;
-let boardSelectionMarquee = null;
+let boardSelectionGesture = null;
 let boardPlacementSession = null;
 let boardPlacementCommitInFlight = false;
 let spacesOverviewPurpose = 'navigation';
@@ -1731,6 +1735,11 @@ function isBoardSelectionActive() {
   return Boolean(boardSelection && isCanvasSpace(activeSpaceId));
 }
 
+function ensureBoardSelection() {
+  if (isBoardSelectionActive()) return true;
+  return openBoardSelection();
+}
+
 function renderBoardThoughtSelectionState(thought) {
   if (!thought.element) return;
   const selected = Boolean(boardSelection?.selectedIds.has(thought.id));
@@ -1772,12 +1781,14 @@ function clearBoardSelection() {
 
 function closeBoardSelection({ restoreFocus = false } = {}) {
   if (!boardSelection) return;
-  if (boardSelectionMarquee) finishBoardSelectionMarquee(null, { cancelled: true });
+  if (boardSelectionGesture) {
+    finishBoardSelectionGesture(null, { cancelled: true });
+  }
   if (boardSelectionDrag || dragCandidate) stopDrag(null, { cancelled: true });
 
   boardSelection = null;
   boardSelectionDrag = null;
-  boardSelectionMarquee = null;
+  boardSelectionGesture = null;
   boardSelectionMarqueeElement.hidden = true;
   renderBoardSelectionUi();
   if (restoreFocus && !boardSelectButton.hidden) {
@@ -4655,6 +4666,7 @@ function mountThoughtElement(
   const deleteButton = fragment.querySelector('.delete-button');
 
   thought.element = element;
+  element.dataset.thoughtId = thought.id;
   mountedThoughtsById.set(thought.id, thought);
 
   textElement.textContent = getThoughtCardPreviewText(thought.text);
@@ -4775,7 +4787,7 @@ function replaceThoughts(nextThoughts, { persist = true } = {}) {
     connectionEditor = null;
     boardSelection = null;
     boardSelectionDrag = null;
-    boardSelectionMarquee = null;
+    boardSelectionGesture = null;
     boardSelectionMarqueeElement.hidden = true;
     selectionToolbar.hidden = true;
     canvas.classList.remove('is-magnet-editing');
@@ -7113,37 +7125,93 @@ function renderBoardSelectionMarquee(rectangle) {
   boardSelectionMarqueeElement.style.height = `${rectangle.bottom - rectangle.top}px`;
 }
 
-function beginBoardSelectionMarquee(event) {
-  if (!isBoardSelectionActive() || event.button !== 0 || boardSpacePressed) return false;
-  if (event.target.closest('.thought-card, button, input, textarea, a')) return false;
+function getBoardPointerThoughtId(event) {
+  if (!(event.target instanceof Element)) return null;
+  return event.target.closest('.thought-card')?.dataset.thoughtId || null;
+}
 
-  const start = pointerToCanvasWorld(event);
-  const previousIds = new Set(boardSelection.selectedIds);
-  const additive = event.shiftKey || event.ctrlKey || event.metaKey;
-  const baseIds = additive ? previousIds : new Set();
-  boardSelection.selectedIds = new Set(baseIds);
-  boardSelectionMarquee = {
-    pointerId: event.pointerId,
-    start,
-    previousIds,
-    baseIds,
-  };
-  renderBoardSelectionMarquee(boardSelectionRectangle(start, start));
-  boardViewport.setPointerCapture(event.pointerId);
+function isBoardSelectionInteractiveTarget(event) {
+  return event.target instanceof Element
+    && Boolean(event.target.closest('button, input, textarea, select, a'));
+}
+
+function activateBoardSelectionMarquee() {
+  if (!boardSelectionGesture || !ensureBoardSelection()) return false;
+
+  const activated = activateBoardSelectionGesture(
+    boardSelectionGesture,
+    boardSelection.selectedIds,
+  );
+  if (!activated) return false;
+
+  boardSelectionGesture = activated.gesture;
+  boardSelection.selectedIds = activated.selectedIds;
+  renderBoardSelectionMarquee(boardSelectionRectangle(
+    boardSelectionGesture.startWorld,
+    boardSelectionGesture.startWorld,
+  ));
   renderBoardSelectionUi();
+  return true;
+}
+
+function beginBoardSelectionGesture(event) {
+  if (!isCanvasSpace(activeSpaceId)) return false;
+  if (isBoardSelectionInteractiveTarget(event)) return false;
+
+  const cardId = getBoardPointerThoughtId(event);
+  const explicitMarquee = Boolean(
+    event.button === 0
+    && isBoardSelectionActive()
+    && !cardId
+    && !boardSpacePressed,
+  );
+  const quickSelection = event.pointerType === 'mouse' && event.button === 2;
+  if (!explicitMarquee && !quickSelection) return false;
+
+  boardSelectionGesture = createBoardSelectionGesture({
+    pointerId: event.pointerId,
+    button: event.button,
+    startClient: { x: event.clientX, y: event.clientY },
+    startWorld: pointerToCanvasWorld(event),
+    cardId,
+    additive: event.shiftKey || event.ctrlKey || event.metaKey,
+    immediate: explicitMarquee,
+  });
+  if (!boardSelectionGesture) return false;
+
+  boardViewport.setPointerCapture(event.pointerId);
+  if (explicitMarquee && !activateBoardSelectionMarquee()) {
+    boardSelectionGesture = null;
+    return false;
+  }
+
   event.preventDefault();
   return true;
 }
 
-function moveBoardSelectionMarquee(event) {
+function moveBoardSelectionGesture(event) {
   if (
-    !boardSelectionMarquee
-    || !boardSelection
-    || event.pointerId !== boardSelectionMarquee.pointerId
+    !boardSelectionGesture
+    || event.pointerId !== boardSelectionGesture.pointerId
   ) return false;
 
+  if (boardSelectionGesture.phase === BoardSelectionGesturePhase.PENDING) {
+    const passedThreshold = boardSelectionGesturePassedThreshold(
+      boardSelectionGesture,
+      { x: event.clientX, y: event.clientY },
+      DRAG_THRESHOLD_PX,
+    );
+    if (!passedThreshold) return true;
+    if (!activateBoardSelectionMarquee()) {
+      boardSelectionGesture = null;
+      renderBoardSelectionMarquee(null);
+      return true;
+    }
+  }
+
+  if (!boardSelection || !boardSelectionGesture.baseIds) return true;
   const rectangle = boardSelectionRectangle(
-    boardSelectionMarquee.start,
+    boardSelectionGesture.startWorld,
     pointerToCanvasWorld(event),
   );
   const intersectingIds = selectBoardCardsInRectangle(
@@ -7151,7 +7219,7 @@ function moveBoardSelectionMarquee(event) {
     rectangle,
   );
   boardSelection.selectedIds = new Set([
-    ...boardSelectionMarquee.baseIds,
+    ...boardSelectionGesture.baseIds,
     ...intersectingIds,
   ]);
   selectionCount.textContent = `${boardSelection.selectedIds.size} selected`;
@@ -7160,20 +7228,32 @@ function moveBoardSelectionMarquee(event) {
   return true;
 }
 
-function finishBoardSelectionMarquee(event, { cancelled = false } = {}) {
+function finishBoardSelectionGesture(event, { cancelled = false } = {}) {
   if (
-    !boardSelectionMarquee
-    || (event && event.pointerId !== boardSelectionMarquee.pointerId)
+    !boardSelectionGesture
+    || (event && event.pointerId !== boardSelectionGesture.pointerId)
   ) return false;
 
-  const marquee = boardSelectionMarquee;
-  boardSelectionMarquee = null;
-  boardSelectionMarqueeElement.hidden = true;
-  if (cancelled && boardSelection) {
-    boardSelection.selectedIds = marquee.previousIds;
+  const gesture = boardSelectionGesture;
+  boardSelectionGesture = null;
+  renderBoardSelectionMarquee(null);
+
+  if (cancelled) {
+    if (gesture.previousIds && boardSelection) {
+      boardSelection.selectedIds = gesture.previousIds;
+      renderBoardSelectionUi();
+    }
+    return true;
   }
+
+  if (gesture.phase === BoardSelectionGesturePhase.PENDING) {
+    if (!gesture.cardId || !ensureBoardSelection()) return true;
+    toggleBoardThoughtSelection(getThoughtById(gesture.cardId));
+    return true;
+  }
+
   renderBoardSelectionUi();
-  if (!cancelled && boardSelection) {
+  if (boardSelection) {
     const count = boardSelection.selectedIds.size;
     announce(`${count} ${count === 1 ? 'card' : 'cards'} selected.`);
   }
@@ -7181,7 +7261,7 @@ function finishBoardSelectionMarquee(event, { cancelled = false } = {}) {
 }
 
 function beginCanvasPointerInteraction(event) {
-  if (beginBoardSelectionMarquee(event)) return;
+  if (beginBoardSelectionGesture(event)) return;
   beginCanvasPan(event);
 }
 
@@ -9668,20 +9748,24 @@ anchorsDialog.addEventListener('click', (event) => {
 });
 boardViewport.addEventListener('pointerdown', beginCanvasPointerInteraction);
 boardViewport.addEventListener('pointermove', (event) => {
-  if (moveBoardSelectionMarquee(event)) return;
+  if (moveBoardSelectionGesture(event)) return;
   if (!moveCanvasPan(event)) moveDrag(event);
 });
 boardViewport.addEventListener('pointerup', (event) => {
-  if (finishBoardSelectionMarquee(event)) return;
+  if (finishBoardSelectionGesture(event)) return;
   const wasPanning = Boolean(canvasPan);
   stopCanvasPan(event);
   if (!wasPanning) stopDrag(event);
 });
 boardViewport.addEventListener('pointercancel', (event) => {
-  if (finishBoardSelectionMarquee(event, { cancelled: true })) return;
+  if (finishBoardSelectionGesture(event, { cancelled: true })) return;
   const wasPanning = Boolean(canvasPan);
   stopCanvasPan(event);
   if (!wasPanning) stopDrag(event, { cancelled: true });
+});
+boardViewport.addEventListener('contextmenu', (event) => {
+  if (!isCanvasSpace(activeSpaceId) || isBoardSelectionInteractiveTarget(event)) return;
+  event.preventDefault();
 });
 boardViewport.addEventListener('wheel', handleCanvasWheel, { passive: false });
 

@@ -4,6 +4,74 @@ function finitePoint(point) {
     && Number.isFinite(point.y);
 }
 
+export const BoardSelectionGesturePhase = Object.freeze({
+  PENDING: 'pending',
+  MARQUEE: 'marquee',
+});
+
+export function createBoardSelectionGesture({
+  pointerId,
+  button,
+  startClient,
+  startWorld,
+  cardId = null,
+  additive = false,
+  immediate = false,
+}) {
+  if (
+    !Number.isInteger(pointerId)
+    || !finitePoint(startClient)
+    || !finitePoint(startWorld)
+  ) {
+    return null;
+  }
+
+  return {
+    pointerId,
+    button,
+    phase: immediate
+      ? BoardSelectionGesturePhase.MARQUEE
+      : BoardSelectionGesturePhase.PENDING,
+    startClient: { ...startClient },
+    startWorld: { ...startWorld },
+    cardId,
+    additive: Boolean(additive),
+    previousIds: null,
+    baseIds: null,
+  };
+}
+
+export function boardSelectionGesturePassedThreshold(
+  gesture,
+  point,
+  threshold,
+) {
+  if (!gesture || !finitePoint(gesture.startClient) || !finitePoint(point)) return false;
+  if (!Number.isFinite(threshold) || threshold < 0) return false;
+
+  return Math.hypot(
+    point.x - gesture.startClient.x,
+    point.y - gesture.startClient.y,
+  ) >= threshold;
+}
+
+export function activateBoardSelectionGesture(gesture, selectedIds) {
+  if (!gesture) return null;
+
+  const previousIds = new Set(selectedIds || []);
+  const baseIds = gesture.additive ? new Set(previousIds) : new Set();
+
+  return {
+    gesture: {
+      ...gesture,
+      phase: BoardSelectionGesturePhase.MARQUEE,
+      previousIds,
+      baseIds,
+    },
+    selectedIds: new Set(baseIds),
+  };
+}
+
 export function toggleBoardSelection(selectedIds, thoughtId) {
   const next = new Set(selectedIds || []);
   if (next.has(thoughtId)) next.delete(thoughtId);
