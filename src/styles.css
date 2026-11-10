@@ -2464,7 +2464,7 @@ html[data-app-ready="false"] .composer-wrap {
 }
 
 .spaces-overview[data-purpose="navigation"] {
-  --spaces-layout-columns: 220px minmax(0, 1fr);
+  --spaces-layout-columns: 248px minmax(0, 1fr);
   --spaces-gallery-columns: 4;
   --spaces-gallery-gap: clamp(16px, 1.6vw, 24px);
   --spaces-tile-radius: 16px;
@@ -2629,9 +2629,21 @@ html[data-app-ready="false"] .composer-wrap {
   height: 100%;
   min-width: 0;
   min-height: 0;
-  padding: 68px clamp(32px, 5vw, 78px) 64px;
+  overflow: hidden;
+}
+
+.spaces-workspace-scroll {
+  height: 100%;
+  min-height: 0;
   overflow-y: auto;
   overscroll-behavior: contain;
+  scrollbar-gutter: stable;
+}
+
+.spaces-workspace-inner {
+  width: 100%;
+  min-height: 100%;
+  padding: 68px clamp(32px, 5vw, 78px) max(64px, env(safe-area-inset-bottom));
 }
 
 .spaces-workspace-header {
@@ -2958,11 +2970,13 @@ html[data-app-ready="false"] .composer-wrap {
 .spaces-overview[data-purpose="navigation"] .spaces-content {
   width: 100%;
   max-width: none;
-  padding: 28px;
-  gap: 32px;
+  padding: 0;
+  gap: 24px;
 }
 
 .spaces-overview[data-purpose="navigation"] .spaces-source-list {
+  height: auto;
+  margin: 28px 0 28px 28px;
   padding: 38px 16px;
   border: 1px solid color-mix(in srgb, var(--border-subtle) 72%, transparent);
   border-radius: 24px;
@@ -2971,8 +2985,16 @@ html[data-app-ready="false"] .composer-wrap {
   backdrop-filter: blur(24px) saturate(1.12);
 }
 
-.spaces-overview[data-purpose="navigation"] .spaces-workspace-content {
-  padding: 54px 8px 56px 6px;
+.spaces-overview[data-purpose="navigation"] .spaces-workspace-scroll {
+  scroll-padding-block: 76px max(72px, env(safe-area-inset-bottom));
+}
+
+.spaces-overview[data-purpose="navigation"] .spaces-workspace-inner {
+  padding:
+    76px
+    clamp(36px, 4vw, 72px)
+    max(72px, env(safe-area-inset-bottom))
+    8px;
 }
 
 .spaces-overview[data-purpose="navigation"] .spaces-workspace-header {
@@ -3135,19 +3157,26 @@ html[data-app-ready="false"] .composer-wrap {
 
 @media (max-width: 1020px) {
   .spaces-overview[data-purpose="navigation"] {
-    --spaces-layout-columns: 200px minmax(0, 1fr);
+    --spaces-layout-columns: 220px minmax(0, 1fr);
     --spaces-gallery-columns: 3;
   }
 
   .spaces-overview[data-purpose="navigation"] .spaces-content {
-    padding: 20px;
     gap: 20px;
+  }
+
+  .spaces-overview[data-purpose="navigation"] .spaces-source-list {
+    margin: 20px 0 20px 20px;
+  }
+
+  .spaces-overview[data-purpose="navigation"] .spaces-workspace-inner {
+    padding-right: 40px;
   }
 }
 
 @media (max-width: 780px) {
   .spaces-overview[data-purpose="navigation"] {
-    --spaces-layout-columns: 180px minmax(0, 1fr);
+    --spaces-layout-columns: 200px minmax(0, 1fr);
     --spaces-gallery-columns: 2;
   }
 }
@@ -5934,7 +5963,9 @@ kbd {
   .spaces-source-item { width: auto; flex: 0 0 auto; }
   .spaces-source-item-count { display: none; }
   .spaces-new-workspace { width: auto; }
-  .spaces-workspace-content { height: auto; padding: 28px 16px 42px; overflow: visible; }
+  .spaces-workspace-content,
+  .spaces-workspace-scroll { height: auto; overflow: visible; }
+  .spaces-workspace-inner { min-height: 0; padding: 28px 16px max(42px, env(safe-area-inset-bottom)); }
   .spaces-workspace-header { margin-bottom: 24px; }
   .spaces-workspace-header h1 { font-size: 26px; }
   .spaces-section-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 24px 16px; }
@@ -5942,14 +5973,15 @@ kbd {
   .space-preview-surface { border-radius: 11px; }
   .spaces-overview[data-purpose="navigation"] .spaces-content { padding: 0; gap: 0; }
   .spaces-overview[data-purpose="navigation"] .spaces-source-list {
+    margin: 0;
     padding: 58px 14px 16px;
     border: 0;
     border-bottom: 1px solid color-mix(in srgb, var(--border-subtle) 68%, transparent);
     border-radius: 0;
     box-shadow: none;
   }
-  .spaces-overview[data-purpose="navigation"] .spaces-workspace-content {
-    padding: 28px 16px 42px;
+  .spaces-overview[data-purpose="navigation"] .spaces-workspace-inner {
+    padding: 28px 16px max(42px, env(safe-area-inset-bottom));
   }
   .spaces-overview[data-purpose="navigation"] .spaces-workspace-header {
     min-height: 44px;

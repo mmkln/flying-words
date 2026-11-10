@@ -8864,6 +8864,8 @@ function createWorkspaceBoardContent({
   canvasHeight,
 }) {
   const content = document.createElement('main');
+  const scrollViewport = document.createElement('div');
+  const inner = document.createElement('div');
   const header = document.createElement('header');
   const titleGroup = document.createElement('div');
   const heading = document.createElement('h1');
@@ -8873,6 +8875,8 @@ function createWorkspaceBoardContent({
   const boardSpaces = normalizeBoardSpaces(visibleBoards);
 
   content.className = 'spaces-workspace-content';
+  scrollViewport.className = 'spaces-workspace-scroll';
+  inner.className = 'spaces-workspace-inner';
   header.className = 'spaces-workspace-header';
   titleGroup.className = 'spaces-workspace-title';
   grid.className = 'spaces-section-grid workspace-board-grid';
@@ -8899,7 +8903,9 @@ function createWorkspaceBoardContent({
   boardSpaces.forEach((space) => {
     grid.append(createSpaceTile(space, canvasWidth, canvasHeight));
   });
-  content.append(header, grid);
+  inner.append(header, grid);
+  scrollViewport.append(inner);
+  content.append(scrollViewport);
   return content;
 }
 
