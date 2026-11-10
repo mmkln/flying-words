@@ -2510,9 +2510,10 @@ html[data-app-ready="false"] .composer-wrap {
   z-index: 500;
   inset: 0;
   display: grid;
+  height: 100dvh;
   padding: 0;
   place-items: stretch;
-  overflow-y: auto;
+  overflow: hidden;
   color: var(--text-primary);
   background: var(--surface-muted);
   animation: spaces-overview-in .16s ease-out;
@@ -2580,7 +2581,8 @@ html[data-app-ready="false"] .composer-wrap {
 .spaces-content {
   display: grid;
   width: min(1580px, 100%);
-  min-height: 100%;
+  height: 100%;
+  min-height: 0;
   margin: 0 auto;
   grid-template-columns: 232px minmax(0, 1fr);
   gap: 0;
@@ -2588,10 +2590,14 @@ html[data-app-ready="false"] .composer-wrap {
 
 .spaces-source-list {
   display: grid;
+  height: 100%;
+  min-height: 0;
   padding: 66px 20px 40px;
   align-content: start;
   gap: 28px;
+  overflow-y: auto;
   border-right: 1px solid color-mix(in srgb, var(--border-subtle) 68%, transparent);
+  overscroll-behavior: contain;
 }
 
 .spaces-source-section {
@@ -2664,8 +2670,12 @@ html[data-app-ready="false"] .composer-wrap {
 }
 
 .spaces-workspace-content {
+  height: 100%;
   min-width: 0;
+  min-height: 0;
   padding: 68px clamp(32px, 5vw, 78px) 64px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
 }
 
 .spaces-workspace-header {
@@ -5685,19 +5695,23 @@ kbd {
     border-radius: 15px;
   }
   .thought-connections-island { max-height: min(30dvh, 250px); }
-  .spaces-overview { padding: 0; }
+  .spaces-overview { height: auto; min-height: 100dvh; padding: 0; overflow-y: auto; }
   .spaces-overview-actions {
     top: max(12px, env(safe-area-inset-top));
     right: max(12px, env(safe-area-inset-right));
     gap: 8px;
   }
   .spaces-content {
+    height: auto;
+    min-height: 100%;
     grid-template-columns: minmax(0, 1fr);
     gap: 0;
   }
   .spaces-source-list {
+    height: auto;
     padding: 58px 14px 16px;
     gap: 14px;
+    overflow: visible;
     border-right: 0;
     border-bottom: 1px solid color-mix(in srgb, var(--border-subtle) 68%, transparent);
   }
@@ -5710,7 +5724,7 @@ kbd {
   .spaces-source-item { width: auto; flex: 0 0 auto; }
   .spaces-source-item-count { display: none; }
   .spaces-new-workspace { width: auto; }
-  .spaces-workspace-content { padding: 28px 16px 42px; }
+  .spaces-workspace-content { height: auto; padding: 28px 16px 42px; overflow: visible; }
   .spaces-workspace-header { margin-bottom: 24px; }
   .spaces-workspace-header h1 { font-size: 26px; }
   .spaces-section-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 24px 16px; }
