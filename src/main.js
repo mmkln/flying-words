@@ -146,8 +146,20 @@ import {
   isSpaceId,
   isSpatialSpace,
   isThoughtAvailableInSpace,
+  normalizeBoardSpaces,
   setBoardSpaces,
 } from './spaces.js';
+import { createBoardSwitcher } from './board-switcher.js';
+import {
+  WorkspaceFilter,
+  boardsForWorkspace,
+  isWorkspaceFilterAvailable,
+  normalizeWorkspaceRecords,
+  workspaceBoardCount,
+  workspaceFilterForBoard,
+  workspaceFilterLabel,
+  workspaceForBoard,
+} from './workspace-catalog.js';
 import { deriveAppChromeState } from './app-chrome-state.js';
 import {
   buildSpaceUrl,
@@ -381,7 +393,9 @@ const anchorsClose = document.querySelector('#anchors-close');
 const anchorsList = document.querySelector('#anchors-list');
 const spacesButton = document.querySelector('#spaces-button');
 const boardContext = document.querySelector('#board-context');
+const boardContextWorkspace = document.querySelector('#board-context-workspace');
 const boardContextTitle = document.querySelector('#board-context-title');
+const boardSwitcherElement = document.querySelector('#board-switcher');
 const canvasControls = document.querySelector('#canvas-controls');
 const canvasZoomIn = document.querySelector('#canvas-zoom-in');
 const canvasZoomOut = document.querySelector('#canvas-zoom-out');
@@ -556,6 +570,10 @@ let activeSpaceId = (
 let canvasCamera = loadCanvasCamera(activeSpaceId);
 let boardGeometry = applyBoardGeometryCss(DEFAULT_BOARD_GEOMETRY);
 let boards = [];
+let workspaces = [];
+let activeWorkspaceFilter = WorkspaceFilter.ALL;
+let workspaceMutationInFlight = false;
+let workspaceCreatorOpen = false;
 let editingBoardId = null;
 let boardRenameInFlight = false;
 let boardRenameReturnFocus = 'actions';
@@ -566,6 +584,19 @@ let activeRenderableConnections = [];
 const connectionRenderer = createConnectionRenderer({
   layer: connectionLayer,
   getThoughtById,
+});
+
+const boardSwitcher = createBoardSwitcher({
+  root: boardSwitcherElement,
+  trigger: boardContext,
+  onOpenBoard: (boardId) => navigateToSpace(boardId),
+  onCreateBoard: (workspaceId) => void createBoard({ workspaceId }),
+  onShowAllBoards: () => {
+    openSpacesOverview({
+      returnFocus: boardContext,
+      workspaceFilter: WorkspaceFilter.ALL,
+    });
+  },
 });
 
 const historyFilterControls = createHistoryFilterControls({
@@ -2086,7 +2117,10 @@ async function commitBoardPlacement(draftPositions) {
     let session = updateBoardPlacementDraft(boardPlacementSession, draftPositions);
 
     if (session.target?.kind === BoardPlacementTargetKind.NEW) {
-      const board = await createBoardRecord(session.target.title);
+      const board = await createBoardRecord(
+        session.target.title,
+        workspaceIdForBoardCreation(),
+      );
       applyBoardRecords([...boards, board]);
       session = resolveBoardPlacementTarget(session, board.id);
       boardPlacementSession = session;
@@ -5159,25 +5193,41 @@ function applyBoardRecords(records) {
   updateUi();
 }
 
-async function loadBoards() {
+function applyWorkspaceRecords(records) {
+  workspaces = normalizeWorkspaceRecords(records);
+  if (!isWorkspaceFilterAvailable(activeWorkspaceFilter, workspaces)) {
+    activeWorkspaceFilter = WorkspaceFilter.UNSORTED;
+  }
+  if (viewMode === 'spaces') renderSpacesOverview();
+  renderAppChrome();
+}
+
+async function loadBoardCatalog() {
   if (!auth) {
+    applyWorkspaceRecords([]);
     applyBoardRecords([]);
-    pageLoadDiagnostics.mark('boards:load:skipped', { reason: 'guest' });
+    pageLoadDiagnostics.mark('board-catalog:load:skipped', { reason: 'guest' });
     return false;
   }
 
-  const finishDiagnostics = pageLoadDiagnostics.begin('boards:load');
+  const finishDiagnostics = pageLoadDiagnostics.begin('board-catalog:load');
   try {
-    const records = await requestApi('/boards/');
-    applyBoardRecords(records);
+    const [workspaceRecords, boardRecords] = await Promise.all([
+      requestApi('/workspaces/'),
+      requestApi('/boards/'),
+    ]);
+    applyWorkspaceRecords(workspaceRecords);
+    applyBoardRecords(boardRecords);
     finishDiagnostics('complete', {
-      boardCount: Array.isArray(records) ? records.length : 0,
+      workspaceCount: Array.isArray(workspaceRecords) ? workspaceRecords.length : 0,
+      boardCount: Array.isArray(boardRecords) ? boardRecords.length : 0,
     });
     return true;
   } catch (error) {
+    applyWorkspaceRecords([]);
     applyBoardRecords([]);
     finishDiagnostics('failed', pageLoadErrorDetails(error));
-    announce(`Could not load Boards: ${error.message}`);
+    announce(`Could not load Board catalog: ${error.message}`);
     return false;
   }
 }
@@ -5190,14 +5240,21 @@ function nextBoardTitle() {
   return `Board ${highestNumber + 1}`;
 }
 
-function createBoardRecord(title) {
+function workspaceIdForBoardCreation() {
+  return (
+    activeWorkspaceFilter === WorkspaceFilter.ALL
+    || activeWorkspaceFilter === WorkspaceFilter.UNSORTED
+  ) ? null : activeWorkspaceFilter;
+}
+
+function createBoardRecord(title, workspaceId = null) {
   return requestApi('/boards/', {
     method: 'POST',
-    body: { title },
+    body: { title, workspace_id: workspaceId },
   });
 }
 
-async function createBoard() {
+async function createBoard({ workspaceId = workspaceIdForBoardCreation() } = {}) {
   if (!auth) {
     announce('Sign in to create more Boards.');
     return;
@@ -5205,12 +5262,61 @@ async function createBoard() {
   if (blockEditsDuringAccountSync()) return;
 
   try {
-    const board = await createBoardRecord(nextBoardTitle());
+    const board = await createBoardRecord(nextBoardTitle(), workspaceId);
     applyBoardRecords([...boards, board]);
     navigateToSpace(board.id);
     announce(`${board.title} created.`);
   } catch (error) {
     announce(`Could not create Board: ${error.message}`);
+  }
+}
+
+async function createWorkspace(rawName) {
+  const name = rawName.trim();
+  if (!name || workspaceMutationInFlight || !auth) return;
+
+  workspaceMutationInFlight = true;
+  renderSpacesOverview();
+  try {
+    const workspace = await requestApi('/workspaces/', {
+      method: 'POST',
+      body: { name },
+    });
+    applyWorkspaceRecords([...workspaces, workspace]);
+    activeWorkspaceFilter = workspace.id;
+    workspaceCreatorOpen = false;
+    renderSpacesOverview();
+    announce(`${workspace.name} created.`);
+  } catch (error) {
+    announce(`Could not create Workspace: ${error.message}`);
+  } finally {
+    workspaceMutationInFlight = false;
+    if (viewMode === 'spaces') renderSpacesOverview();
+  }
+}
+
+async function moveBoardToWorkspace(boardId, workspaceId) {
+  if (!auth || workspaceMutationInFlight) return;
+
+  workspaceMutationInFlight = true;
+  closeBoardActionsMenus();
+  try {
+    const updatedBoard = await requestApi(`/boards/${boardId}/`, {
+      method: 'PATCH',
+      body: { workspace_id: workspaceId },
+    });
+    applyBoardRecords(boards.map((board) => (
+      board.id === boardId ? updatedBoard : board
+    )));
+    const destination = workspaceId
+      ? workspaces.find(({ id }) => id === workspaceId)?.name || 'Workspace'
+      : 'Unsorted';
+    announce(`${updatedBoard.title} moved to ${destination}.`);
+  } catch (error) {
+    announce(`Could not move Board: ${error.message}`);
+  } finally {
+    workspaceMutationInFlight = false;
+    if (viewMode === 'spaces') renderSpacesOverview();
   }
 }
 
@@ -8299,7 +8405,10 @@ function createBoardActions(space) {
   const trigger = document.createElement('button');
   const menu = document.createElement('div');
   const rename = document.createElement('button');
+  const move = document.createElement('button');
+  const workspaceList = document.createElement('div');
   const remove = document.createElement('button');
+  const board = boards.find(({ id }) => id === space.id);
 
   actions.className = 'space-board-actions';
   trigger.type = 'button';
@@ -8319,6 +8428,26 @@ function createBoardActions(space) {
   menu.hidden = true;
   rename.type = 'button';
   rename.textContent = 'Rename';
+  move.type = 'button';
+  move.textContent = 'Move to Workspace';
+  move.setAttribute('aria-expanded', 'false');
+  workspaceList.className = 'space-board-workspace-list';
+  workspaceList.hidden = true;
+  [
+    ...workspaces.map(({ id, name }) => ({ id, name })),
+    { id: null, name: 'Unsorted' },
+  ].forEach((workspace) => {
+    const option = document.createElement('button');
+    const current = (board?.workspace_id || null) === workspace.id;
+    option.type = 'button';
+    option.className = 'space-board-workspace-option';
+    option.textContent = `${current ? '✓ ' : ''}${workspace.name}`;
+    option.disabled = current || workspaceMutationInFlight;
+    option.addEventListener('click', () => {
+      void moveBoardToWorkspace(space.id, workspace.id);
+    });
+    workspaceList.append(option);
+  });
   remove.type = 'button';
   remove.className = 'is-destructive';
   remove.textContent = 'Delete Board';
@@ -8333,11 +8462,18 @@ function createBoardActions(space) {
     if (shouldOpen) rename.focus();
   });
   rename.addEventListener('click', () => startBoardRename(space.id));
+  move.addEventListener('click', () => {
+    workspaceList.hidden = !workspaceList.hidden;
+    move.setAttribute('aria-expanded', String(!workspaceList.hidden));
+    if (!workspaceList.hidden) {
+      workspaceList.querySelector('button:not(:disabled)')?.focus();
+    }
+  });
   remove.addEventListener('click', () => {
     closeBoardActionsMenus();
     openBoardDeleteConfirmation(space.id);
   });
-  menu.append(rename, remove);
+  menu.append(rename, move, workspaceList, remove);
   actions.append(trigger, menu);
   return actions;
 }
@@ -8542,25 +8678,174 @@ function createNewBoardTile() {
   return tile;
 }
 
-function createSpaceSection(title, sectionId, spaces, canvasWidth, canvasHeight) {
+function createSpacesSourceItem({
+  label,
+  count = null,
+  selected = false,
+  onClick,
+}) {
+  const button = document.createElement('button');
+  const labelElement = document.createElement('span');
+
+  button.type = 'button';
+  button.className = 'spaces-source-item';
+  button.classList.toggle('is-selected', selected);
+  if (selected) button.setAttribute('aria-current', 'page');
+  labelElement.className = 'spaces-source-item-label';
+  labelElement.textContent = label;
+  button.append(labelElement);
+
+  if (count !== null) {
+    const countElement = document.createElement('span');
+    countElement.className = 'spaces-source-item-count';
+    countElement.textContent = String(count);
+    button.append(countElement);
+  }
+
+  button.addEventListener('click', onClick);
+  return button;
+}
+
+function createSpacesSourceSection(title) {
   const section = document.createElement('section');
   const heading = document.createElement('h2');
-  const grid = document.createElement('div');
-  const headingId = `spaces-section-${sectionId}`;
+  const list = document.createElement('div');
 
-  section.className = 'spaces-section';
-  section.classList.add(`spaces-section-${sectionId}`);
-  section.setAttribute('aria-labelledby', headingId);
-  heading.className = 'spaces-section-title';
-  heading.id = headingId;
+  section.className = 'spaces-source-section';
+  heading.className = 'spaces-source-heading';
   heading.textContent = title;
-  grid.className = 'spaces-section-grid';
-  spaces.forEach((space) => {
+  list.className = 'spaces-source-section-list';
+  section.append(heading, list);
+  return { section, list };
+}
+
+function createWorkspaceCreator() {
+  if (!workspaceCreatorOpen) {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'spaces-new-workspace';
+    button.textContent = '+ New Workspace';
+    button.disabled = !auth || workspaceMutationInFlight;
+    button.addEventListener('click', () => {
+      workspaceCreatorOpen = true;
+      renderSpacesOverview();
+    });
+    return button;
+  }
+
+  const form = document.createElement('form');
+  const input = document.createElement('input');
+  form.className = 'spaces-workspace-form';
+  input.type = 'text';
+  input.name = 'workspace-name';
+  input.maxLength = 120;
+  input.placeholder = 'Workspace name';
+  input.setAttribute('aria-label', 'Workspace name');
+  input.disabled = workspaceMutationInFlight;
+  form.append(input);
+  form.addEventListener('submit', (event) => {
+    event.preventDefault();
+    void createWorkspace(input.value);
+  });
+  input.addEventListener('keydown', (event) => {
+    if (event.key !== 'Escape') return;
+    event.preventDefault();
+    workspaceCreatorOpen = false;
+    renderSpacesOverview();
+  });
+  requestAnimationFrame(() => input.focus());
+  return form;
+}
+
+function createSpacesSourceList({ choosingPlacementTarget }) {
+  const navigation = document.createElement('aside');
+  navigation.className = 'spaces-source-list';
+  navigation.setAttribute('aria-label', 'Spaces and Workspaces');
+
+  if (!choosingPlacementTarget) {
+    const spacesSection = createSpacesSourceSection('Spaces');
+    getSpaces()
+      .filter(({ id }) => !isCanvasSpace(id))
+      .forEach((space) => {
+        spacesSection.list.append(createSpacesSourceItem({
+          label: space.label,
+          selected: space.id === activeSpaceId,
+          onClick: () => navigateToSpace(space.id),
+        }));
+      });
+    navigation.append(spacesSection.section);
+  }
+
+  const workspaceSection = createSpacesSourceSection('Workspaces');
+  const workspaceFilters = [
+    {
+      id: WorkspaceFilter.ALL,
+      name: 'All Boards',
+      count: boards.length,
+    },
+    ...workspaces.map((workspace) => ({
+      ...workspace,
+      count: workspaceBoardCount(boards, workspace.id),
+    })),
+    {
+      id: WorkspaceFilter.UNSORTED,
+      name: 'Unsorted',
+      count: workspaceBoardCount(boards, WorkspaceFilter.UNSORTED),
+    },
+  ];
+
+  workspaceFilters.forEach((workspace) => {
+    workspaceSection.list.append(createSpacesSourceItem({
+      label: workspace.name,
+      count: workspace.count,
+      selected: workspace.id === activeWorkspaceFilter,
+      onClick: () => {
+        activeWorkspaceFilter = workspace.id;
+        renderSpacesOverview();
+      },
+    }));
+  });
+  workspaceSection.section.append(createWorkspaceCreator());
+  navigation.append(workspaceSection.section);
+  return navigation;
+}
+
+function createWorkspaceBoardContent({
+  choosingPlacementTarget,
+  canvasWidth,
+  canvasHeight,
+}) {
+  const content = document.createElement('main');
+  const header = document.createElement('header');
+  const heading = document.createElement('h1');
+  const description = document.createElement('p');
+  const grid = document.createElement('div');
+  const visibleBoards = boardsForWorkspace(boards, activeWorkspaceFilter);
+  const boardSpaces = normalizeBoardSpaces(visibleBoards);
+
+  content.className = 'spaces-workspace-content';
+  header.className = 'spaces-workspace-header';
+  grid.className = 'spaces-section-grid workspace-board-grid';
+
+  if (choosingPlacementTarget) {
+    const count = boardPlacementSession.thoughtIds.length;
+    const moving = boardPlacementSession.operation === BoardPlacementOperation.MOVE;
+    heading.textContent = `${moving ? 'Move' : 'Place'} ${count} ${count === 1 ? 'card' : 'cards'}`;
+    description.textContent = moving
+      ? 'Choose a Board. You’ll place the cards before they move.'
+      : 'Choose a Board. You’ll place the cards before anything is saved.';
+  } else {
+    heading.textContent = workspaceFilterLabel(activeWorkspaceFilter, workspaces);
+    description.textContent = `${visibleBoards.length} ${visibleBoards.length === 1 ? 'Board' : 'Boards'}`;
+  }
+
+  header.append(heading, description);
+  boardSpaces.forEach((space) => {
     grid.append(createSpaceTile(space, canvasWidth, canvasHeight));
   });
-  section.append(heading, grid);
-
-  return { section, grid };
+  if (auth) grid.append(createNewBoardTile());
+  content.append(header, grid);
+  return content;
 }
 
 function renderSpacesOverview() {
@@ -8569,42 +8854,18 @@ function renderSpacesOverview() {
   const canvasBounds = canvas.getBoundingClientRect();
   const canvasWidth = Math.max(1, canvasBounds.width);
   const canvasHeight = Math.max(1, canvasBounds.height - RESERVED_BOTTOM_SPACE);
-  const spaces = getSpaces();
-  const flowSpaces = spaces.filter(({ id }) => isFlowSpace(id));
-  const boardSpaces = spaces.filter(({ id }) => isCanvasSpace(id));
-  const flowSection = createSpaceSection(
-    'Spaces', 'flow', flowSpaces, canvasWidth, canvasHeight,
-  );
-  const boardSection = createSpaceSection(
-    'Boards', 'boards', boardSpaces, canvasWidth, canvasHeight,
-  );
-
-  if (auth) boardSection.grid.prepend(createNewBoardTile());
   const choosingPlacementTarget = Boolean(
     spacesOverviewPurpose === 'board-placement' && boardPlacementSession,
   );
-  const spatialActive = isSpatialSpace(activeSpaceId);
-  spacesSpatialAction.hidden = choosingPlacementTarget;
-  spacesSpatialAction.classList.toggle('is-active', spatialActive);
-  if (spatialActive) spacesSpatialAction.setAttribute('aria-current', 'page');
-  else spacesSpatialAction.removeAttribute('aria-current');
-
-  if (choosingPlacementTarget) {
-    const header = document.createElement('header');
-    const heading = document.createElement('h1');
-    const description = document.createElement('p');
-    const count = boardPlacementSession.thoughtIds.length;
-    const moving = boardPlacementSession.operation === BoardPlacementOperation.MOVE;
-    header.className = 'board-placement-destination-header';
-    heading.textContent = `${moving ? 'Move' : 'Place'} ${count} ${count === 1 ? 'card' : 'cards'}`;
-    description.textContent = moving
-      ? 'Choose a Board. You’ll place the cards before they move.'
-      : 'Choose a Board. You’ll place the cards before anything is saved.';
-    header.append(heading, description);
-    spacesGrid.append(header, boardSection.section);
-  } else {
-    spacesGrid.append(flowSection.section, boardSection.section);
-  }
+  spacesSpatialAction.hidden = true;
+  spacesGrid.append(
+    createSpacesSourceList({ choosingPlacementTarget }),
+    createWorkspaceBoardContent({
+      choosingPlacementTarget,
+      canvasWidth,
+      canvasHeight,
+    }),
+  );
 }
 
 function findSpaceTileInDirection(tiles, currentTile, key) {
@@ -8784,6 +9045,7 @@ function activateSpace(spaceId) {
 function openSpacesOverview({
   returnFocus = spacesButton,
   purpose = 'navigation',
+  workspaceFilter = null,
 } = {}) {
   if (boardArrangeInFlight) {
     announce('Wait until the Board finishes arranging.');
@@ -8796,6 +9058,7 @@ function openSpacesOverview({
   finishBoardArrangeAnimation();
   spatialView?.deactivate();
   knowledgeKindPicker.close();
+  boardSwitcher.close();
 
   if (isFlowSpace(activeSpaceId)) {
     thoughts
@@ -8810,6 +9073,17 @@ function openSpacesOverview({
   spacesOverviewPurpose = purpose === 'board-placement' && boardPlacementSession
     ? 'board-placement'
     : 'navigation';
+  const currentBoard = boards.find(({ id }) => id === activeSpaceId);
+  const sourceBoard = spacesOverviewPurpose === 'board-placement'
+    ? boards.find(({ id }) => id === boardPlacementSession?.sourceBoardId)
+    : currentBoard;
+  if (workspaceFilter && isWorkspaceFilterAvailable(workspaceFilter, workspaces)) {
+    activeWorkspaceFilter = workspaceFilter;
+  } else if (sourceBoard) {
+    activeWorkspaceFilter = workspaceFilterForBoard(sourceBoard, workspaces);
+  } else if (!isWorkspaceFilterAvailable(activeWorkspaceFilter, workspaces)) {
+    activeWorkspaceFilter = WorkspaceFilter.ALL;
+  }
   viewMode = 'spaces';
   renderAppChrome();
   renderCanvasCamera();
@@ -8825,7 +9099,7 @@ function openSpacesOverview({
   if (spacesOverviewPurpose === 'board-placement' && firstPlacementTarget) {
     firstPlacementTarget.focus();
   } else if (activeSpaceControl) activeSpaceControl.focus();
-  else if (isSpatialSpace(activeSpaceId)) spacesSpatialAction.focus();
+  else spacesGrid.querySelector('.spaces-source-item.is-selected')?.focus();
 }
 
 function renderAppChrome() {
@@ -8841,19 +9115,29 @@ function renderAppChrome() {
   navigationHud.hidden = !chrome.navigationHudVisible;
 
   if (!chrome.boardContextVisible) {
+    boardSwitcher.close();
+    boardContextWorkspace.textContent = '';
     boardContextTitle.textContent = '';
     boardContext.removeAttribute('title');
     boardContext.removeAttribute('aria-label');
     return;
   }
 
-  const { label } = getSpace(activeSpaceId);
-  boardContextTitle.textContent = label;
-  boardContext.title = `Open Boards · ${label}`;
+  const board = boards.find(({ id }) => id === activeSpaceId);
+  const boardTitle = board?.title || getSpace(activeSpaceId).label;
+  const workspaceName = workspaceForBoard(board, workspaces)?.name || 'Unsorted';
+  boardContextWorkspace.textContent = workspaceName;
+  boardContextTitle.textContent = boardTitle;
+  boardContext.title = `Switch Board · ${workspaceName} / ${boardTitle}`;
   boardContext.setAttribute(
     'aria-label',
-    `Open Boards. Current Board: ${label}`,
+    `Switch Board. Current Board: ${workspaceName} / ${boardTitle}`,
   );
+  boardSwitcher.render({
+    currentBoard: board,
+    boards,
+    workspaces,
+  });
 }
 
 function updateUi() {
@@ -9309,7 +9593,7 @@ async function activateAuthenticatedAccount() {
     const finishServerBootstrap = pageLoadDiagnostics.begin('account:server-bootstrap');
     const [thoughtsReady, boardsReady] = await Promise.all([
       restoreAuthenticatedThoughts(),
-      loadBoards(),
+      loadBoardCatalog(),
     ]);
     finishServerBootstrap('complete', { thoughtsReady, boardsReady });
     finishActivation('complete', {
@@ -9441,6 +9725,7 @@ function clearAuthenticatedState(message) {
   });
   replaceThoughts(guestThoughts);
   finishGuestHydration('complete', { renderedThoughtCount: thoughts.length });
+  applyWorkspaceRecords([]);
   applyBoardRecords([]);
   if (message) announce(message);
 }
@@ -9677,7 +9962,7 @@ spacesButton.addEventListener('click', () => {
   openSpacesOverview({ returnFocus: spacesButton });
 });
 boardContext.addEventListener('click', () => {
-  openSpacesOverview({ returnFocus: boardContext });
+  boardSwitcher.toggle();
 });
 spacesSpatialAction.addEventListener('click', () => {
   const spatialSpace = getSpaces().find(({ id }) => isSpatialSpace(id));

@@ -70,26 +70,39 @@
         </div>
 
         <div class="board-command-bar">
-      <button
-        class="board-context"
-        id="board-context"
-        type="button"
-        aria-controls="spaces-overview"
-        hidden
-      >
-        <span id="board-context-title"></span>
-        <svg
-          viewBox="0 0 16 16"
-          fill="none"
-          stroke="currentColor"
-          stroke-width="1.7"
-          stroke-linecap="round"
-          stroke-linejoin="round"
-          aria-hidden="true"
-        >
-          <path d="m4 6 4 4 4-4"></path>
-        </svg>
-      </button>
+          <div class="board-context-wrap">
+            <button
+              class="board-context"
+              id="board-context"
+              type="button"
+              aria-haspopup="menu"
+              aria-expanded="false"
+              aria-controls="board-switcher"
+              hidden
+            >
+              <span class="board-context-workspace" id="board-context-workspace"></span>
+              <span class="board-context-divider" aria-hidden="true">/</span>
+              <span class="board-context-title" id="board-context-title"></span>
+              <svg
+                viewBox="0 0 16 16"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="1.7"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                aria-hidden="true"
+              >
+                <path d="m4 6 4 4 4-4"></path>
+              </svg>
+            </button>
+            <div
+              class="board-switcher"
+              id="board-switcher"
+              role="menu"
+              aria-label="Switch Board"
+              hidden
+            ></div>
+          </div>
           <div class="board-tools" id="board-tools" role="toolbar" aria-label="Board tools" hidden>
             <button
               class="icon-button board-select-button"
