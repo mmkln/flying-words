@@ -3004,38 +3004,6 @@ html[data-app-ready="false"] .composer-wrap {
   white-space: nowrap;
 }
 
-.spaces-new-board-action {
-  display: grid;
-  width: 48px;
-  height: 48px;
-  padding: 0;
-  flex: 0 0 auto;
-  place-items: center;
-  border: 0;
-  border-radius: 50%;
-  cursor: pointer;
-  color: var(--accent);
-  background: transparent;
-}
-
-.spaces-new-board-action .space-create-icon {
-  width: 48px;
-  height: 48px;
-  background: var(--surface-translucent);
-  box-shadow: var(--shadow-card), inset 0 1px var(--inset-highlight);
-}
-
-.spaces-new-board-action:hover .space-create-icon {
-  border-color: var(--border-hover);
-  background: var(--surface-hover);
-  box-shadow: var(--shadow-card-hover);
-}
-
-.spaces-new-board-action:focus-visible {
-  outline: 3px solid var(--focus-ring);
-  outline-offset: 2px;
-}
-
 .spaces-overview[data-purpose="navigation"] .space-tile {
   display: grid;
   padding: 0;
@@ -5992,11 +5960,6 @@ kbd {
   .spaces-overview[data-purpose="navigation"] .spaces-workspace-header p {
     padding-left: 10px;
     font-size: 13px;
-  }
-  .spaces-new-board-action,
-  .spaces-new-board-action .space-create-icon {
-    width: 42px;
-    height: 42px;
   }
   .history-dialog { width: 100%; }
   .history-filter-popover {

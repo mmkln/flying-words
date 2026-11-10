@@ -8895,15 +8895,6 @@ function createWorkspaceBoardContent({
 
   titleGroup.append(heading, description);
   header.append(titleGroup);
-  if (!choosingPlacementTarget && auth) {
-    const createButton = document.createElement('button');
-    createButton.type = 'button';
-    createButton.className = 'spaces-new-board-action';
-    createButton.setAttribute('aria-label', 'Create Board');
-    createButton.append(createPlusIcon());
-    createButton.addEventListener('click', () => void createBoard());
-    header.append(createButton);
-  }
   if (auth) grid.append(createNewBoardTile());
   boardSpaces.forEach((space) => {
     grid.append(createSpaceTile(space, canvasWidth, canvasHeight));
