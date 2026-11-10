@@ -264,6 +264,7 @@ const RESPAWN_DELAY_MIN = 800;
 const RESPAWN_DELAY_MAX = 1400;
 const SPAWN_MARGIN = 20;
 const REDUCED_MOTION_TIME_SCALE = 0.25;
+const SVG_NAMESPACE = 'http://www.w3.org/2000/svg';
 const reducedMotionQuery = window.matchMedia('(prefers-reduced-motion: reduce)');
 const systemThemeQuery = window.matchMedia('(prefers-color-scheme: dark)');
 const MIN_CANVAS_SCALE = 0.3;
@@ -8464,6 +8465,35 @@ function createBoardActions(space) {
   return actions;
 }
 
+function createSpacePreviewConnections(previewThoughts, previewLayoutById) {
+  const connections = flattenConnections(previewThoughts).filter((connection) => (
+    previewLayoutById.has(connection.sourceId)
+    && previewLayoutById.has(connection.targetId)
+  ));
+  if (!connections.length) return null;
+
+  const layer = document.createElementNS(SVG_NAMESPACE, 'svg');
+  layer.classList.add('space-preview-connections');
+  layer.setAttribute('viewBox', '0 0 100 100');
+  layer.setAttribute('preserveAspectRatio', 'none');
+  layer.setAttribute('aria-hidden', 'true');
+
+  connections.forEach(({ sourceId, targetId }) => {
+    const source = previewLayoutById.get(sourceId);
+    const target = previewLayoutById.get(targetId);
+    const midpointX = (source.centerX + target.centerX) / 2;
+    const path = document.createElementNS(SVG_NAMESPACE, 'path');
+
+    path.setAttribute(
+      'd',
+      `M ${source.centerX} ${source.centerY} C ${midpointX} ${source.centerY}, ${midpointX} ${target.centerY}, ${target.centerX} ${target.centerY}`,
+    );
+    layer.append(path);
+  });
+
+  return layer;
+}
+
 function renderSpacePreview(surface, space, canvasWidth, canvasHeight) {
   const isCanvasPreview = isCanvasSpace(space.id);
   const isSpatialPreview = isSpatialSpace(space.id);
@@ -8513,9 +8543,7 @@ function renderSpacePreview(surface, space, canvasWidth, canvasHeight) {
   const maxCanvasY = Math.max(...previewPositions.map((position) => position?.y ?? 0), 1);
   const canvasRangeX = Math.max(1, maxCanvasX - minCanvasX);
   const canvasRangeY = Math.max(1, maxCanvasY - minCanvasY);
-
-  previewThoughts.forEach((thought, index) => {
-    const preview = document.createElement('span');
+  const previewLayouts = previewThoughts.map((thought, index) => {
     const layout = thought.meta?.layout;
     const positionedPlacement = previewPositions[index];
     const x = isPositionedPreview
@@ -8532,15 +8560,51 @@ function renderSpacePreview(surface, space, canvasWidth, canvasHeight) {
       18,
       Math.max(6, ((thought.height || 64) / canvasHeight) * 100),
     );
+    const left = Math.min(1, Math.max(0, x)) * (100 - width);
+    const top = Math.min(1, Math.max(0, y)) * (100 - height);
+
+    return {
+      thought,
+      left,
+      top,
+      width,
+      height,
+      centerX: left + width / 2,
+      centerY: top + height / 2,
+    };
+  });
+  const previewLayoutById = new Map(
+    previewLayouts.map((layout) => [layout.thought.id, layout]),
+  );
+  const connections = createSpacePreviewConnections(
+    previewThoughts,
+    previewLayoutById,
+  );
+
+  if (connections) scene.append(connections);
+
+  previewLayouts.forEach(({ left, top, width, height }) => {
+    const preview = document.createElement('span');
 
     preview.className = 'space-preview-card';
-    preview.style.left = `${Math.min(1, Math.max(0, x)) * (100 - width)}%`;
-    preview.style.top = `${Math.min(1, Math.max(0, y)) * (100 - height)}%`;
+    preview.style.left = `${left}%`;
+    preview.style.top = `${top}%`;
     preview.style.width = `${width}%`;
     preview.style.height = `${height}%`;
     scene.append(preview);
   });
 
+}
+
+function createPlusIcon() {
+  const icon = document.createElement('span');
+  icon.className = 'space-create-icon';
+  icon.innerHTML = `
+    <svg viewBox="0 0 20 20" aria-hidden="true" focusable="false">
+      <path d="M10 4.75v10.5M4.75 10h10.5" />
+    </svg>
+  `;
+  return icon;
 }
 
 function createSpaceTile(space, canvasWidth, canvasHeight) {
@@ -8637,7 +8701,7 @@ function createNewBoardTile() {
   const tile = document.createElement('article');
   const button = document.createElement('button');
   const surface = document.createElement('span');
-  const icon = document.createElement('span');
+  const icon = createPlusIcon();
   const footer = document.createElement('div');
   const label = document.createElement('span');
 
@@ -8646,12 +8710,6 @@ function createNewBoardTile() {
   button.className = 'space-tile-open';
   button.setAttribute('aria-label', 'Create Board');
   surface.className = 'space-create-surface';
-  icon.className = 'space-create-icon';
-  icon.innerHTML = `
-    <svg viewBox="0 0 20 20" aria-hidden="true" focusable="false">
-      <path d="M10 4.75v10.5M4.75 10h10.5" />
-    </svg>
-  `;
   footer.className = 'space-tile-footer';
   label.className = 'space-tile-label';
   label.textContent = 'New Board';
@@ -8807,6 +8865,7 @@ function createWorkspaceBoardContent({
 }) {
   const content = document.createElement('main');
   const header = document.createElement('header');
+  const titleGroup = document.createElement('div');
   const heading = document.createElement('h1');
   const description = document.createElement('p');
   const grid = document.createElement('div');
@@ -8815,6 +8874,7 @@ function createWorkspaceBoardContent({
 
   content.className = 'spaces-workspace-content';
   header.className = 'spaces-workspace-header';
+  titleGroup.className = 'spaces-workspace-title';
   grid.className = 'spaces-section-grid workspace-board-grid';
 
   if (choosingPlacementTarget) {
@@ -8833,7 +8893,17 @@ function createWorkspaceBoardContent({
     description.textContent = `${visibleBoards.length} ${visibleBoards.length === 1 ? 'Board' : 'Boards'}`;
   }
 
-  header.append(heading, description);
+  titleGroup.append(heading, description);
+  header.append(titleGroup);
+  if (!choosingPlacementTarget && auth) {
+    const createButton = document.createElement('button');
+    createButton.type = 'button';
+    createButton.className = 'spaces-new-board-action';
+    createButton.setAttribute('aria-label', 'Create Board');
+    createButton.append(createPlusIcon());
+    createButton.addEventListener('click', () => void createBoard());
+    header.append(createButton);
+  }
   if (auth) grid.append(createNewBoardTile());
   boardSpaces.forEach((space) => {
     grid.append(createSpaceTile(space, canvasWidth, canvasHeight));
