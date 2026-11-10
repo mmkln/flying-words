@@ -8840,10 +8840,10 @@ function createWorkspaceBoardContent({
   }
 
   header.append(heading, description);
+  if (auth) grid.append(createNewBoardTile());
   boardSpaces.forEach((space) => {
     grid.append(createSpaceTile(space, canvasWidth, canvasHeight));
   });
-  if (auth) grid.append(createNewBoardTile());
   content.append(header, grid);
   return content;
 }
