@@ -7247,6 +7247,7 @@ function beginBoardSelectionGesture(event) {
     toolActive: usesBoardSelectionTool(),
     cardId,
     spacePressed: boardSpacePressed,
+    toggleModifier: event.ctrlKey || event.metaKey,
   });
   if (!intent) return false;
 
@@ -7289,7 +7290,7 @@ function moveBoardSelectionGesture(event) {
     if (!boardSelectionGestureCanBecomeMarquee(boardSelectionGesture)) {
       boardSelectionGesture = null;
       renderBoardSelectionMarquee(null);
-      return true;
+      return false;
     }
     if (!activateBoardSelectionMarquee()) {
       boardSelectionGesture = null;

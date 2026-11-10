@@ -97,9 +97,18 @@ export function resolveBoardSelectionGestureIntent({
   toolActive,
   cardId,
   spacePressed,
+  toggleModifier,
 }) {
   if (button === 0 && toolActive && !cardId && !spacePressed) {
     return BoardSelectionGestureIntent.TOOL;
+  }
+  if (
+    button === 0
+    && pointerType === 'mouse'
+    && toggleModifier
+    && cardId
+  ) {
+    return BoardSelectionGestureIntent.QUICK;
   }
   if (button === 2 && pointerType === 'mouse') {
     return BoardSelectionGestureIntent.QUICK;

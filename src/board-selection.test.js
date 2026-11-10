@@ -203,6 +203,7 @@ test('routes pointer gestures without turning quick selection into the Select to
     toolActive: false,
     cardId: 'thought-1',
     spacePressed: false,
+    toggleModifier: false,
   }), BoardSelectionGestureIntent.QUICK);
   assert.equal(resolveBoardSelectionGestureIntent({
     button: 0,
@@ -210,6 +211,7 @@ test('routes pointer gestures without turning quick selection into the Select to
     toolActive: true,
     cardId: null,
     spacePressed: false,
+    toggleModifier: false,
   }), BoardSelectionGestureIntent.TOOL);
   assert.equal(resolveBoardSelectionGestureIntent({
     button: 0,
@@ -217,6 +219,26 @@ test('routes pointer gestures without turning quick selection into the Select to
     toolActive: false,
     cardId: null,
     spacePressed: false,
+    toggleModifier: false,
+  }), null);
+});
+
+test('routes Ctrl or Command click on a card through quick selection only', () => {
+  assert.equal(resolveBoardSelectionGestureIntent({
+    button: 0,
+    pointerType: 'mouse',
+    toolActive: false,
+    cardId: 'thought-1',
+    spacePressed: false,
+    toggleModifier: true,
+  }), BoardSelectionGestureIntent.QUICK);
+  assert.equal(resolveBoardSelectionGestureIntent({
+    button: 0,
+    pointerType: 'mouse',
+    toolActive: false,
+    cardId: null,
+    spacePressed: false,
+    toggleModifier: true,
   }), null);
 });
 
