@@ -394,6 +394,7 @@ const anchorsList = document.querySelector('#anchors-list');
 const spacesButton = document.querySelector('#spaces-button');
 const boardContext = document.querySelector('#board-context');
 const boardContextWorkspace = document.querySelector('#board-context-workspace');
+const boardContextDivider = document.querySelector('#board-context-divider');
 const boardContextTitle = document.querySelector('#board-context-title');
 const boardSwitcherElement = document.querySelector('#board-switcher');
 const canvasControls = document.querySelector('#canvas-controls');
@@ -9116,6 +9117,8 @@ function renderAppChrome() {
 
   if (!chrome.boardContextVisible) {
     boardSwitcher.close();
+    boardContextWorkspace.hidden = true;
+    boardContextDivider.hidden = true;
     boardContextWorkspace.textContent = '';
     boardContextTitle.textContent = '';
     boardContext.removeAttribute('title');
@@ -9125,13 +9128,18 @@ function renderAppChrome() {
 
   const board = boards.find(({ id }) => id === activeSpaceId);
   const boardTitle = board?.title || getSpace(activeSpaceId).label;
-  const workspaceName = workspaceForBoard(board, workspaces)?.name || 'Unsorted';
-  boardContextWorkspace.textContent = workspaceName;
+  const workspace = workspaceForBoard(board, workspaces);
+  const contextLabel = workspace
+    ? `${workspace.name} / ${boardTitle}`
+    : boardTitle;
+  boardContextWorkspace.hidden = !workspace;
+  boardContextDivider.hidden = !workspace;
+  boardContextWorkspace.textContent = workspace?.name || '';
   boardContextTitle.textContent = boardTitle;
-  boardContext.title = `Switch Board · ${workspaceName} / ${boardTitle}`;
+  boardContext.title = `Switch Board · ${contextLabel}`;
   boardContext.setAttribute(
     'aria-label',
-    `Switch Board. Current Board: ${workspaceName} / ${boardTitle}`,
+    `Switch Board. Current Board: ${contextLabel}`,
   );
   boardSwitcher.render({
     currentBoard: board,
