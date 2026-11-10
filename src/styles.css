@@ -12,6 +12,9 @@
   --surface-muted: #f3f4f6;
   --surface-hover: rgba(255, 255, 255, .98);
   --surface-tint: rgba(112, 85, 197, .08);
+  --anchor-surface: var(--surface-solid);
+  --anchor-surface-hover: #faf5e9;
+  --anchor-surface-active: #f8f1e0;
   --text-primary: #302b47;
   --text-secondary: #625c7d;
   --text-tertiary: #8b849d;
@@ -51,6 +54,8 @@
   --surface-muted: #292733;
   --surface-hover: rgba(43, 40, 55, .98);
   --surface-tint: rgba(157, 132, 239, .12);
+  --anchor-surface-hover: color-mix(in srgb, #cf9922 10%, var(--surface-solid));
+  --anchor-surface-active: color-mix(in srgb, #cf9922 14%, var(--surface-solid));
   --text-primary: #f3effc;
   --text-secondary: #c2bbd3;
   --text-tertiary: #928b9f;
@@ -4574,7 +4579,7 @@ kbd { padding: 1px 4px; border: 1px solid rgba(114,104,143,.25); border-bottom-w
   border-radius: 50%;
   color: #9b94aa;
   cursor: pointer;
-  background: var(--surface-elevated);
+  background: var(--anchor-surface);
   box-shadow: var(--shadow-control);
   opacity: 0;
   pointer-events: none;
@@ -4594,9 +4599,9 @@ kbd { padding: 1px 4px; border: 1px solid rgba(114,104,143,.25); border-bottom-w
 .thought-card:hover .anchor-btn,
 .thought-card:focus-within .anchor-btn,
 .thought-card.is-anchored .anchor-btn { opacity: 1; pointer-events: auto; }
-.anchor-btn:hover { color: #946b12; background: rgba(207, 153, 34, .1); }
+.anchor-btn:hover { color: #946b12; background: var(--anchor-surface-hover); }
 .anchor-btn:focus-visible { outline: 3px solid rgba(180, 122, 8, .16); }
-.anchor-btn.is-active { color: #b47a08; background: rgba(207, 153, 34, .14); }
+.anchor-btn.is-active { color: #b47a08; background: var(--anchor-surface-active); }
 
 .pin-btn {
   display: flex;
