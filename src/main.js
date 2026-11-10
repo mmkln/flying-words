@@ -149,7 +149,6 @@ import {
   normalizeBoardSpaces,
   setBoardSpaces,
 } from './spaces.js';
-import { createBoardSwitcher } from './board-switcher.js';
 import {
   WorkspaceFilter,
   boardsForWorkspace,
@@ -396,7 +395,6 @@ const boardContext = document.querySelector('#board-context');
 const boardContextWorkspace = document.querySelector('#board-context-workspace');
 const boardContextDivider = document.querySelector('#board-context-divider');
 const boardContextTitle = document.querySelector('#board-context-title');
-const boardSwitcherElement = document.querySelector('#board-switcher');
 const canvasControls = document.querySelector('#canvas-controls');
 const canvasZoomIn = document.querySelector('#canvas-zoom-in');
 const canvasZoomOut = document.querySelector('#canvas-zoom-out');
@@ -585,19 +583,6 @@ let activeRenderableConnections = [];
 const connectionRenderer = createConnectionRenderer({
   layer: connectionLayer,
   getThoughtById,
-});
-
-const boardSwitcher = createBoardSwitcher({
-  root: boardSwitcherElement,
-  trigger: boardContext,
-  onOpenBoard: (boardId) => navigateToSpace(boardId),
-  onCreateBoard: (workspaceId) => void createBoard({ workspaceId }),
-  onShowAllBoards: () => {
-    openSpacesOverview({
-      returnFocus: boardContext,
-      workspaceFilter: WorkspaceFilter.ALL,
-    });
-  },
 });
 
 const historyFilterControls = createHistoryFilterControls({
@@ -8836,7 +8821,11 @@ function createWorkspaceBoardContent({
       ? 'Choose a Board. You’ll place the cards before they move.'
       : 'Choose a Board. You’ll place the cards before anything is saved.';
   } else {
-    heading.textContent = workspaceFilterLabel(activeWorkspaceFilter, workspaces);
+    heading.textContent = (
+      activeWorkspaceFilter === WorkspaceFilter.UNSORTED
+        ? 'Boards'
+        : workspaceFilterLabel(activeWorkspaceFilter, workspaces)
+    );
     description.textContent = `${visibleBoards.length} ${visibleBoards.length === 1 ? 'Board' : 'Boards'}`;
   }
 
@@ -9059,8 +9048,6 @@ function openSpacesOverview({
   finishBoardArrangeAnimation();
   spatialView?.deactivate();
   knowledgeKindPicker.close();
-  boardSwitcher.close();
-
   if (isFlowSpace(activeSpaceId)) {
     thoughts
       .filter((thought) => thought.pinned && isThoughtAvailableInActiveSpace(thought))
@@ -9099,8 +9086,16 @@ function openSpacesOverview({
   );
   if (spacesOverviewPurpose === 'board-placement' && firstPlacementTarget) {
     firstPlacementTarget.focus();
-  } else if (activeSpaceControl) activeSpaceControl.focus();
-  else spacesGrid.querySelector('.spaces-source-item.is-selected')?.focus();
+  } else if (activeSpaceControl) {
+    activeSpaceControl.scrollIntoView({
+      block: 'center',
+      inline: 'nearest',
+      behavior: 'instant',
+    });
+    activeSpaceControl.focus({ preventScroll: true });
+  } else {
+    spacesGrid.querySelector('.spaces-source-item.is-selected')?.focus();
+  }
 }
 
 function renderAppChrome() {
@@ -9116,7 +9111,6 @@ function renderAppChrome() {
   navigationHud.hidden = !chrome.navigationHudVisible;
 
   if (!chrome.boardContextVisible) {
-    boardSwitcher.close();
     boardContextWorkspace.hidden = true;
     boardContextDivider.hidden = true;
     boardContextWorkspace.textContent = '';
@@ -9136,16 +9130,11 @@ function renderAppChrome() {
   boardContextDivider.hidden = !workspace;
   boardContextWorkspace.textContent = workspace?.name || '';
   boardContextTitle.textContent = boardTitle;
-  boardContext.title = `Switch Board · ${contextLabel}`;
+  boardContext.title = `Show Boards · ${contextLabel}`;
   boardContext.setAttribute(
     'aria-label',
-    `Switch Board. Current Board: ${contextLabel}`,
+    `Show Boards. Current Board: ${contextLabel}`,
   );
-  boardSwitcher.render({
-    currentBoard: board,
-    boards,
-    workspaces,
-  });
 }
 
 function updateUi() {
@@ -9967,10 +9956,13 @@ historyButton.addEventListener('click', () => {
 });
 anchorsButton.addEventListener('click', openAnchors);
 spacesButton.addEventListener('click', () => {
-  openSpacesOverview({ returnFocus: spacesButton });
+  openSpacesOverview({
+    returnFocus: spacesButton,
+    workspaceFilter: WorkspaceFilter.ALL,
+  });
 });
 boardContext.addEventListener('click', () => {
-  boardSwitcher.toggle();
+  openSpacesOverview({ returnFocus: boardContext });
 });
 spacesSpatialAction.addEventListener('click', () => {
   const spatialSpace = getSpaces().find(({ id }) => isSpatialSpace(id));
