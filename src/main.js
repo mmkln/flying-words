@@ -8468,6 +8468,10 @@ function renderSpacePreview(surface, space, canvasWidth, canvasHeight) {
   const isCanvasPreview = isCanvasSpace(space.id);
   const isSpatialPreview = isSpatialSpace(space.id);
   const isPositionedPreview = isCanvasPreview || isSpatialPreview;
+  const scene = document.createElement('span');
+
+  scene.className = 'space-preview-scene';
+  surface.append(scene);
 
   if (isFlowSpace(space.id)) {
     const chrome = document.createElement('span');
@@ -8480,7 +8484,7 @@ function renderSpacePreview(surface, space, canvasWidth, canvasHeight) {
     account.className = 'space-preview-account';
     composer.className = 'space-preview-composer';
     chrome.append(controls, account);
-    surface.append(chrome, composer);
+    scene.append(chrome, composer);
   }
 
   const previewThoughts = thoughts.filter((thought) => (
@@ -8534,7 +8538,7 @@ function renderSpacePreview(surface, space, canvasWidth, canvasHeight) {
     preview.style.top = `${Math.min(1, Math.max(0, y)) * (100 - height)}%`;
     preview.style.width = `${width}%`;
     preview.style.height = `${height}%`;
-    surface.append(preview);
+    scene.append(preview);
   });
 
 }

@@ -2446,6 +2446,10 @@ html[data-app-ready="false"] .composer-wrap {
 }
 
 .spaces-overview {
+  --spaces-layout-columns: 232px minmax(0, 1fr);
+  --spaces-gallery-columns: 3;
+  --spaces-gallery-gap: 32px;
+  --spaces-tile-radius: 10px;
   position: fixed;
   z-index: 500;
   inset: 0;
@@ -2457,6 +2461,13 @@ html[data-app-ready="false"] .composer-wrap {
   color: var(--text-primary);
   background: var(--surface-muted);
   animation: spaces-overview-in .16s ease-out;
+}
+
+.spaces-overview[data-purpose="navigation"] {
+  --spaces-layout-columns: 214px minmax(0, 1fr);
+  --spaces-gallery-columns: 4;
+  --spaces-gallery-gap: clamp(18px, 2vw, 28px);
+  --spaces-tile-radius: 14px;
 }
 
 .spaces-overview[hidden] { display: none; }
@@ -2524,7 +2535,7 @@ html[data-app-ready="false"] .composer-wrap {
   height: 100%;
   min-height: 0;
   margin: 0 auto;
-  grid-template-columns: 232px minmax(0, 1fr);
+  grid-template-columns: var(--spaces-layout-columns);
   gap: 0;
 }
 
@@ -2656,8 +2667,8 @@ html[data-app-ready="false"] .composer-wrap {
 
 .spaces-section-grid {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 32px;
+  grid-template-columns: repeat(var(--spaces-gallery-columns), minmax(0, 1fr));
+  gap: var(--spaces-gallery-gap);
 }
 
 .workspace-board-grid { align-items: start; }
@@ -2900,7 +2911,7 @@ html[data-app-ready="false"] .composer-wrap {
   aspect-ratio: 16 / 10;
   overflow: hidden;
   border: 1px solid rgba(86, 67, 143, .16);
-  border-radius: 10px;
+  border-radius: var(--spaces-tile-radius);
   background:
     radial-gradient(circle at 10% 6%, rgba(221, 211, 255, .5), transparent 48%),
     radial-gradient(circle at 89% 81%, rgba(202, 234, 255, .46), transparent 50%),
@@ -2908,6 +2919,154 @@ html[data-app-ready="false"] .composer-wrap {
     #f9f8fe;
   background-size: auto, auto, 15px 15px, auto;
   transition: border-color .16s ease;
+}
+
+.space-preview-scene {
+  position: absolute;
+  inset: 0;
+  display: block;
+  transform: scale(1);
+  transform-origin: center;
+  transition: transform .22s cubic-bezier(.2, .75, .25, 1);
+}
+
+@media (min-width: 1241px) {
+  .spaces-overview[data-purpose="navigation"] .spaces-workspace-content {
+    padding-right: clamp(32px, 3.4vw, 58px);
+    padding-left: clamp(32px, 3.4vw, 58px);
+  }
+}
+
+@media (max-width: 1240px) {
+  .spaces-overview[data-purpose="navigation"] { --spaces-gallery-columns: 3; }
+}
+
+@media (max-width: 900px) {
+  .spaces-overview[data-purpose="navigation"] {
+    --spaces-layout-columns: 190px minmax(0, 1fr);
+    --spaces-gallery-columns: 2;
+  }
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .spaces-overview[data-purpose="navigation"] .space-tile:not(.is-create-board):hover .space-preview-scene {
+    transform: scale(1.025);
+  }
+}
+
+.spaces-overview[data-purpose="navigation"] .spaces-source-list {
+  padding-right: 14px;
+  padding-left: 14px;
+  background: color-mix(in srgb, var(--surface-translucent) 62%, transparent);
+  backdrop-filter: blur(18px) saturate(1.08);
+}
+
+.spaces-overview[data-purpose="navigation"] .spaces-workspace-content {
+  padding-top: 62px;
+}
+
+.spaces-overview[data-purpose="navigation"] .spaces-workspace-header {
+  margin-bottom: 30px;
+  gap: 3px;
+}
+
+.spaces-overview[data-purpose="navigation"] .spaces-workspace-header h1 {
+  font-size: clamp(25px, 2.4vw, 34px);
+}
+
+.spaces-overview[data-purpose="navigation"] .space-tile {
+  display: grid;
+  padding: 7px;
+  grid-template-rows: auto minmax(36px, auto);
+  border: 1px solid transparent;
+  border-radius: calc(var(--spaces-tile-radius) + 7px);
+  background: transparent;
+  transition:
+    border-color .18s ease,
+    background-color .18s ease,
+    box-shadow .18s ease,
+    transform .18s ease;
+}
+
+.spaces-overview[data-purpose="navigation"] .space-tile:hover {
+  border-color: color-mix(in srgb, var(--border-hover) 70%, transparent);
+  background: color-mix(in srgb, var(--surface) 58%, transparent);
+  box-shadow: 0 14px 34px color-mix(in srgb, var(--text-primary) 8%, transparent);
+  transform: translateY(-2px);
+}
+
+.spaces-overview[data-purpose="navigation"] .space-tile:focus-within {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--focus-ring);
+}
+
+.spaces-overview[data-purpose="navigation"] .space-tile.is-active {
+  border-color: color-mix(in srgb, var(--accent) 70%, transparent);
+  background: color-mix(in srgb, var(--accent) 7%, var(--surface));
+  box-shadow:
+    0 0 0 1px color-mix(in srgb, var(--accent) 14%, transparent),
+    0 16px 38px color-mix(in srgb, var(--accent) 14%, transparent);
+}
+
+.spaces-overview[data-purpose="navigation"] .space-tile-open:focus-visible .space-preview-surface,
+.spaces-overview[data-purpose="navigation"] .space-tile.is-active .space-preview-surface {
+  outline: 0;
+  border-color: color-mix(in srgb, var(--accent) 38%, var(--border-subtle));
+}
+
+.spaces-overview[data-purpose="navigation"] .space-tile-footer {
+  min-width: 0;
+  min-height: 36px;
+  margin-top: 0;
+  padding: 5px 4px 0;
+  justify-content: flex-start;
+}
+
+.spaces-overview[data-purpose="navigation"] .space-tile-label {
+  width: 100%;
+  padding: 4px 6px;
+  justify-content: flex-start;
+  color: var(--text-primary);
+  font-size: 13px;
+  font-weight: 620;
+  text-align: left;
+}
+
+.spaces-overview[data-purpose="navigation"] .space-tile-label::before { display: none; }
+.spaces-overview[data-purpose="navigation"] .space-tile.is-active .space-tile-label { color: var(--accent); }
+
+.spaces-overview[data-purpose="navigation"] .space-board-actions-trigger {
+  top: 13px;
+  right: 13px;
+  color: var(--text-secondary);
+  background: var(--surface-elevated);
+  box-shadow: var(--shadow-control);
+}
+
+.spaces-overview[data-purpose="navigation"] .space-board-actions-menu {
+  top: 48px;
+  right: 13px;
+}
+
+.spaces-overview[data-purpose="navigation"] .space-tile.is-create-board {
+  border-style: dashed;
+  border-color: color-mix(in srgb, var(--border-hover) 72%, transparent);
+  background: color-mix(in srgb, var(--surface) 34%, transparent);
+}
+
+.spaces-overview[data-purpose="navigation"] .space-tile.is-create-board:hover {
+  border-color: color-mix(in srgb, var(--accent) 52%, var(--border-hover));
+  background: color-mix(in srgb, var(--accent) 5%, var(--surface));
+}
+
+.spaces-overview[data-purpose="navigation"] .space-create-surface {
+  border-radius: var(--spaces-tile-radius);
+}
+
+.spaces-overview[data-purpose="navigation"] .space-tile.is-create-board .space-tile-label {
+  justify-content: center;
+  color: var(--text-secondary);
+  text-align: center;
 }
 
 .space-preview-chrome {
