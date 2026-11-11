@@ -160,6 +160,15 @@ import {
   workspaceFilterLabel,
   workspaceForBoard,
 } from './workspace-catalog.js';
+import {
+  createLegacyBoardRankMap,
+  effectiveBoardRank,
+  nextBoardRank,
+  rankBetween,
+  sortBoardsByCatalogRank,
+  withBoardCatalogRank,
+} from './board-catalog-order.js';
+import { createBoardReorderController } from './board-reorder-controller.js';
 import { deriveAppChromeState } from './app-chrome-state.js';
 import {
   buildSpaceUrl,
@@ -577,6 +586,7 @@ let boards = [];
 let workspaces = [];
 let activeWorkspaceFilter = WorkspaceFilter.ALL;
 let workspaceMutationInFlight = false;
+let boardReorderController = null;
 let workspaceCreatorOpen = false;
 let editingBoardId = null;
 let boardRenameInFlight = false;
@@ -5253,9 +5263,15 @@ function workspaceIdForBoardCreation() {
 }
 
 function createBoardRecord(title, workspaceId = null) {
+  const legacyRanks = createLegacyBoardRankMap(boards);
+  const rank = nextBoardRank(boards, workspaceId, legacyRanks);
   return requestApi('/boards/', {
     method: 'POST',
-    body: { title, workspace_id: workspaceId },
+    body: {
+      title,
+      workspace_id: workspaceId,
+      meta: withBoardCatalogRank({}, rank),
+    },
   });
 }
 
@@ -5303,12 +5319,21 @@ async function createWorkspace(rawName) {
 async function moveBoardToWorkspace(boardId, workspaceId) {
   if (!auth || workspaceMutationInFlight) return;
 
+  const boardToMove = boards.find((board) => board.id === boardId);
+  if (!boardToMove) return;
+
+  const legacyRanks = createLegacyBoardRankMap(boards);
+  const rank = nextBoardRank(boards, workspaceId, legacyRanks, {
+    excludeBoardId: boardId,
+  });
+  const meta = withBoardCatalogRank(boardToMove.meta, rank);
+
   workspaceMutationInFlight = true;
   closeBoardActionsMenus();
   try {
     const updatedBoard = await requestApi(`/boards/${boardId}/`, {
       method: 'PATCH',
-      body: { workspace_id: workspaceId },
+      body: { workspace_id: workspaceId, meta },
     });
     applyBoardRecords(boards.map((board) => (
       board.id === boardId ? updatedBoard : board
@@ -5319,6 +5344,61 @@ async function moveBoardToWorkspace(boardId, workspaceId) {
     announce(`${updatedBoard.title} moved to ${destination}.`);
   } catch (error) {
     announce(`Could not move Board: ${error.message}`);
+  } finally {
+    workspaceMutationInFlight = false;
+    if (viewMode === 'spaces') renderSpacesOverview();
+  }
+}
+
+async function reorderBoard({ boardId, previousId, nextId }) {
+  if (
+    !auth
+    || workspaceMutationInFlight
+    || activeWorkspaceFilter === WorkspaceFilter.ALL
+  ) return;
+
+  const board = boards.find((candidate) => candidate.id === boardId);
+  if (!board) return;
+
+  const legacyRanks = createLegacyBoardRankMap(boards);
+  const previousBoard = previousId
+    ? boards.find((candidate) => candidate.id === previousId)
+    : null;
+  const nextBoard = nextId
+    ? boards.find((candidate) => candidate.id === nextId)
+    : null;
+  const previousRank = previousBoard
+    ? effectiveBoardRank(previousBoard, legacyRanks)
+    : null;
+  const nextRank = nextBoard
+    ? effectiveBoardRank(nextBoard, legacyRanks)
+    : null;
+  const rank = rankBetween(previousRank, nextRank);
+
+  if (rank === null) {
+    announce('This Board order is too dense to update safely. Refresh and try again.');
+    return;
+  }
+
+  const previousBoards = boards;
+  const meta = withBoardCatalogRank(board.meta, rank);
+  workspaceMutationInFlight = true;
+  applyBoardRecords(boards.map((candidate) => (
+    candidate.id === boardId ? { ...candidate, meta } : candidate
+  )));
+
+  try {
+    const updatedBoard = await requestApi(`/boards/${boardId}/`, {
+      method: 'PATCH',
+      body: { meta },
+    });
+    applyBoardRecords(boards.map((candidate) => (
+      candidate.id === boardId ? updatedBoard : candidate
+    )));
+    announce(`${updatedBoard.title} moved.`);
+  } catch (error) {
+    applyBoardRecords(previousBoards);
+    announce(`Could not reorder Board: ${error.message}`);
   } finally {
     workspaceMutationInFlight = false;
     if (viewMode === 'spaces') renderSpacesOverview();
@@ -8585,7 +8665,7 @@ function createPlusIcon() {
   return icon;
 }
 
-function createSpaceTile(space, canvasWidth, canvasHeight) {
+function createSpaceTile(space, canvasWidth, canvasHeight, { reorderable = false } = {}) {
   const tile = document.createElement('article');
   const openButton = document.createElement('button');
   const surface = document.createElement('span');
@@ -8632,10 +8712,15 @@ function createSpaceTile(space, canvasWidth, canvasHeight) {
     targetUnavailable && !isSourceBoard,
   );
   tile.classList.toggle('is-placement-unavailable', targetUnavailable);
+  if (reorderable) {
+    tile.dataset.boardReorderId = space.id;
+    tile.dataset.boardLabel = space.label;
+  }
 
   openButton.type = 'button';
   openButton.className = 'space-tile-open';
   openButton.dataset.spaceId = space.id;
+  if (reorderable) openButton.dataset.boardReorderHandle = '';
   openButton.setAttribute('aria-label', choosingPlacementTarget
     ? targetUnavailable
       ? `${space.label}. ${isSourceBoard ? 'Current Board' : 'Cards already placed'}`
@@ -8849,8 +8934,20 @@ function createWorkspaceBoardContent({
   const heading = document.createElement('h1');
   const description = document.createElement('p');
   const grid = document.createElement('div');
-  const visibleBoards = boardsForWorkspace(boards, activeWorkspaceFilter);
+  const filteredBoards = boardsForWorkspace(boards, activeWorkspaceFilter);
+  const legacyRanks = createLegacyBoardRankMap(boards);
+  const visibleBoards = activeWorkspaceFilter === WorkspaceFilter.ALL
+    ? filteredBoards
+    : sortBoardsByCatalogRank(filteredBoards, legacyRanks);
   const boardSpaces = normalizeBoardSpaces(visibleBoards);
+  const reorderable = Boolean(
+    auth
+    && !choosingPlacementTarget
+    && activeWorkspaceFilter !== WorkspaceFilter.ALL
+    && !workspaceMutationInFlight
+    && !editingBoardId
+    && !pendingBoardDeletionId
+  );
 
   content.className = 'spaces-workspace-content';
   scrollViewport.className = 'spaces-workspace-scroll';
@@ -8879,15 +8976,22 @@ function createWorkspaceBoardContent({
   header.append(titleGroup);
   if (auth) grid.append(createNewBoardTile());
   boardSpaces.forEach((space) => {
-    grid.append(createSpaceTile(space, canvasWidth, canvasHeight));
+    grid.append(createSpaceTile(space, canvasWidth, canvasHeight, { reorderable }));
   });
   inner.append(header, grid);
   scrollViewport.append(inner);
   content.append(scrollViewport);
-  return content;
+  return {
+    content,
+    grid,
+    scrollViewport,
+    reorderable,
+  };
 }
 
 function renderSpacesOverview() {
+  boardReorderController?.destroy();
+  boardReorderController = null;
   spacesGrid.replaceChildren();
   spacesOverview.dataset.purpose = spacesOverviewPurpose;
   const canvasBounds = canvas.getBoundingClientRect();
@@ -8897,14 +9001,24 @@ function renderSpacesOverview() {
     spacesOverviewPurpose === 'board-placement' && boardPlacementSession,
   );
   spacesSpatialAction.hidden = true;
+  const workspaceContent = createWorkspaceBoardContent({
+    choosingPlacementTarget,
+    canvasWidth,
+    canvasHeight,
+  });
   spacesGrid.append(
     createSpacesSourceList({ choosingPlacementTarget }),
-    createWorkspaceBoardContent({
-      choosingPlacementTarget,
-      canvasWidth,
-      canvasHeight,
-    }),
+    workspaceContent.content,
   );
+
+  if (workspaceContent.reorderable) {
+    boardReorderController = createBoardReorderController({
+      grid: workspaceContent.grid,
+      scrollContainer: workspaceContent.scrollViewport,
+      onCommit: reorderBoard,
+      onAnnounce: announce,
+    });
+  }
 }
 
 function findSpaceTileInDirection(tiles, currentTile, key) {
