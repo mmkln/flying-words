@@ -1,4 +1,5 @@
 import { createKnowledgeKindIcon } from './knowledge-kind-picker.js';
+import { createOverflowTextPreview } from './overflow-text-preview.js';
 import { getThoughtCardPreviewText } from './thought-content.js';
 
 const directionPresentation = Object.freeze({
@@ -20,10 +21,18 @@ export function createBoardConnectionsPopover({
   onAddAll,
 }) {
   let session = null;
+  const textPreview = createOverflowTextPreview({
+    root: list,
+    surface: element,
+    scrollRoot: list,
+    itemSelector: '.board-connections-item',
+    textSelector: '.board-connections-text',
+  });
 
   function render(items) {
     if (!session) return;
 
+    textPreview.hide();
     count.textContent = String(items.length);
     addAllButton.hidden = items.length === 0;
     list.replaceChildren();
@@ -49,7 +58,7 @@ export function createBoardConnectionsPopover({
       icon.append(createKnowledgeKindIcon(item.kind));
 
       text.className = 'board-connections-text';
-      text.textContent = previewText;
+      text.textContent = typeof item.text === 'string' ? item.text : '';
 
       direction.className = 'board-connections-direction';
       direction.textContent = directionView.symbol;
@@ -62,6 +71,7 @@ export function createBoardConnectionsPopover({
       addButton.setAttribute('aria-label', `Add “${accessibleText}” to this Board`);
       addButton.addEventListener('click', () => {
         if (!session) return;
+        textPreview.hide();
         onAdd(session.sourceId, item.id);
       });
 
@@ -126,6 +136,7 @@ export function createBoardConnectionsPopover({
   }
 
   function close() {
+    textPreview.hide();
     if (!session) return;
     const { trigger } = session;
     session = null;
@@ -134,11 +145,15 @@ export function createBoardConnectionsPopover({
   }
 
   addAllButton.addEventListener('click', () => {
-    if (session) onAddAll(session.sourceId);
+    if (!session) return;
+    textPreview.hide();
+    onAddAll(session.sourceId);
   });
 
   element.addEventListener('toggle', (event) => {
-    if (event.newState !== 'closed' || !session) return;
+    if (event.newState !== 'closed') return;
+    textPreview.hide();
+    if (!session) return;
     session.trigger.setAttribute('aria-expanded', 'false');
     session = null;
   });

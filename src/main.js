@@ -83,6 +83,7 @@ import {
   planBoardConnectionExpansion,
 } from './board-connection-expansion.js';
 import { createBoardConnectionsPopover } from './board-connections-popover.js';
+import { createOverflowTextPreview } from './overflow-text-preview.js';
 import {
   clientPointToBoardWorld,
   clientRectToBoardWorldBounds,
@@ -383,7 +384,6 @@ const historyFilterResolved = document.querySelector('#history-filter-resolved')
 const historyFilterClear = document.querySelector('#history-filter-clear');
 const historyScroll = document.querySelector('#history-scroll');
 const historyList = document.querySelector('#history-list');
-const historyPreview = document.querySelector('#history-preview');
 const historyPagination = document.querySelector('#history-pagination');
 const historyPaginationSpinner = document.querySelector('#history-pagination-spinner');
 const historyPaginationStatus = document.querySelector('#history-pagination-status');
@@ -683,6 +683,14 @@ const boardRenderScheduler = createBoardRenderScheduler({
     if (update.controls) renderBoardArrangeControl();
     if (update.minimap) renderCanvasMinimapNow();
   },
+});
+
+const historyTextPreview = createOverflowTextPreview({
+  root: historyList,
+  surface: historyDialog,
+  scrollRoot: historyScroll,
+  itemSelector: '.history-item-content',
+  textSelector: '.history-item-text',
 });
 
 const boardConnectionsPopover = createBoardConnectionsPopover({
@@ -8039,46 +8047,6 @@ function getHistoryThoughts() {
     ));
 }
 
-let historyPreviewTimer = null;
-
-function hideHistoryPreview() {
-  clearTimeout(historyPreviewTimer);
-  historyPreviewTimer = null;
-  historyPreview.hidden = true;
-}
-
-function showHistoryPreview(button) {
-  const text = button.querySelector('.history-item-text');
-  if (
-    !historyDialog.open
-    || !button.isConnected
-    || !text
-    || text.scrollWidth <= text.clientWidth
-  ) return;
-
-  historyPreview.textContent = text.textContent;
-  historyPreview.hidden = false;
-
-  const dialogRect = historyDialog.getBoundingClientRect();
-  const buttonRect = button.getBoundingClientRect();
-  const previewHeight = historyPreview.offsetHeight;
-  const below = buttonRect.bottom - dialogRect.top + 8;
-  const above = buttonRect.top - dialogRect.top - previewHeight - 8;
-  const preferred = dialogRect.bottom - buttonRect.bottom >= previewHeight + 8
-    ? below
-    : above;
-
-  historyPreview.style.top = `${Math.max(
-    8,
-    Math.min(preferred, dialogRect.height - previewHeight - 8),
-  )}px`;
-}
-
-function scheduleHistoryPreview(button) {
-  hideHistoryPreview();
-  historyPreviewTimer = window.setTimeout(() => showHistoryPreview(button), 250);
-}
-
 async function loadHistoryPage({ reset = false } = {}) {
   if (!auth) {
     renderHistory();
@@ -8144,7 +8112,7 @@ function renderHistory() {
   const matchingThoughts = getHistoryThoughts();
   const isInitialLoading = auth && historyLoading && !matchingThoughts.length;
 
-  hideHistoryPreview();
+  historyTextPreview.hide();
   historyList.replaceChildren();
   historyList.setAttribute('aria-busy', String(Boolean(auth && historyLoading)));
 
@@ -10215,25 +10183,8 @@ connectionSearchInput.addEventListener('keydown', (event) => {
   }
 });
 historyClose.addEventListener('click', () => historyDialog.close());
-historyList.addEventListener('pointerover', (event) => {
-  if (event.pointerType !== 'mouse' || !(event.target instanceof Element)) return;
-  const button = event.target.closest('.history-item-content');
-  if (button && !button.contains(event.relatedTarget)) scheduleHistoryPreview(button);
-});
-historyList.addEventListener('pointerout', (event) => {
-  if (event.pointerType !== 'mouse' || !(event.target instanceof Element)) return;
-  const button = event.target.closest('.history-item-content');
-  if (button && !button.contains(event.relatedTarget)) hideHistoryPreview();
-});
-historyList.addEventListener('focusin', (event) => {
-  if (!(event.target instanceof Element)) return;
-  const button = event.target.closest('.history-item-content');
-  if (button?.matches(':focus-visible')) showHistoryPreview(button);
-});
-historyList.addEventListener('focusout', hideHistoryPreview);
-historyScroll.addEventListener('scroll', hideHistoryPreview, { passive: true });
 historyDialog.addEventListener('close', () => {
-  hideHistoryPreview();
+  historyTextPreview.hide();
   historyFilterControls.close();
   renderHistoryPagination();
 });
