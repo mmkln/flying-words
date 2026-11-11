@@ -38,8 +38,8 @@
           : '#f9f8fe';
       })();
     </script>
-    <script type="module" crossorigin src="/assets/index-DgFOnCBj.js"></script>
-    <link rel="stylesheet" crossorigin href="/assets/index-DrrMyb73.css">
+    <script type="module" crossorigin src="/assets/index-B53hzbmk.js"></script>
+    <link rel="stylesheet" crossorigin href="/assets/index-wEHz0u6a.css">
   </head>
   <body>
     <main class="app-shell">
@@ -146,46 +146,147 @@
           </svg>
         </button>
 
-        <div class="account-popover" id="account-popover" role="dialog" aria-label="Account and appearance" hidden>
-          <div id="account-authenticated-content" hidden>
-            <div class="account-popover-identity">
-              <span class="account-avatar account-menu-avatar" id="account-menu-avatar" aria-hidden="true"></span>
-              <span class="account-popover-copy">
-                <strong id="account-email"></strong>
-                <small>Majom ID</small>
-              </span>
+        <div class="account-popover" id="account-popover" data-view="menu" role="dialog" aria-label="Account" hidden>
+          <section class="account-menu-view" id="account-menu-view">
+            <div id="account-authenticated-content" hidden>
+              <div class="account-popover-identity">
+                <span class="account-avatar account-menu-avatar" id="account-menu-avatar" aria-hidden="true"></span>
+                <span class="account-popover-copy">
+                  <strong id="account-email"></strong>
+                  <small>Majom ID</small>
+                </span>
+              </div>
+              <div class="account-menu-divider"></div>
+              <button id="knowledge-overview-open" type="button">Knowledge Overview</button>
+              <button id="telegram-settings" type="button">Telegram Bot</button>
+              <button id="switch-account" type="button">Switch Account</button>
+              <div class="account-menu-divider"></div>
             </div>
-            <div class="account-menu-divider"></div>
-            <button id="telegram-settings" type="button">Telegram Bot</button>
-            <button id="switch-account" type="button">Switch Account</button>
-            <div class="account-menu-divider"></div>
-          </div>
 
-          <div class="account-appearance">
-            <span class="account-appearance-label">Appearance</span>
-            <div class="appearance-picker" id="appearance-picker" role="radiogroup" aria-label="Appearance">
-              <button class="appearance-option" type="button" role="radio" data-theme-value="system" aria-checked="false" aria-label="Use system appearance" title="System">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                  <rect x="3" y="4" width="18" height="13" rx="2"></rect>
-                  <path d="M8 21h8M12 17v4"></path>
-                </svg>
-              </button>
-              <button class="appearance-option" type="button" role="radio" data-theme-value="light" aria-checked="false" aria-label="Use light appearance" title="Light">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                  <circle cx="12" cy="12" r="4"></circle>
-                  <path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"></path>
-                </svg>
-              </button>
-              <button class="appearance-option" type="button" role="radio" data-theme-value="dark" aria-checked="false" aria-label="Use dark appearance" title="Dark">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                  <path d="M20 15.5A8.5 8.5 0 0 1 8.5 4 8.5 8.5 0 1 0 20 15.5Z"></path>
-                </svg>
-              </button>
+            <div class="account-appearance">
+              <span class="account-appearance-label">Appearance</span>
+              <div class="appearance-picker" id="appearance-picker" role="radiogroup" aria-label="Appearance">
+                <button class="appearance-option" type="button" role="radio" data-theme-value="system" aria-checked="false" aria-label="Use system appearance" title="System">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                    <rect x="3" y="4" width="18" height="13" rx="2"></rect>
+                    <path d="M8 21h8M12 17v4"></path>
+                  </svg>
+                </button>
+                <button class="appearance-option" type="button" role="radio" data-theme-value="light" aria-checked="false" aria-label="Use light appearance" title="Light">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                    <circle cx="12" cy="12" r="4"></circle>
+                    <path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"></path>
+                  </svg>
+                </button>
+                <button class="appearance-option" type="button" role="radio" data-theme-value="dark" aria-checked="false" aria-label="Use dark appearance" title="Dark">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                    <path d="M20 15.5A8.5 8.5 0 0 1 8.5 4 8.5 8.5 0 1 0 20 15.5Z"></path>
+                  </svg>
+                </button>
+              </div>
             </div>
-          </div>
 
-          <div class="account-menu-divider"></div>
-          <button class="account-destructive" id="sign-out" type="button" hidden>Sign Out</button>
+            <div class="account-menu-divider"></div>
+            <button class="account-destructive" id="sign-out" type="button" hidden>Sign Out</button>
+          </section>
+
+          <section
+            class="knowledge-overview"
+            id="knowledge-overview"
+            aria-labelledby="knowledge-overview-title"
+            aria-busy="false"
+            hidden
+          >
+            <header class="knowledge-overview-header">
+              <button data-overview-back type="button" aria-label="Back to account menu">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                  <path d="m15 18-6-6 6-6"></path>
+                </svg>
+              </button>
+              <div>
+                <h2 id="knowledge-overview-title">Knowledge Overview</h2>
+                <p><span data-overview-total>—</span> thoughts</p>
+              </div>
+              <span aria-hidden="true"></span>
+            </header>
+
+            <div class="knowledge-overview-loading" data-overview-loading>
+              <span></span><span></span><span></span><span></span><span></span>
+            </div>
+
+            <div class="knowledge-overview-content" data-overview-content hidden>
+              <section class="knowledge-overview-section knowledge-overview-activity">
+                <h3>Activity</h3>
+                <div class="knowledge-overview-activity-row">
+                  <p class="knowledge-overview-primary-metric">
+                    <strong data-overview-recent>0</strong>
+                    <span>New in the last 30 days</span>
+                  </p>
+                  <svg class="knowledge-overview-sparkline" viewBox="0 0 144 40" role="img" aria-label="Activity over the last 30 days">
+                    <polygon data-overview-sparkline-area points="0,40 144,40"></polygon>
+                    <polyline data-overview-sparkline points="0,38 144,38"></polyline>
+                  </svg>
+                </div>
+              </section>
+
+              <section class="knowledge-overview-section">
+                <h3>Needs attention</h3>
+                <div class="knowledge-overview-attention-row">
+                  <span class="knowledge-overview-icon" aria-hidden="true">?</span>
+                  <p><strong data-overview-open-questions>0</strong> Open questions</p>
+                </div>
+                <div class="knowledge-overview-attention-row">
+                  <span class="knowledge-overview-icon" aria-hidden="true">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                      <path d="m8.5 8.5 7 7M7 17l-2 2M17 7l2-2M8 5l-3 3 3 3M16 13l3 3-3 3"></path>
+                    </svg>
+                  </span>
+                  <p><strong data-overview-without-connections>0</strong> Without connections</p>
+                </div>
+              </section>
+
+              <section class="knowledge-overview-section">
+                <h3>Structure</h3>
+                <div class="knowledge-overview-progress-label">
+                  <strong data-overview-connected>0%</strong>
+                  <span>Connected</span>
+                </div>
+                <div class="knowledge-overview-progress" role="progressbar" aria-label="Connected thoughts" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">
+                  <span data-overview-connected-bar></span>
+                </div>
+              </section>
+
+              <section class="knowledge-overview-section">
+                <h3>Composition</h3>
+                <div class="knowledge-overview-segments" role="img" aria-label="Knowledge type distribution">
+                  <span data-composition-bar="thought"></span>
+                  <span data-composition-bar="excerpt"></span>
+                  <span data-composition-bar="question"></span>
+                  <span data-composition-bar="other"></span>
+                </div>
+                <div class="knowledge-overview-segment-labels">
+                  <p><span>Thoughts</span><strong data-composition-value="thought">0%</strong></p>
+                  <p><span>Excerpts</span><strong data-composition-value="excerpt">0%</strong></p>
+                  <p><span>Questions</span><strong data-composition-value="question">0%</strong></p>
+                  <p><span>Other</span><strong data-composition-value="other">0%</strong></p>
+                </div>
+              </section>
+
+              <section class="knowledge-overview-section">
+                <h3>Captured via</h3>
+                <div class="knowledge-overview-channels">
+                  <p><span>Web</span><strong data-channel-value="web">0%</strong></p>
+                  <p><span>Telegram</span><strong data-channel-value="telegram">0%</strong></p>
+                  <p><span>AI</span><strong data-channel-value="mcp">0%</strong></p>
+                </div>
+              </section>
+            </div>
+
+            <div class="knowledge-overview-error" data-overview-error role="alert" hidden>
+              <p>Could not load overview.</p>
+              <button data-overview-retry type="button">Try Again</button>
+            </div>
+          </section>
         </div>
       </div>
         </div>
