@@ -112,6 +112,7 @@ import {
   toggleBoardSelectionSessionId,
   translateBoardSelectionOrigins,
 } from './board-selection.js';
+import { buildBoardSelectionText } from './board-selection-export.js';
 import {
   BoardPlacementOperation,
   BoardPlacementTargetKind,
@@ -445,6 +446,7 @@ const telegramDisconnect = document.querySelector('#telegram-disconnect');
 const selectionToolbar = document.querySelector('#selection-toolbar');
 const selectionCount = document.querySelector('#selection-count');
 const selectionCancel = document.querySelector('#selection-cancel');
+const selectionCopy = document.querySelector('#selection-copy');
 const selectionDone = document.querySelector('#selection-done');
 const selectionPlace = document.querySelector('#selection-place');
 const boardPlacementMenu = document.querySelector('#board-placement-menu');
@@ -1811,6 +1813,7 @@ function getBoardSelectionViewState() {
     toolActive,
     selectedCount,
     showToolbar: sessionActive,
+    showCopy: Boolean(sessionActive && selectedCount > 0),
     showPlace: Boolean(sessionActive && selectedCount > 0 && auth),
   };
 }
@@ -2457,6 +2460,34 @@ async function copyTextToClipboard(text) {
     input.remove();
   }
   if (!copied) throw new Error('Clipboard copy was rejected.');
+}
+
+async function copySelectedBoardThoughts() {
+  if (!hasBoardSelectionSession()) return;
+
+  const selectedIds = boardSelection.selectedIds;
+  const count = selectedIds.size;
+  if (!count) return;
+
+  const text = buildBoardSelectionText(getBoardThoughts(), selectedIds);
+  if (!text) return;
+
+  try {
+    await copyTextToClipboard(text);
+    const label = `${count} ${count === 1 ? 'card' : 'cards'}`;
+    showBoardActionMessage(`${label} copied`);
+    announce(`${label} copied to clipboard.`);
+  } catch {
+    announce('Could not copy selected cards.');
+  }
+}
+
+function hasNativeCopyContext(target) {
+  const editable = target instanceof Element
+    && target.closest('input, textarea, [contenteditable="true"]');
+  const selectedText = window.getSelection()?.toString();
+
+  return Boolean(editable || selectedText);
 }
 
 async function copySelectedThoughtId() {
@@ -4081,6 +4112,7 @@ function renderRelationshipUi() {
     && !connectionEditor;
   selectionCancel.textContent = boardSelectionSession ? 'Clear' : 'Cancel';
   selectionCancel.hidden = boardSelectionSession && selectedTotal === 0;
+  selectionCopy.hidden = !boardSelectionState.showCopy;
   const canPlaceBoardSelection = boardSelectionState.showPlace;
   selectionPlace.hidden = !canPlaceBoardSelection;
   if (!canPlaceBoardSelection) closeBoardPlacementMenu();
@@ -10200,6 +10232,9 @@ spacesOverview.addEventListener('click', (event) => {
   else closeSpacesOverview();
 });
 selectionPlace.addEventListener('click', toggleBoardPlacementMenu);
+selectionCopy.addEventListener('click', () => {
+  void copySelectedBoardThoughts();
+});
 boardPlacementAdd.addEventListener('click', () => {
   startBoardPlacement(BoardPlacementOperation.PLACE);
 });
@@ -10447,6 +10482,19 @@ window.addEventListener('keydown', (event) => {
   if (usesBoardSelectionTool() && !typing && event.code === 'Space') {
     event.preventDefault();
     boardSpacePressed = true;
+    return;
+  }
+
+  if (
+    boardSelection
+    && (event.ctrlKey || event.metaKey)
+    && !event.shiftKey
+    && !event.altKey
+    && event.key.toLowerCase() === 'c'
+    && !hasNativeCopyContext(event.target)
+  ) {
+    event.preventDefault();
+    void copySelectedBoardThoughts();
     return;
   }
 

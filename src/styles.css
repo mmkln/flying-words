@@ -5152,6 +5152,16 @@ kbd { padding: 1px 4px; border: 1px solid rgba(114,104,143,.25); border-bottom-w
 
 .selection-place:hover { color: var(--accent-hover); background: var(--surface-hover); }
 
+@media (max-width: 420px) {
+  .selection-toolbar {
+    gap: 2px;
+    padding: 5px;
+  }
+
+  .selection-toolbar-button { padding-inline: 8px; }
+  .selection-toolbar-count { min-width: 64px; }
+}
+
 .board-placement-menu {
   position: absolute;
   z-index: 20;
