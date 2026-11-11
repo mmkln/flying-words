@@ -2333,12 +2333,17 @@ html[data-app-ready="false"] .composer-wrap {
   height: 30px;
   place-items: center;
   border-radius: 9px;
-  color: var(--accent);
-  background: var(--surface-tint);
-  font-size: 15px;
-  font-weight: 650;
+  color: var(--text-secondary);
+  background: var(--surface-muted);
 }
 .knowledge-overview-icon svg { width: 16px; height: 16px; }
+.knowledge-overview-icon[data-overview-attention-icon="question"] {
+  color: #a06a0a;
+  background: rgba(181, 126, 24, .12);
+}
+:root[data-theme="dark"] .knowledge-overview-icon[data-overview-attention-icon="question"] {
+  color: #e0aa45;
+}
 .knowledge-overview-attention-row p {
   color: var(--text-secondary);
   font-size: 12px;

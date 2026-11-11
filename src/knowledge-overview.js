@@ -1,3 +1,5 @@
+import { renderKnowledgeOverviewAttentionIcons } from './knowledge-overview-icons.js';
+
 const KNOWLEDGE_KINDS = [
   'thought',
   'observation',
@@ -126,6 +128,8 @@ export function createKnowledgeOverview({ root, load, onBack }) {
   const compositionValues = [...root.querySelectorAll('[data-composition-value]')];
   const channelValues = [...root.querySelectorAll('[data-channel-value]')];
   let requestId = 0;
+
+  renderKnowledgeOverviewAttentionIcons(root);
 
   function renderState(state, message = '') {
     root.dataset.state = state;
