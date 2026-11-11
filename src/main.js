@@ -220,6 +220,7 @@ import {
   matchesHistoryFilters,
 } from './history-filters.js';
 import { createHistoryFilterControls } from './history-filter-controls.js';
+import { createKnowledgeOverview } from './knowledge-overview.js';
 
 const pageLoadDiagnostics = createPageLoadDiagnostics();
 pageLoadDiagnostics.mark('module:evaluated');
@@ -410,9 +411,12 @@ const accountTriggerLabel = document.querySelector('#account-trigger-label');
 const accountAvatar = document.querySelector('#account-avatar');
 const accountChevron = document.querySelector('#account-chevron');
 const accountPopover = document.querySelector('#account-popover');
+const accountMenuView = document.querySelector('#account-menu-view');
 const accountAuthenticatedContent = document.querySelector('#account-authenticated-content');
 const accountMenuAvatar = document.querySelector('#account-menu-avatar');
 const accountEmail = document.querySelector('#account-email');
+const knowledgeOverviewRoot = document.querySelector('#knowledge-overview');
+const knowledgeOverviewOpen = document.querySelector('#knowledge-overview-open');
 const telegramSettingsMenuItem = document.querySelector('#telegram-settings');
 const switchAccountMenuItem = document.querySelector('#switch-account');
 const signOutMenuItem = document.querySelector('#sign-out');
@@ -633,6 +637,12 @@ const boardPlacementView = createBoardPlacementView({
 const boardMutationService = createBoardMutationService({
   request: requestApi,
   prepare: prepareCloudBoardMutation,
+});
+
+const knowledgeOverview = createKnowledgeOverview({
+  root: knowledgeOverviewRoot,
+  load: () => requestApi('/thoughts/overview/'),
+  onBack: () => showAccountView('menu', { focus: knowledgeOverviewOpen }),
 });
 
 const canvasMinimap = createCanvasMinimap({
@@ -9320,7 +9330,26 @@ function animate(timestamp) {
   ensureFlowAnimation();
 }
 
+function showAccountView(view, { focus = null } = {}) {
+  const overviewVisible = view === 'overview';
+  accountPopover.dataset.view = overviewVisible ? 'overview' : 'menu';
+  accountPopover.setAttribute(
+    'aria-label',
+    overviewVisible ? 'Knowledge Overview' : 'Account',
+  );
+  accountMenuView.hidden = overviewVisible;
+  knowledgeOverviewRoot.hidden = !overviewVisible;
+
+  if (overviewVisible) {
+    void knowledgeOverview.open();
+  } else {
+    knowledgeOverview.close();
+  }
+  focus?.focus();
+}
+
 function closeAccountMenu({ restoreFocus = false } = {}) {
+  showAccountView('menu');
   if (accountPopover.hidden) return;
   accountPopover.hidden = true;
   accountTrigger.setAttribute('aria-expanded', 'false');
@@ -9497,9 +9526,10 @@ function toggleAccountMenu() {
   if (!auth) return;
 
   const willOpen = accountPopover.hidden;
+  if (willOpen) showAccountView('menu');
   accountPopover.hidden = !willOpen;
   accountTrigger.setAttribute('aria-expanded', String(willOpen));
-  if (willOpen) telegramSettingsMenuItem.focus();
+  if (willOpen) knowledgeOverviewOpen.focus();
 }
 
 function updateAccountControl() {
@@ -9971,6 +10001,9 @@ accountTrigger.addEventListener('click', () => {
   if (magnetEditor) closeMagnetEditor({ restoreMotion: true });
   if (connectionEditor) closeConnectionEditor();
   toggleAccountMenu();
+});
+knowledgeOverviewOpen.addEventListener('click', () => {
+  showAccountView('overview');
 });
 telegramSettingsMenuItem.addEventListener('click', openTelegramSettings);
 switchAccountMenuItem.addEventListener('click', () => {
