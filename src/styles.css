@@ -4953,9 +4953,9 @@ kbd { padding: 1px 4px; border: 1px solid rgba(114,104,143,.25); border-bottom-w
 
 .board-connections-item {
   display: grid;
-  grid-template-columns: 30px minmax(0, 1fr) 20px auto;
+  grid-template-columns: 30px minmax(0, 1fr) 20px 30px;
   gap: 9px;
-  align-items: center;
+  align-items: start;
   padding: 9px 12px;
 }
 
@@ -4967,12 +4967,33 @@ kbd { padding: 1px 4px; border: 1px solid rgba(114,104,143,.25); border-bottom-w
 .board-connections-kind { cursor: default; }
 
 .board-connections-text {
+  display: -webkit-box;
   min-width: 0;
+  padding: 0;
   overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  border: 0;
+  border-radius: 4px;
+  color: inherit;
+  cursor: pointer;
+  background: transparent;
+  font: inherit;
   font-size: 13px;
   line-height: 1.35;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  overflow-wrap: anywhere;
+  text-align: left;
+  white-space: normal;
+}
+
+.board-connections-text:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+
+.board-connections-item.is-expanded .board-connections-text {
+  display: block;
+  overflow: visible;
 }
 
 .board-connections-direction {
@@ -5001,6 +5022,10 @@ kbd { padding: 1px 4px; border: 1px solid rgba(114,104,143,.25); border-bottom-w
 .board-connections-footer {
   justify-content: flex-end;
   border-top: 1px solid var(--border-subtle);
+}
+
+.board-connections-popover:not(.has-bulk-action) .board-connections-footer {
+  display: none;
 }
 
 .board-connections-add-all { padding: 7px 10px; }
@@ -6265,16 +6290,6 @@ kbd {
     border-radius: 22px 22px 0 0;
   }
   .board-connections-list { max-height: calc(min(70dvh, 560px) - 104px); }
-}
-
-@media (hover: none) {
-  .board-connections-text {
-    display: -webkit-box;
-    overflow-wrap: anywhere;
-    white-space: normal;
-    -webkit-box-orient: vertical;
-    -webkit-line-clamp: 3;
-  }
 }
 
 @media (max-width: 720px) {

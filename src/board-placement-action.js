@@ -36,7 +36,6 @@ export function createBoardPlacementActionButton({
   button.type = 'button';
   button.className = 'board-placement-action';
   button.disabled = disabled;
-  button.title = 'Add to this Board';
   button.setAttribute('aria-label', label);
   button.append(createPlusIcon());
 
