@@ -4174,9 +4174,6 @@ body.is-board-reordering * { cursor: grabbing !important; }
 .history-board-state.is-add {
   cursor: pointer;
   background: var(--surface-tint);
-  font: inherit;
-  font-size: 20px;
-  line-height: 1;
 }
 .history-board-state.is-add:hover { background: color-mix(in srgb, var(--accent) 16%, transparent); }
 .history-board-state.is-add:focus-visible { outline: 3px solid var(--focus-ring); }

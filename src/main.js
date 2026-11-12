@@ -8278,7 +8278,11 @@ function createHistoryBoardState(thought) {
   button.type = 'button';
   button.className = 'history-board-state is-add';
   button.setAttribute('aria-label', 'Add thought to this Board');
-  button.textContent = '+';
+  button.innerHTML = `
+    <svg viewBox="0 0 24 24" aria-hidden="true">
+      <path d="M12 5v14M5 12h14"></path>
+    </svg>
+  `;
   button.addEventListener('click', (event) => {
     event.stopPropagation();
     addThoughtFromHistory(thought);
