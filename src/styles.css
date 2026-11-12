@@ -1,5 +1,7 @@
 :root {
   color-scheme: light;
+  --side-panel-palette-width: 410px;
+  --side-panel-content-gap: 12px;
   --app-background: #f9f8fe;
   --app-gradient-one: rgba(221, 211, 255, .74);
   --app-gradient-two: rgba(202, 234, 255, .72);
@@ -3651,7 +3653,7 @@ body.is-board-reordering * { cursor: grabbing !important; }
 }
 .side-panel--collapsible[data-presentation="palette"][open] {
   display: grid;
-  width: min(410px, calc(100vw - 28px));
+  width: min(var(--side-panel-palette-width), calc(100vw - 28px));
   grid-template-columns: minmax(0, 1fr) 22px;
 }
 .side-panel-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 20px; padding: 26px 22px 15px; }
@@ -4273,7 +4275,10 @@ body.is-board-reordering * { cursor: grabbing !important; }
 
 .anchor-item { grid-template-columns: 30px minmax(0, 1fr) 28px; }
 .anchor-kind-icon { cursor: default; }
-.anchor-remove { display: grid; width: 28px; height: 28px; padding: 0; place-items: center; border: 0; border-radius: 50%; color: #938ca4; cursor: pointer; background: transparent; font-size: 20px; line-height: 1; }
+.anchor-remove { position: relative; display: grid; width: 28px; height: 28px; padding: 0; place-items: center; border: 0; border-radius: 50%; color: #938ca4; cursor: pointer; background: transparent; }
+.anchor-remove::before,
+.anchor-remove::after { content: ""; position: absolute; top: 50%; left: 50%; width: 11px; height: 1.5px; border-radius: 999px; background: currentColor; transform: translate(-50%, -50%) rotate(45deg); }
+.anchor-remove::after { transform: translate(-50%, -50%) rotate(-45deg); }
 .anchor-remove:hover { color: #d34b55; background: rgba(211, 75, 85, .09); }
 .anchor-remove:focus-visible { outline: 3px solid rgba(211, 75, 85, .14); }
 
@@ -6400,11 +6405,11 @@ kbd {
   }
 
   html.is-side-panel-open .top-toolbar {
-    left: 410px;
+    left: calc(var(--side-panel-palette-width) + var(--side-panel-content-gap));
   }
 
   html.is-side-panel-open .bottom-dock {
-    left: 406px;
+    left: calc(var(--side-panel-palette-width) + var(--side-panel-content-gap));
   }
 }
 

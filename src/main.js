@@ -8480,7 +8480,6 @@ function renderAnchors() {
 
     removeButton.type = 'button';
     removeButton.className = 'anchor-remove';
-    removeButton.textContent = '×';
     removeButton.setAttribute('aria-label', 'Remove anchor');
     removeButton.addEventListener('click', () => toggleThoughtAnchor(thought));
 
