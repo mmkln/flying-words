@@ -38,14 +38,14 @@
           : '#f9f8fe';
       })();
     </script>
-    <script type="module" crossorigin src="/assets/index-DkniMrUn.js"></script>
-    <link rel="stylesheet" crossorigin href="/assets/index-xVl5pjQD.css">
+    <script type="module" crossorigin src="/assets/index-B3u1HcGc.js"></script>
+    <link rel="stylesheet" crossorigin href="/assets/index-x6tZ-jvi.css">
   </head>
   <body>
     <main class="app-shell">
       <header class="top-toolbar" id="top-toolbar">
         <div class="top-toolbar-leading">
-      <button class="icon-button history-button" id="history-button" type="button" aria-label="Open thought history" title="Thought history" disabled>
+      <button class="icon-button history-button" id="history-button" type="button" aria-label="Open thought history" aria-expanded="false" title="Thought history" disabled>
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
           <path d="M3 12a9 9 0 1 0 3-6.7L3 8"></path>
           <path d="M3 3v5h5"></path>
@@ -952,107 +952,121 @@
       <p class="announcer sr-only" id="announcer" aria-live="polite"></p>
     </main>
 
-    <dialog class="history-dialog" id="history-dialog" aria-labelledby="history-title">
-      <div class="history-header">
-        <div>
-          <h2 id="history-title">History</h2>
-          <p>Your thoughts, newest first.</p>
+    <dialog class="history-dialog history-dialog--collapsible" id="history-dialog" aria-labelledby="history-title">
+      <div class="history-panel-surface" id="history-panel-surface">
+        <div class="history-header">
+          <div>
+            <h2 id="history-title">History</h2>
+            <p>Your thoughts, newest first.</p>
+          </div>
+          <div class="panel-header-actions">
+            <button
+              class="panel-refresh-button"
+              id="history-refresh"
+              type="button"
+              aria-label="Refresh thoughts"
+              hidden
+            ></button>
+            <button class="history-close" id="history-close" type="button" aria-label="Close history">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true">
+                <path d="m6 6 12 12M18 6 6 18"></path>
+              </svg>
+            </button>
+          </div>
         </div>
-        <div class="panel-header-actions">
+        <div class="history-search">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true">
+            <circle cx="11" cy="11" r="7"></circle>
+            <path d="m16 16 4 4"></path>
+          </svg>
+          <label class="sr-only" for="history-search">Search thoughts</label>
+          <input id="history-search" type="search" placeholder="Search thoughts" autocomplete="off" />
           <button
-            class="panel-refresh-button"
-            id="history-refresh"
+            class="history-filter-trigger"
+            id="history-filter-trigger"
             type="button"
-            aria-label="Refresh thoughts"
-            hidden
-          ></button>
-          <button class="history-close" id="history-close" type="button" aria-label="Close history">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true">
-              <path d="m6 6 12 12M18 6 6 18"></path>
+            popovertarget="history-filter-popover"
+            aria-label="Filter thoughts"
+            aria-expanded="false"
+          >
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true">
+              <path d="M4 7h16M7 12h10M10 17h4"></path>
             </svg>
+            <span class="history-filter-count" id="history-filter-count" hidden></span>
           </button>
         </div>
-      </div>
-      <div class="history-search">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true">
-          <circle cx="11" cy="11" r="7"></circle>
-          <path d="m16 16 4 4"></path>
-        </svg>
-        <label class="sr-only" for="history-search">Search thoughts</label>
-        <input id="history-search" type="search" placeholder="Search thoughts" autocomplete="off" />
-        <button
-          class="history-filter-trigger"
-          id="history-filter-trigger"
-          type="button"
-          popovertarget="history-filter-popover"
-          aria-label="Filter thoughts"
-          aria-expanded="false"
-        >
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true">
-            <path d="M4 7h16M7 12h10M10 17h4"></path>
-          </svg>
-          <span class="history-filter-count" id="history-filter-count" hidden></span>
-        </button>
-      </div>
-      <div
-        class="history-filter-tokens"
-        id="history-filter-tokens"
-        aria-label="Active history filters"
-        hidden
-      ></div>
-      <div
-        class="history-filter-popover"
-        id="history-filter-popover"
-        popover="auto"
-        aria-labelledby="history-filter-title"
-      >
-        <header class="history-filter-header">
-          <strong id="history-filter-title">Filter Thoughts</strong>
-        </header>
-        <section class="history-filter-section">
-          <p class="history-filter-section-label">Type</p>
-          <div class="history-filter-options" id="history-filter-kind-options"></div>
-        </section>
-        <section class="history-filter-section is-flags">
-          <p class="history-filter-section-label">Flags</p>
-          <label class="history-filter-flag">
-            <input id="history-filter-anchored" type="checkbox" />
-            <span>Anchored only</span>
-          </label>
-          <label class="history-filter-flag">
-            <input id="history-filter-resolved" type="checkbox" />
-            <span>Resolved only</span>
-          </label>
-        </section>
-        <button
-          class="history-filter-clear"
-          id="history-filter-clear"
-          type="button"
-        >Clear Filters</button>
-      </div>
-      <div class="history-scroll" id="history-scroll">
-        <div class="history-list" id="history-list"></div>
         <div
-          class="history-pagination"
-          id="history-pagination"
-          aria-live="polite"
+          class="history-filter-tokens"
+          id="history-filter-tokens"
+          aria-label="Active history filters"
           hidden
+        ></div>
+        <div
+          class="history-filter-popover"
+          id="history-filter-popover"
+          popover="auto"
+          aria-labelledby="history-filter-title"
         >
-          <span
-            class="history-pagination-spinner"
-            id="history-pagination-spinner"
-            aria-hidden="true"
-            hidden
-          ></span>
-          <span class="sr-only" id="history-pagination-status"></span>
+          <header class="history-filter-header">
+            <strong id="history-filter-title">Filter Thoughts</strong>
+          </header>
+          <section class="history-filter-section">
+            <p class="history-filter-section-label">Type</p>
+            <div class="history-filter-options" id="history-filter-kind-options"></div>
+          </section>
+          <section class="history-filter-section is-flags">
+            <p class="history-filter-section-label">Flags</p>
+            <label class="history-filter-flag">
+              <input id="history-filter-anchored" type="checkbox" />
+              <span>Anchored only</span>
+            </label>
+            <label class="history-filter-flag">
+              <input id="history-filter-resolved" type="checkbox" />
+              <span>Resolved only</span>
+            </label>
+          </section>
           <button
-            class="history-pagination-retry"
-            id="history-pagination-retry"
+            class="history-filter-clear"
+            id="history-filter-clear"
             type="button"
+          >Clear Filters</button>
+        </div>
+        <div class="history-scroll" id="history-scroll">
+          <div class="history-list" id="history-list"></div>
+          <div
+            class="history-pagination"
+            id="history-pagination"
+            aria-live="polite"
             hidden
-          >Retry</button>
+          >
+            <span
+              class="history-pagination-spinner"
+              id="history-pagination-spinner"
+              aria-hidden="true"
+              hidden
+            ></span>
+            <span class="sr-only" id="history-pagination-status"></span>
+            <button
+              class="history-pagination-retry"
+              id="history-pagination-retry"
+              type="button"
+              hidden
+            >Retry</button>
+          </div>
         </div>
       </div>
+      <button
+        class="history-collapse-rail"
+        id="history-collapse-rail"
+        type="button"
+        aria-label="Close thought history"
+      >
+        <span class="history-collapse-handle" aria-hidden="true">
+          <svg viewBox="0 0 16 16">
+            <path d="m10 3-5 5 5 5"></path>
+          </svg>
+        </span>
+      </button>
     </dialog>
 
     <dialog class="history-dialog anchors-dialog" id="anchors-dialog" aria-labelledby="anchors-title">
