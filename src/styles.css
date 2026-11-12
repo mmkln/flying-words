@@ -4148,8 +4148,14 @@ body.is-board-reordering * { cursor: grabbing !important; }
 .overflow-text-preview {
   position: absolute;
   z-index: 20;
-  right: var(--overflow-preview-inset, 14px);
-  left: var(--overflow-preview-inset, 14px);
+  right: var(
+    --overflow-preview-inline-end,
+    var(--overflow-preview-inset, 14px)
+  );
+  left: var(
+    --overflow-preview-inline-start,
+    var(--overflow-preview-inset, 14px)
+  );
   display: -webkit-box;
   box-sizing: border-box;
   max-height: min(240px, calc(100% - 16px));
@@ -4904,6 +4910,7 @@ kbd { padding: 1px 4px; border: 1px solid rgba(114,104,143,.25); border-bottom-w
 
 .board-connections-popover {
   --overflow-preview-inset: 12px;
+  --overflow-preview-inline-end: 80px;
   position: fixed;
   inset: auto;
   box-sizing: border-box;
@@ -4955,7 +4962,7 @@ kbd { padding: 1px 4px; border: 1px solid rgba(114,104,143,.25); border-bottom-w
   display: grid;
   grid-template-columns: 30px minmax(0, 1fr) 20px 30px;
   gap: 9px;
-  align-items: start;
+  align-items: center;
   padding: 9px 12px;
 }
 
@@ -4967,33 +4974,12 @@ kbd { padding: 1px 4px; border: 1px solid rgba(114,104,143,.25); border-bottom-w
 .board-connections-kind { cursor: default; }
 
 .board-connections-text {
-  display: -webkit-box;
   min-width: 0;
-  padding: 0;
   overflow: hidden;
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 2;
-  border: 0;
-  border-radius: 4px;
-  color: inherit;
-  cursor: pointer;
-  background: transparent;
-  font: inherit;
   font-size: 13px;
   line-height: 1.35;
-  overflow-wrap: anywhere;
-  text-align: left;
-  white-space: normal;
-}
-
-.board-connections-text:focus-visible {
-  outline: 2px solid var(--focus-ring);
-  outline-offset: 2px;
-}
-
-.board-connections-item.is-expanded .board-connections-text {
-  display: block;
-  overflow: visible;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .board-connections-direction {
@@ -6290,6 +6276,16 @@ kbd {
     border-radius: 22px 22px 0 0;
   }
   .board-connections-list { max-height: calc(min(70dvh, 560px) - 104px); }
+}
+
+@media (hover: none) {
+  .board-connections-text {
+    display: -webkit-box;
+    overflow-wrap: anywhere;
+    white-space: normal;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 3;
+  }
 }
 
 @media (max-width: 720px) {

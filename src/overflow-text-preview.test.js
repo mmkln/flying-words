@@ -50,3 +50,12 @@ test('calculateOverflowPreviewTop uses and clamps space above the item', () => {
     previewHeight: 120,
   }), 8);
 });
+
+test('calculateOverflowPreviewTop aligns with the item when neither side fits', () => {
+  assert.equal(calculateOverflowPreviewTop({
+    surfaceHeight: 160,
+    itemTop: 50,
+    itemBottom: 90,
+    previewHeight: 80,
+  }), 50);
+});

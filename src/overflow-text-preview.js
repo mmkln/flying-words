@@ -20,9 +20,15 @@ export function calculateOverflowPreviewTop({
   const below = itemBottom + gap;
   const above = itemTop - previewHeight - gap;
   const fitsBelow = surfaceHeight - itemBottom >= previewHeight + gap;
+  const fitsAbove = itemTop >= previewHeight + gap + inset;
   const maximumTop = Math.max(inset, surfaceHeight - previewHeight - inset);
+  const preferredTop = fitsBelow
+    ? below
+    : fitsAbove
+      ? above
+      : itemTop;
 
-  return Math.max(inset, Math.min(fitsBelow ? below : above, maximumTop));
+  return Math.max(inset, Math.min(preferredTop, maximumTop));
 }
 
 function closestItem(root, target, selector) {
@@ -41,6 +47,7 @@ export function createOverflowTextPreview({
   scrollRoot = root,
   itemSelector,
   textSelector,
+  triggerSelector = itemSelector,
   delay = DEFAULT_DELAY,
 }) {
   const element = document.createElement('div');
@@ -96,26 +103,28 @@ export function createOverflowTextPreview({
 
   function handlePointerOver(event) {
     if (event.pointerType !== 'mouse') return;
-    const item = closestItem(root, event.target, itemSelector);
-    if (!item || remainsInside(item, event.relatedTarget)) return;
+    const trigger = closestItem(root, event.target, triggerSelector);
+    const item = trigger?.closest(itemSelector);
+    if (!item || remainsInside(trigger, event.relatedTarget)) return;
     schedule(item);
   }
 
   function handlePointerOut(event) {
     if (event.pointerType !== 'mouse') return;
-    const item = closestItem(root, event.target, itemSelector);
-    if (!item || remainsInside(item, event.relatedTarget)) return;
+    const trigger = closestItem(root, event.target, triggerSelector);
+    if (!trigger || remainsInside(trigger, event.relatedTarget)) return;
     hide();
   }
 
   function handleFocusIn(event) {
-    const item = closestItem(root, event.target, itemSelector);
-    if (item && event.target.matches(':focus-visible')) show(item);
+    const trigger = closestItem(root, event.target, triggerSelector);
+    const item = trigger?.closest(itemSelector);
+    if (item && trigger.matches(':focus-visible')) show(item);
   }
 
   function handleFocusOut(event) {
-    const item = closestItem(root, event.target, itemSelector);
-    if (!item || remainsInside(item, event.relatedTarget)) return;
+    const trigger = closestItem(root, event.target, triggerSelector);
+    if (!trigger || remainsInside(trigger, event.relatedTarget)) return;
     hide();
   }
 

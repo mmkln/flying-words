@@ -1,5 +1,6 @@
 import { createKnowledgeKindIcon } from './knowledge-kind-picker.js';
 import { createBoardPlacementActionButton } from './board-placement-action.js';
+import { createOverflowTextPreview } from './overflow-text-preview.js';
 
 const directionPresentation = Object.freeze({
   incoming: { symbol: '←', label: 'Connects to this thought' },
@@ -24,10 +25,19 @@ export function createBoardConnectionsPopover({
   onAddAll,
 }) {
   let session = null;
+  const textPreview = createOverflowTextPreview({
+    root: list,
+    surface: element,
+    scrollRoot: list,
+    itemSelector: '.board-connections-item',
+    textSelector: '.board-connections-text',
+    triggerSelector: '.board-connections-text',
+  });
 
   function render(items) {
     if (!session) return;
 
+    textPreview.hide();
     const showBulkAction = shouldShowBoardConnectionsBulkAction(items.length);
     count.textContent = String(items.length);
     addAllButton.hidden = !showBulkAction;
@@ -37,7 +47,7 @@ export function createBoardConnectionsPopover({
     items.forEach((item) => {
       const row = document.createElement('div');
       const icon = document.createElement('span');
-      const text = document.createElement('button');
+      const text = document.createElement('span');
       const direction = document.createElement('span');
       const addButton = createBoardPlacementActionButton({
         thoughtText: item.text,
@@ -52,17 +62,8 @@ export function createBoardConnectionsPopover({
       icon.dataset.resolved = String(item.resolved);
       icon.append(createKnowledgeKindIcon(item.kind));
 
-      text.type = 'button';
       text.className = 'board-connections-text';
       text.textContent = typeof item.text === 'string' ? item.text : '';
-      text.setAttribute('aria-expanded', 'false');
-      text.addEventListener('click', () => {
-        if (!session) return;
-        const expanded = !row.classList.contains('is-expanded');
-        row.classList.toggle('is-expanded', expanded);
-        text.setAttribute('aria-expanded', String(expanded));
-        position(session.trigger);
-      });
 
       direction.className = 'board-connections-direction';
       direction.textContent = directionView.symbol;
@@ -71,6 +72,7 @@ export function createBoardConnectionsPopover({
 
       addButton.addEventListener('click', () => {
         if (!session) return;
+        textPreview.hide();
         onAdd(session.sourceId, item.id);
       });
 
@@ -135,6 +137,7 @@ export function createBoardConnectionsPopover({
   }
 
   function close() {
+    textPreview.hide();
     if (!session) return;
     const { trigger } = session;
     session = null;
@@ -144,11 +147,13 @@ export function createBoardConnectionsPopover({
 
   addAllButton.addEventListener('click', () => {
     if (!session) return;
+    textPreview.hide();
     onAddAll(session.sourceId);
   });
 
   element.addEventListener('toggle', (event) => {
     if (event.newState !== 'closed') return;
+    textPreview.hide();
     if (!session) return;
     session.trigger.setAttribute('aria-expanded', 'false');
     session = null;
