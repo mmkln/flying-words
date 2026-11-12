@@ -1,5 +1,6 @@
 import { ConnectionDirection } from './connections.js';
 import { createKnowledgeKindIcon } from './knowledge-kind-picker.js';
+import { createBoardPlacementActionButton } from './board-placement-action.js';
 
 const CONNECTION_GROUPS = Object.freeze([
   Object.freeze({
@@ -62,15 +63,12 @@ function createConnectionRow(item, group, disabled) {
   row.append(primary);
 
   if (item.placeable) {
-    const place = document.createElement('button');
-    place.type = 'button';
-    place.className = 'thought-connection-place';
+    const place = createBoardPlacementActionButton({
+      thoughtText: item.text,
+      disabled,
+    });
     place.dataset.connectionAction = 'place';
     place.dataset.thoughtId = item.thoughtId;
-    place.disabled = disabled;
-    place.textContent = '+';
-    place.title = 'Add to this Board';
-    place.setAttribute('aria-label', `Add “${item.text}” to this Board`);
     row.append(place);
   }
 

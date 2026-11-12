@@ -83,6 +83,7 @@ import {
   planBoardConnectionExpansion,
 } from './board-connection-expansion.js';
 import { createBoardConnectionsPopover } from './board-connections-popover.js';
+import { createBoardPlacementActionButton } from './board-placement-action.js';
 import { createOverflowTextPreview } from './overflow-text-preview.js';
 import {
   clientPointToBoardWorld,
@@ -8274,15 +8275,7 @@ function createHistoryBoardState(thought) {
     return state;
   }
 
-  const button = document.createElement('button');
-  button.type = 'button';
-  button.className = 'history-board-state is-add';
-  button.setAttribute('aria-label', 'Add thought to this Board');
-  button.innerHTML = `
-    <svg viewBox="0 0 24 24" aria-hidden="true">
-      <path d="M12 5v14M5 12h14"></path>
-    </svg>
-  `;
+  const button = createBoardPlacementActionButton({ thoughtText: thought.text });
   button.addEventListener('click', (event) => {
     event.stopPropagation();
     addThoughtFromHistory(thought);

@@ -906,8 +906,7 @@ html[data-app-ready="false"] .composer-wrap {
 
 .thought-connection-primary:hover:not(:disabled) { background: var(--surface-tint); }
 
-.thought-connection-primary:focus-visible,
-.thought-connection-place:focus-visible {
+.thought-connection-primary:focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: -2px;
 }
@@ -917,24 +916,36 @@ html[data-app-ready="false"] .composer-wrap {
   opacity: .55;
 }
 
-.thought-connection-place {
+.board-placement-action {
   display: grid;
   width: 30px;
   height: 30px;
+  flex: 0 0 30px;
   padding: 0;
   place-items: center;
   border: 0;
-  border-radius: 9px;
+  border-radius: 50%;
   color: var(--accent);
   cursor: pointer;
   background: var(--surface-tint);
-  font: inherit;
-  font-size: 18px;
-  line-height: 1;
 }
 
-.thought-connection-place:hover:not(:disabled) { background: var(--surface-hover); }
-.thought-connection-place:disabled { cursor: default; opacity: .45; }
+.board-placement-action svg {
+  width: 17px;
+  height: 17px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.board-placement-action:hover:not(:disabled) { background: var(--surface-hover); }
+.board-placement-action:focus-visible {
+  outline: 3px solid var(--focus-ring);
+  outline-offset: 1px;
+}
+.board-placement-action:disabled { cursor: default; opacity: .45; }
 
 .thought-connection-kind {
   display: grid;
@@ -4171,12 +4182,6 @@ body.is-board-reordering * { cursor: grabbing !important; }
   color: var(--accent);
   background: transparent;
 }
-.history-board-state.is-add {
-  cursor: pointer;
-  background: var(--surface-tint);
-}
-.history-board-state.is-add:hover { background: color-mix(in srgb, var(--accent) 16%, transparent); }
-.history-board-state.is-add:focus-visible { outline: 3px solid var(--focus-ring); }
 .history-board-state svg {
   width: 17px;
   height: 17px;
@@ -4976,7 +4981,6 @@ kbd { padding: 1px 4px; border: 1px solid rgba(114,104,143,.25); border-bottom-w
   text-align: center;
 }
 
-.board-connections-add,
 .board-connections-add-all {
   border: 0;
   border-radius: 9px;
@@ -4988,9 +4992,6 @@ kbd { padding: 1px 4px; border: 1px solid rgba(114,104,143,.25); border-bottom-w
   font-weight: 700;
 }
 
-.board-connections-add { padding: 6px 8px; }
-.board-connections-add:hover,
-.board-connections-add:focus-visible,
 .board-connections-add-all:hover,
 .board-connections-add-all:focus-visible {
   background: var(--surface-tint);

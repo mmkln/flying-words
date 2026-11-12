@@ -1,6 +1,6 @@
 import { createKnowledgeKindIcon } from './knowledge-kind-picker.js';
 import { createOverflowTextPreview } from './overflow-text-preview.js';
-import { getThoughtCardPreviewText } from './thought-content.js';
+import { createBoardPlacementActionButton } from './board-placement-action.js';
 
 const directionPresentation = Object.freeze({
   incoming: { symbol: '←', label: 'Connects to this thought' },
@@ -42,13 +42,11 @@ export function createBoardConnectionsPopover({
       const icon = document.createElement('span');
       const text = document.createElement('span');
       const direction = document.createElement('span');
-      const addButton = document.createElement('button');
+      const addButton = createBoardPlacementActionButton({
+        thoughtText: item.text,
+      });
       const directionView = directionPresentation[item.direction]
         || directionPresentation.outgoing;
-      const previewText = getThoughtCardPreviewText(item.text);
-      const accessibleText = previewText.length > 80
-        ? `${previewText.slice(0, 77)}…`
-        : previewText;
 
       row.className = 'board-connections-item';
 
@@ -65,10 +63,6 @@ export function createBoardConnectionsPopover({
       direction.title = directionView.label;
       direction.setAttribute('aria-label', directionView.label);
 
-      addButton.type = 'button';
-      addButton.className = 'board-connections-add';
-      addButton.textContent = 'Add';
-      addButton.setAttribute('aria-label', `Add “${accessibleText}” to this Board`);
       addButton.addEventListener('click', () => {
         if (!session) return;
         textPreview.hide();
