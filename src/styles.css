@@ -3640,12 +3640,75 @@ body.is-board-reordering * { cursor: grabbing !important; }
   box-shadow: 18px 0 44px rgba(45, 30, 88, .12);
 }
 .history-dialog[data-presentation="modal"]::backdrop { background: rgba(36, 29, 56, .2); backdrop-filter: blur(2px); }
+.history-panel-surface {
+  position: relative;
+  display: flex;
+  min-width: 0;
+  min-height: 0;
+  flex: 1 1 auto;
+  flex-direction: column;
+  overflow: hidden;
+}
+.history-dialog--collapsible[data-presentation="palette"][open] {
+  display: grid;
+  width: min(410px, calc(100vw - 28px));
+  grid-template-columns: minmax(0, 1fr) 22px;
+}
 .history-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 20px; padding: 26px 22px 15px; }
 .history-header h2 { margin: 0; font-size: 23px; letter-spacing: -.04em; }
 .history-header p { margin: 4px 0 0; color: #857e99; font-size: 12px; }
 .history-close { display: grid; width: 32px; height: 32px; flex: 0 0 32px; padding: 0; place-items: center; border: 0; border-radius: 50%; color: #817a95; cursor: pointer; background: transparent; }
 .history-close:hover { color: #4b435f; background: #f0eef7; }
 .history-close svg { width: 16px; height: 16px; }
+.history-dialog[data-presentation="palette"] .history-close { display: none; }
+
+.history-collapse-rail { display: none; }
+
+.history-dialog--collapsible[data-presentation="palette"] .history-collapse-rail {
+  display: grid;
+  width: 22px;
+  min-width: 0;
+  height: 100%;
+  padding: 0;
+  place-items: center;
+  border: 0;
+  border-left: 1px solid var(--border-subtle);
+  color: var(--text-tertiary);
+  cursor: pointer;
+  background: color-mix(in srgb, var(--accent) 4%, var(--surface-elevated));
+  transition: color 140ms ease, background 140ms ease;
+}
+
+.history-collapse-rail:hover,
+.history-collapse-rail:focus-visible {
+  color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 11%, var(--surface-elevated));
+}
+
+.history-collapse-rail:focus-visible {
+  outline: 3px solid var(--focus-ring);
+  outline-offset: -3px;
+}
+
+.history-collapse-handle {
+  display: grid;
+  width: 20px;
+  height: 42px;
+  place-items: center;
+  border-radius: 9px;
+  pointer-events: none;
+  background: color-mix(in srgb, var(--accent) 8%, transparent);
+}
+
+.history-collapse-handle svg {
+  width: 13px;
+  height: 13px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
 
 .panel-header-actions {
   display: flex;
@@ -6325,6 +6388,10 @@ kbd {
 }
 
 @media (min-width: 900px) {
+  html.is-history-palette-open .history-button {
+    display: none;
+  }
+
   html.is-history-palette-open .top-toolbar {
     left: 410px;
   }

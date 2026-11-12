@@ -383,7 +383,9 @@ const template = document.querySelector('#thought-template');
 const announcer = document.querySelector('#announcer');
 const historyButton = document.querySelector('#history-button');
 const historyDialog = document.querySelector('#history-dialog');
+const historyPanelSurface = document.querySelector('#history-panel-surface');
 const historyClose = document.querySelector('#history-close');
+const historyCollapseRail = document.querySelector('#history-collapse-rail');
 const historyRefresh = document.querySelector('#history-refresh');
 const historySearch = document.querySelector('#history-search');
 const historyFilterTrigger = document.querySelector('#history-filter-trigger');
@@ -705,7 +707,7 @@ const boardRenderScheduler = createBoardRenderScheduler({
 
 const historyTextPreview = createOverflowTextPreview({
   root: historyList,
-  surface: historyDialog,
+  surface: historyPanelSurface,
   scrollRoot: historyScroll,
   itemSelector: '.history-item-content',
   textSelector: '.history-item-text',
@@ -8474,7 +8476,16 @@ function openAnchors() {
   anchorsDialog.showModal();
 }
 
+let restoreHistoryButtonFocusOnClose = false;
+
+function closeHistory({ restoreFocus = false } = {}) {
+  if (!historyDialog.open) return;
+  restoreHistoryButtonFocusOnClose = restoreFocus;
+  historyDialog.close();
+}
+
 function openHistory() {
+  restoreHistoryButtonFocusOnClose = false;
   knowledgeKindPicker.close();
   historyFilterControls.render(historyFilters);
   renderHistory();
@@ -8489,8 +8500,9 @@ function openHistory() {
     historyDialog.showModal();
   }
 
+  historyButton.setAttribute('aria-expanded', 'true');
   renderHistoryPagination();
-  if (!historyHasLoaded) historySearch.focus({ preventScroll: true });
+  if (palette || !historyHasLoaded) historySearch.focus({ preventScroll: true });
   if (auth && (!historyHasLoaded || historyNeedsRefresh)) {
     void loadHistoryPage({ reset: true });
   }
@@ -10419,13 +10431,20 @@ connectionSearchInput.addEventListener('keydown', (event) => {
     closeConnectionSearch();
   }
 });
-historyClose.addEventListener('click', () => historyDialog.close());
+historyClose.addEventListener('click', () => closeHistory({ restoreFocus: true }));
+historyCollapseRail.addEventListener('click', () => closeHistory({ restoreFocus: true }));
 historyDialog.addEventListener('close', () => {
+  const restoreFocus = restoreHistoryButtonFocusOnClose;
+  restoreHistoryButtonFocusOnClose = false;
   document.documentElement.classList.remove('is-history-palette-open');
+  historyButton.setAttribute('aria-expanded', 'false');
   delete historyDialog.dataset.presentation;
   historyTextPreview.hide();
   historyFilterControls.close();
   renderHistoryPagination();
+  if (restoreFocus) {
+    window.requestAnimationFrame(() => historyButton.focus({ preventScroll: true }));
+  }
 });
 setupPanelRefreshButton(historyRefresh);
 composerRelationClear.addEventListener('click', clearComposerRelation);
@@ -10446,7 +10465,7 @@ historyDialog.addEventListener('click', (event) => {
   if (
     historyDialog.dataset.presentation === 'modal'
     && event.target === historyDialog
-  ) historyDialog.close();
+  ) closeHistory({ restoreFocus: true });
 });
 anchorsClose.addEventListener('click', () => anchorsDialog.close());
 anchorsDialog.addEventListener('click', (event) => {
