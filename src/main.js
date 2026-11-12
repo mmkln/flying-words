@@ -85,6 +85,7 @@ import {
 import { createBoardConnectionsPopover } from './board-connections-popover.js';
 import { createBoardPlacementActionButton } from './board-placement-action.js';
 import { createOverflowTextPreview } from './overflow-text-preview.js';
+import { createSidePanelGroup } from './side-panel.js';
 import {
   clientPointToBoardWorld,
   clientRectToBoardWorldBounds,
@@ -280,7 +281,7 @@ const REDUCED_MOTION_TIME_SCALE = 0.25;
 const SVG_NAMESPACE = 'http://www.w3.org/2000/svg';
 const reducedMotionQuery = window.matchMedia('(prefers-reduced-motion: reduce)');
 const systemThemeQuery = window.matchMedia('(prefers-color-scheme: dark)');
-const historyPaletteQuery = window.matchMedia('(min-width: 900px)');
+const sidePanelPaletteQuery = window.matchMedia('(min-width: 900px)');
 const MIN_CANVAS_SCALE = 0.3;
 const MAX_CANVAS_SCALE = 1;
 const CANVAS_SPAWN_MARGIN = 20;
@@ -405,6 +406,7 @@ const historyPaginationRetry = document.querySelector('#history-pagination-retry
 const anchorsButton = document.querySelector('#anchors-button');
 const anchorsDialog = document.querySelector('#anchors-dialog');
 const anchorsClose = document.querySelector('#anchors-close');
+const anchorsCollapseRail = document.querySelector('#anchors-collapse-rail');
 const anchorsList = document.querySelector('#anchors-list');
 const spacesButton = document.querySelector('#spaces-button');
 const boardContext = document.querySelector('#board-context');
@@ -711,6 +713,30 @@ const historyTextPreview = createOverflowTextPreview({
   scrollRoot: historyScroll,
   itemSelector: '.history-item-content',
   textSelector: '.history-item-text',
+});
+
+const sidePanelGroup = createSidePanelGroup({
+  root: document.documentElement,
+  paletteQuery: sidePanelPaletteQuery,
+});
+
+const historyPanel = sidePanelGroup.create({
+  dialog: historyDialog,
+  trigger: historyButton,
+  closeButton: historyClose,
+  collapseRail: historyCollapseRail,
+  onClose() {
+    historyTextPreview.hide();
+    historyFilterControls.close();
+    renderHistoryPagination();
+  },
+});
+
+const anchorsPanel = sidePanelGroup.create({
+  dialog: anchorsDialog,
+  trigger: anchorsButton,
+  closeButton: anchorsClose,
+  collapseRail: anchorsCollapseRail,
 });
 
 const boardConnectionsPopover = createBoardConnectionsPopover({
@@ -2265,6 +2291,7 @@ function getBoardSelectionCards() {
 
 function getBoardUsableRect() {
   const canvasBounds = canvas.getBoundingClientRect();
+  const activeSidePanel = sidePanelGroup.getActiveDialog();
   const boardInspectorVisible = (
     !thoughtInspectorStack.hidden
     && thoughtInspectorStack.dataset.mode === 'board'
@@ -2275,10 +2302,10 @@ function getBoardUsableRect() {
     topToolbar: topToolbar.getBoundingClientRect(),
     bottomDock: bottomDock.getBoundingClientRect(),
     leftPanel: (
-      historyDialog.open
-      && historyDialog.dataset.presentation === 'palette'
+      activeSidePanel?.open
+      && activeSidePanel.dataset.presentation === 'palette'
     )
-      ? historyDialog.getBoundingClientRect()
+      ? activeSidePanel.getBoundingClientRect()
       : null,
     rightInspector: boardInspectorVisible
       ? thoughtInspectorStack.getBoundingClientRect()
@@ -8086,13 +8113,13 @@ async function focusThoughtInActiveSpace(thought) {
 
 async function focusThoughtFromHistory(thought) {
   const modal = historyDialog.dataset.presentation === 'modal';
-  if (modal) historyDialog.close();
+  if (modal) historyPanel.close();
   await focusThoughtInActiveSpace(thought);
   if (!modal && historyDialog.open) renderHistory();
 }
 
 async function focusThoughtFromAnchors(thought) {
-  anchorsDialog.close();
+  anchorsPanel.close();
   await focusThoughtInActiveSpace(thought);
 }
 
@@ -8473,36 +8500,20 @@ function openAnchors() {
   stopDrag();
   knowledgeKindPicker.close();
   renderAnchors();
-  anchorsDialog.showModal();
-}
-
-let restoreHistoryButtonFocusOnClose = false;
-
-function closeHistory({ restoreFocus = false } = {}) {
-  if (!historyDialog.open) return;
-  restoreHistoryButtonFocusOnClose = restoreFocus;
-  historyDialog.close();
+  anchorsPanel.open();
 }
 
 function openHistory() {
-  restoreHistoryButtonFocusOnClose = false;
   knowledgeKindPicker.close();
   historyFilterControls.render(historyFilters);
   renderHistory();
   updateManualRefreshControls();
 
-  const palette = historyPaletteQuery.matches;
-  historyDialog.dataset.presentation = palette ? 'palette' : 'modal';
-  if (palette) {
-    historyDialog.show();
-    document.documentElement.classList.add('is-history-palette-open');
-  } else {
-    historyDialog.showModal();
-  }
-
-  historyButton.setAttribute('aria-expanded', 'true');
+  const presentation = historyPanel.open();
   renderHistoryPagination();
-  if (palette || !historyHasLoaded) historySearch.focus({ preventScroll: true });
+  if (presentation === 'palette' || !historyHasLoaded) {
+    historySearch.focus({ preventScroll: true });
+  }
   if (auth && (!historyHasLoaded || historyNeedsRefresh)) {
     void loadHistoryPage({ reset: true });
   }
@@ -9435,7 +9446,7 @@ function updateUi() {
   renderAppChrome();
   const anchorsAvailable = boardActive || spatialActive;
   anchorsButton.hidden = !anchorsAvailable;
-  if (!anchorsAvailable && anchorsDialog.open) anchorsDialog.close();
+  if (!anchorsAvailable && anchorsDialog.open) anchorsPanel.close();
   const hasAvailableThoughts = thoughts.some(isThoughtAvailableInActiveSpace);
   const thoughtDataStillLoading = Boolean(
     auth
@@ -10431,21 +10442,6 @@ connectionSearchInput.addEventListener('keydown', (event) => {
     closeConnectionSearch();
   }
 });
-historyClose.addEventListener('click', () => closeHistory({ restoreFocus: true }));
-historyCollapseRail.addEventListener('click', () => closeHistory({ restoreFocus: true }));
-historyDialog.addEventListener('close', () => {
-  const restoreFocus = restoreHistoryButtonFocusOnClose;
-  restoreHistoryButtonFocusOnClose = false;
-  document.documentElement.classList.remove('is-history-palette-open');
-  historyButton.setAttribute('aria-expanded', 'false');
-  delete historyDialog.dataset.presentation;
-  historyTextPreview.hide();
-  historyFilterControls.close();
-  renderHistoryPagination();
-  if (restoreFocus) {
-    window.requestAnimationFrame(() => historyButton.focus({ preventScroll: true }));
-  }
-});
 setupPanelRefreshButton(historyRefresh);
 composerRelationClear.addEventListener('click', clearComposerRelation);
 historySearch.addEventListener('input', () => {
@@ -10460,16 +10456,6 @@ historySearch.addEventListener('input', () => {
 });
 historyPaginationRetry.addEventListener('click', () => {
   void loadHistoryPage();
-});
-historyDialog.addEventListener('click', (event) => {
-  if (
-    historyDialog.dataset.presentation === 'modal'
-    && event.target === historyDialog
-  ) closeHistory({ restoreFocus: true });
-});
-anchorsClose.addEventListener('click', () => anchorsDialog.close());
-anchorsDialog.addEventListener('click', (event) => {
-  if (event.target === anchorsDialog) anchorsDialog.close();
 });
 boardViewport.addEventListener('pointerdown', beginCanvasPointerInteraction);
 boardViewport.addEventListener('pointermove', (event) => {

@@ -3617,7 +3617,7 @@ body.is-board-reordering * { cursor: grabbing !important; }
   to { opacity: 1; }
 }
 
-.history-dialog {
+.side-panel {
   position: fixed;
   inset: 0 auto 0 0;
   width: min(390px, calc(100vw - 28px));
@@ -3634,13 +3634,13 @@ body.is-board-reordering * { cursor: grabbing !important; }
   box-shadow: 24px 0 60px rgba(45, 30, 88, .18);
 }
 
-.history-dialog[open] { display: flex; flex-direction: column; }
-.history-dialog[data-presentation="palette"] {
+.side-panel[open] { display: flex; flex-direction: column; }
+.side-panel[data-presentation="palette"] {
   z-index: 350;
   box-shadow: 18px 0 44px rgba(45, 30, 88, .12);
 }
-.history-dialog[data-presentation="modal"]::backdrop { background: rgba(36, 29, 56, .2); backdrop-filter: blur(2px); }
-.history-panel-surface {
+.side-panel[data-presentation="modal"]::backdrop { background: rgba(36, 29, 56, .2); backdrop-filter: blur(2px); }
+.side-panel-surface {
   position: relative;
   display: flex;
   min-width: 0;
@@ -3649,22 +3649,22 @@ body.is-board-reordering * { cursor: grabbing !important; }
   flex-direction: column;
   overflow: hidden;
 }
-.history-dialog--collapsible[data-presentation="palette"][open] {
+.side-panel--collapsible[data-presentation="palette"][open] {
   display: grid;
   width: min(410px, calc(100vw - 28px));
   grid-template-columns: minmax(0, 1fr) 22px;
 }
-.history-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 20px; padding: 26px 22px 15px; }
-.history-header h2 { margin: 0; font-size: 23px; letter-spacing: -.04em; }
-.history-header p { margin: 4px 0 0; color: #857e99; font-size: 12px; }
-.history-close { display: grid; width: 32px; height: 32px; flex: 0 0 32px; padding: 0; place-items: center; border: 0; border-radius: 50%; color: #817a95; cursor: pointer; background: transparent; }
-.history-close:hover { color: #4b435f; background: #f0eef7; }
-.history-close svg { width: 16px; height: 16px; }
-.history-dialog[data-presentation="palette"] .history-close { display: none; }
+.side-panel-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 20px; padding: 26px 22px 15px; }
+.side-panel-header h2 { margin: 0; font-size: 23px; letter-spacing: -.04em; }
+.side-panel-header p { margin: 4px 0 0; color: #857e99; font-size: 12px; }
+.side-panel-close { display: grid; width: 32px; height: 32px; flex: 0 0 32px; padding: 0; place-items: center; border: 0; border-radius: 50%; color: #817a95; cursor: pointer; background: transparent; }
+.side-panel-close:hover { color: #4b435f; background: #f0eef7; }
+.side-panel-close svg { width: 16px; height: 16px; }
+.side-panel[data-presentation="palette"] .side-panel-close { display: none; }
 
-.history-collapse-rail { display: none; }
+.side-panel-collapse-rail { display: none; }
 
-.history-dialog--collapsible[data-presentation="palette"] .history-collapse-rail {
+.side-panel--collapsible[data-presentation="palette"] .side-panel-collapse-rail {
   display: grid;
   width: 22px;
   min-width: 0;
@@ -3679,18 +3679,18 @@ body.is-board-reordering * { cursor: grabbing !important; }
   transition: color 140ms ease, background 140ms ease;
 }
 
-.history-collapse-rail:hover,
-.history-collapse-rail:focus-visible {
+.side-panel-collapse-rail:hover,
+.side-panel-collapse-rail:focus-visible {
   color: var(--accent);
   background: color-mix(in srgb, var(--accent) 11%, var(--surface-elevated));
 }
 
-.history-collapse-rail:focus-visible {
+.side-panel-collapse-rail:focus-visible {
   outline: 3px solid var(--focus-ring);
   outline-offset: -3px;
 }
 
-.history-collapse-handle {
+.side-panel-collapse-handle {
   display: grid;
   width: 20px;
   height: 42px;
@@ -3700,7 +3700,7 @@ body.is-board-reordering * { cursor: grabbing !important; }
   background: color-mix(in srgb, var(--accent) 8%, transparent);
 }
 
-.history-collapse-handle svg {
+.side-panel-collapse-handle svg {
   width: 13px;
   height: 13px;
   fill: none;
@@ -4107,14 +4107,14 @@ body.is-board-reordering * { cursor: grabbing !important; }
 .history-filter-clear:focus-visible { outline: 3px solid var(--focus-ring); outline-offset: -2px; }
 .history-filter-clear:disabled { color: var(--text-tertiary); cursor: default; opacity: .6; }
 
-.history-scroll {
+.side-panel-scroll {
   flex: 1 1 auto;
   min-height: 0;
   overflow-y: auto;
   overscroll-behavior: contain;
   scrollbar-width: none;
 }
-.history-scroll::-webkit-scrollbar { width: 0; height: 0; }
+.side-panel-scroll::-webkit-scrollbar { width: 0; height: 0; }
 .history-list { padding: 0 14px 8px; }
 .panel-skeleton {
   --skeleton-fill: color-mix(in srgb, var(--text-tertiary) 12%, transparent);
@@ -5690,7 +5690,7 @@ kbd { padding: 1px 4px; border: 1px solid rgba(114,104,143,.25); border-bottom-w
   background: var(--surface-muted);
 }
 
-.history-dialog,
+.side-panel,
 .thought-focus-dialog {
   border-color: var(--border-subtle);
   color: var(--text-primary);
@@ -5698,23 +5698,23 @@ kbd { padding: 1px 4px; border: 1px solid rgba(114,104,143,.25); border-bottom-w
   box-shadow: var(--shadow-panel);
 }
 
-.history-dialog::backdrop,
+.side-panel::backdrop,
 .thought-focus-dialog::backdrop {
   background: var(--backdrop);
 }
 
-.history-header p,
+.side-panel-header p,
 .history-group h3,
 .history-item-details,
 .history-empty,
 .thought-focus-footer output,
 .composer-tip { color: var(--text-tertiary); }
 
-.history-close,
+.side-panel-close,
 .panel-refresh-button,
 .anchor-remove { color: var(--text-tertiary); }
 
-.history-close:hover,
+.side-panel-close:hover,
 .panel-refresh-button:hover:not(:disabled) {
   color: var(--text-primary);
   background: var(--surface-muted);
@@ -6395,15 +6395,15 @@ kbd {
 }
 
 @media (min-width: 900px) {
-  html.is-history-palette-open .history-button {
+  html.is-side-panel-open .side-panel-trigger[aria-expanded="true"] {
     display: none;
   }
 
-  html.is-history-palette-open .top-toolbar {
+  html.is-side-panel-open .top-toolbar {
     left: 410px;
   }
 
-  html.is-history-palette-open .bottom-dock {
+  html.is-side-panel-open .bottom-dock {
     left: 406px;
   }
 }
@@ -6495,7 +6495,7 @@ kbd {
     padding-left: 10px;
     font-size: 13px;
   }
-  .history-dialog { width: 100%; }
+  .side-panel { width: 100%; }
   .history-filter-popover {
     inset: auto 12px max(12px, env(safe-area-inset-bottom)) 12px !important;
     width: auto;
