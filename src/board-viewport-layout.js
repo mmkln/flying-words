@@ -14,6 +14,7 @@ export function calculateBoardUsableRect({
   canvas,
   topToolbar = null,
   bottomDock = null,
+  leftPanel = null,
   rightInspector = null,
   margin = 0,
 }) {
@@ -33,6 +34,10 @@ export function calculateBoardUsableRect({
 
   if (isVisibleRect(bottomDock)) {
     bottom = Math.min(bottom, bottomDock.top - safeMargin);
+  }
+
+  if (isVisibleRect(leftPanel)) {
+    left = Math.max(left, leftPanel.right + safeMargin);
   }
 
   if (isVisibleRect(rightInspector)) {

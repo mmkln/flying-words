@@ -279,6 +279,7 @@ const REDUCED_MOTION_TIME_SCALE = 0.25;
 const SVG_NAMESPACE = 'http://www.w3.org/2000/svg';
 const reducedMotionQuery = window.matchMedia('(prefers-reduced-motion: reduce)');
 const systemThemeQuery = window.matchMedia('(prefers-color-scheme: dark)');
+const historyPaletteQuery = window.matchMedia('(min-width: 900px)');
 const MIN_CANVAS_SCALE = 0.3;
 const MAX_CANVAS_SCALE = 1;
 const CANVAS_SPAWN_MARGIN = 20;
@@ -506,6 +507,10 @@ let historyNextCursor = null;
 let historyHasMore = false;
 let historyLoading = false;
 let historyLoadError = false;
+let historyHasLoaded = false;
+let historyNeedsRefresh = false;
+let recentlyAddedHistoryThoughtId = null;
+let historyAddedStateTimer = null;
 let historyRequestId = 0;
 let historySearchTimer = null;
 let historyFilters = createHistoryFilters();
@@ -1614,6 +1619,7 @@ function resetHistoryResults() {
   historyHasMore = false;
   historyLoading = false;
   historyLoadError = false;
+  historyHasLoaded = false;
   historyRequestId += 1;
 }
 
@@ -1627,9 +1633,12 @@ function applyHistoryFilters(nextFilters) {
 
 function resetPaginatedThoughtState() {
   window.clearTimeout(connectionSearchTimer);
+  window.clearTimeout(historyAddedStateTimer);
   serverThoughtsRequestId += 1;
   serverThoughtsNextCursor = null;
   resetHistoryResults();
+  historyNeedsRefresh = false;
+  recentlyAddedHistoryThoughtId = null;
   connectionSearchThoughtIds = [];
   connectionSearchNextCursor = null;
   connectionSearchHasMore = false;
@@ -2262,6 +2271,12 @@ function getBoardUsableRect() {
     canvas: canvasBounds,
     topToolbar: topToolbar.getBoundingClientRect(),
     bottomDock: bottomDock.getBoundingClientRect(),
+    leftPanel: (
+      historyDialog.open
+      && historyDialog.dataset.presentation === 'palette'
+    )
+      ? historyDialog.getBoundingClientRect()
+      : null,
     rightInspector: boardInspectorVisible
       ? thoughtInspectorStack.getBoundingClientRect()
       : null,
@@ -6849,6 +6864,7 @@ async function refreshThoughtsManually() {
       return false;
     }
 
+    historyNeedsRefresh = true;
     const newCount = thoughts.filter((thought) => !previousIds.has(thought.id)).length;
     rerenderOpenThoughtPanels(snapshot);
     setManualRefreshStatus('updated');
@@ -8066,8 +8082,10 @@ async function focusThoughtInActiveSpace(thought) {
 }
 
 async function focusThoughtFromHistory(thought) {
-  historyDialog.close();
+  const modal = historyDialog.dataset.presentation === 'modal';
+  if (modal) historyDialog.close();
   await focusThoughtInActiveSpace(thought);
+  if (!modal && historyDialog.open) renderHistory();
 }
 
 async function focusThoughtFromAnchors(thought) {
@@ -8197,6 +8215,8 @@ async function loadHistoryPage({ reset = false } = {}) {
 
     historyNextCursor = page.nextCursor;
     historyHasMore = page.hasMore;
+    historyHasLoaded = true;
+    historyNeedsRefresh = false;
     renderHistory();
     return true;
   } catch (error) {
@@ -8218,6 +8238,52 @@ function scheduleHistorySearch() {
   historySearchTimer = window.setTimeout(() => {
     void loadHistoryPage({ reset: true });
   }, PANEL_SEARCH_DEBOUNCE_MS);
+}
+
+function isThoughtOnActiveBoard(thought) {
+  return Boolean(
+    isCanvasSpace(activeSpaceId)
+    && getCanvasPlacement(thought, activeSpaceId),
+  );
+}
+
+function addThoughtFromHistory(thought) {
+  if (!isCanvasSpace(activeSpaceId) || isThoughtOnActiveBoard(thought)) return;
+
+  window.clearTimeout(historyAddedStateTimer);
+  recentlyAddedHistoryThoughtId = thought.id;
+  addOrFocusThoughtOnCanvas(thought);
+
+  historyAddedStateTimer = window.setTimeout(() => {
+    if (recentlyAddedHistoryThoughtId !== thought.id) return;
+    recentlyAddedHistoryThoughtId = null;
+    if (historyDialog.open) renderHistory();
+  }, 1400);
+}
+
+function createHistoryBoardState(thought) {
+  if (isThoughtOnActiveBoard(thought)) {
+    const state = document.createElement('span');
+    state.className = 'history-board-state is-added';
+    state.setAttribute('aria-label', 'Already on this Board');
+    state.innerHTML = `
+      <svg viewBox="0 0 24 24" aria-hidden="true">
+        <path d="m5 12 4 4L19 6"></path>
+      </svg>
+    `;
+    return state;
+  }
+
+  const button = document.createElement('button');
+  button.type = 'button';
+  button.className = 'history-board-state is-add';
+  button.setAttribute('aria-label', 'Add thought to this Board');
+  button.textContent = '+';
+  button.addEventListener('click', (event) => {
+    event.stopPropagation();
+    addThoughtFromHistory(thought);
+  });
+  return button;
 }
 
 function renderHistory() {
@@ -8301,6 +8367,13 @@ function renderHistory() {
         details.append(pinned);
       }
 
+      if (recentlyAddedHistoryThoughtId === thought.id) {
+        const added = document.createElement('span');
+        added.className = 'history-added-label';
+        added.textContent = 'Added';
+        details.append(added);
+      }
+
       kindButton.addEventListener('click', () => {
         openThoughtKnowledgeKindPicker(thought, kindButton);
       });
@@ -8312,7 +8385,12 @@ function renderHistory() {
       });
       contentButton.append(text, details);
       contentButton.addEventListener('click', () => void focusThoughtFromHistory(thought));
-      row.append(kindButton, contentButton);
+      if (isCanvasSpace(activeSpaceId)) {
+        row.classList.add('has-board-state');
+        row.append(kindButton, contentButton, createHistoryBoardState(thought));
+      } else {
+        row.append(kindButton, contentButton);
+      }
       item.append(row);
       list.append(item);
     });
@@ -8401,15 +8479,24 @@ function openAnchors() {
 
 function openHistory() {
   knowledgeKindPicker.close();
-  historySearch.value = '';
-  resetHistoryResults();
   historyFilterControls.render(historyFilters);
   renderHistory();
   updateManualRefreshControls();
-  historyDialog.showModal();
+
+  const palette = historyPaletteQuery.matches;
+  historyDialog.dataset.presentation = palette ? 'palette' : 'modal';
+  if (palette) {
+    historyDialog.show();
+    document.documentElement.classList.add('is-history-palette-open');
+  } else {
+    historyDialog.showModal();
+  }
+
   renderHistoryPagination();
-  historySearch.focus();
-  if (auth) void loadHistoryPage({ reset: true });
+  if (!historyHasLoaded) historySearch.focus({ preventScroll: true });
+  if (auth && (!historyHasLoaded || historyNeedsRefresh)) {
+    void loadHistoryPage({ reset: true });
+  }
 }
 
 function createSpaceLabel(space, { editable = false } = {}) {
@@ -9388,7 +9475,11 @@ function animate(timestamp) {
 
   if (viewMode === 'spaces') return;
 
-  if (historyDialog.open || anchorsDialog.open) {
+  const modalHistoryOpen = (
+    historyDialog.open
+    && historyDialog.dataset.presentation === 'modal'
+  );
+  if (modalHistoryOpen || anchorsDialog.open) {
     ensureFlowAnimation();
     return;
   }
@@ -10333,6 +10424,8 @@ connectionSearchInput.addEventListener('keydown', (event) => {
 });
 historyClose.addEventListener('click', () => historyDialog.close());
 historyDialog.addEventListener('close', () => {
+  document.documentElement.classList.remove('is-history-palette-open');
+  delete historyDialog.dataset.presentation;
   historyTextPreview.hide();
   historyFilterControls.close();
   renderHistoryPagination();
@@ -10353,7 +10446,10 @@ historyPaginationRetry.addEventListener('click', () => {
   void loadHistoryPage();
 });
 historyDialog.addEventListener('click', (event) => {
-  if (event.target === historyDialog) historyDialog.close();
+  if (
+    historyDialog.dataset.presentation === 'modal'
+    && event.target === historyDialog
+  ) historyDialog.close();
 });
 anchorsClose.addEventListener('click', () => anchorsDialog.close());
 anchorsDialog.addEventListener('click', (event) => {

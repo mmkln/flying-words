@@ -40,6 +40,24 @@ test('excludes the toolbar, bottom dock, and Board inspector', () => {
   );
 });
 
+test('excludes an open left palette from the Board usable area', () => {
+  assert.deepEqual(
+    calculateBoardUsableRect({
+      canvas: { left: 0, top: 0, right: 1440, bottom: 900 },
+      leftPanel: { left: 0, top: 0, right: 390, bottom: 900 },
+      margin: 20,
+    }),
+    {
+      left: 410,
+      top: 20,
+      right: 1420,
+      bottom: 880,
+      width: 1010,
+      height: 860,
+    },
+  );
+});
+
 test('keeps a valid rectangle when chrome leaves almost no free space', () => {
   const result = calculateBoardUsableRect({
     canvas: { left: 10, top: 10, right: 110, bottom: 110 },
