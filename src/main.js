@@ -234,6 +234,10 @@ import {
 } from './history-filters.js';
 import { createHistoryFilterControls } from './history-filter-controls.js';
 import { createKnowledgeOverview } from './knowledge-overview.js';
+import {
+  removeLegacyAccountSnapshot,
+  shouldPersistThoughtSnapshot,
+} from './thought-storage-policy.js';
 
 const pageLoadDiagnostics = createPageLoadDiagnostics();
 pageLoadDiagnostics.mark('module:evaluated');
@@ -255,7 +259,6 @@ const SPATIAL_CAMERA_STORAGE_PREFIX = 'flying-thoughts:spatial-camera:v3:';
 const SPATIAL_LAYOUT_STORAGE_PREFIX = 'flying-thoughts:spatial-layout:v3:';
 const SPATIAL_LAYOUT_MODE_STORAGE_KEY = 'flying-thoughts:spatial-layout-mode:v1';
 const PENDING_SYNC_STORAGE_PREFIX = 'flying-thoughts:pending-sync:v1:';
-const ACCOUNT_STORAGE_PREFIX = 'flying-thoughts:account:v1:';
 const LEGACY_OUTBOX_STORAGE_PREFIX = 'flying-thoughts:outbox:v1:';
 const OUTBOX_STORAGE_PREFIX = 'flying-thoughts:outbox:v2:';
 const QUARANTINED_OUTBOX_STORAGE_PREFIX = 'flying-thoughts:outbox-quarantine:v1:';
@@ -1612,12 +1615,19 @@ function pendingSyncStorageKey(accountId) {
   return `${PENDING_SYNC_STORAGE_PREFIX}${accountId}`;
 }
 
-function accountStorageKey(accountId) {
-  return `${ACCOUNT_STORAGE_PREFIX}${accountId}`;
-}
-
 function outboxStorageKey(accountId) {
   return `${OUTBOX_STORAGE_PREFIX}${accountId}`;
+}
+
+function clearLegacyAccountSnapshot(accountId) {
+  const result = removeLegacyAccountSnapshot(localStorage, accountId);
+  if (result.removed) {
+    pageLoadDiagnostics.mark('storage:legacy-account-snapshot:removed');
+  } else if (result.error) {
+    pageLoadDiagnostics.mark('storage:legacy-account-snapshot:remove-failed', {
+      ...pageLoadErrorDetails(result.error),
+    });
+  }
 }
 
 function quarantineLegacyOutbox(accountId) {
@@ -1635,10 +1645,6 @@ function quarantineLegacyOutbox(accountId) {
   } catch {
     return false;
   }
-}
-
-function currentThoughtStorageKey() {
-  return auth ? accountStorageKey(auth.id) : STORAGE_KEY;
 }
 
 function resetHistoryResults() {
@@ -3601,10 +3607,6 @@ function loadStoredThoughts(storageKey) {
   }
 }
 
-function loadAccountThoughts(accountId) {
-  return loadStoredThoughts(accountStorageKey(accountId));
-}
-
 function loadPendingThoughts(accountId) {
   try {
     return normalizeThoughts(JSON.parse(localStorage.getItem(pendingSyncStorageKey(accountId))));
@@ -3627,20 +3629,21 @@ function mergeThoughts(...groups) {
 }
 
 function saveThoughts() {
-  const storageScope = auth ? 'account' : 'guest';
+  if (!shouldPersistThoughtSnapshot({ authenticated: Boolean(auth) })) return true;
+
   const thoughtCount = thoughts.length;
   const startedAt = performance.now();
 
   try {
     const serialized = JSON.stringify(serializableThoughts());
     const serializedAt = performance.now();
-    localStorage.setItem(currentThoughtStorageKey(), serialized);
+    localStorage.setItem(STORAGE_KEY, serialized);
     const finishedAt = performance.now();
     const durationMs = finishedAt - startedAt;
 
     if (!applicationReady || durationMs >= 16) {
       pageLoadDiagnostics.mark('storage:thought-snapshot:write', {
-        storageScope,
+        storageScope: 'guest',
         thoughtCount,
         characterCount: serialized.length,
         serializeDurationMs: Math.round((serializedAt - startedAt) * 10) / 10,
@@ -3649,9 +3652,10 @@ function saveThoughts() {
         blocking: true,
       });
     }
+    return true;
   } catch (error) {
     pageLoadDiagnostics.mark('storage:thought-snapshot:failed', {
-      storageScope,
+      storageScope: 'guest',
       thoughtCount,
       ...pageLoadErrorDetails(error),
     });
@@ -3660,6 +3664,7 @@ function saveThoughts() {
 }
 
 function scheduleSave() {
+  if (auth) return;
   window.clearTimeout(saveTimer);
   saveTimer = window.setTimeout(saveThoughts, 350);
 }
@@ -9869,19 +9874,15 @@ async function activateAuthenticatedAccount() {
     resetPaginatedThoughtState();
     sessionValidated = true;
     serverStateReady = false;
+    clearLegacyAccountSnapshot(auth.id);
     legacyOutboxQuarantined = quarantineLegacyOutbox(auth.id);
-    const finishCacheRead = pageLoadDiagnostics.begin('cache:account-read');
+    const finishLocalStateRead = pageLoadDiagnostics.begin('local-state:account-read');
     const guestThoughts = loadStoredThoughts(STORAGE_KEY);
     const outboxOperations = loadOutbox(auth.id);
-    const cachedAccountThoughts = applyOutboxOperations(
-      loadAccountThoughts(auth.id),
-      outboxOperations,
-    );
     const pendingForAccount = loadPendingThoughts(auth.id);
     const thoughtsToSync = mergeThoughts(pendingForAccount, guestThoughts);
     syncPending = thoughtsToSync.length > 0;
-    finishCacheRead('complete', {
-      cachedThoughtCount: cachedAccountThoughts.length,
+    finishLocalStateRead('complete', {
       guestThoughtCount: guestThoughts.length,
       pendingThoughtCount: pendingForAccount.length,
       syncPending,
@@ -9891,15 +9892,14 @@ async function activateAuthenticatedAccount() {
       storePendingThoughts(auth.id, thoughtsToSync);
       localStorage.removeItem(STORAGE_KEY);
     }
-    const finishCacheHydration = pageLoadDiagnostics.begin('cache:account-hydrate', {
-      cachedThoughtCount: cachedAccountThoughts.length,
+    const finishLocalStateHydration = pageLoadDiagnostics.begin('local-state:account-hydrate', {
       syncThoughtCount: thoughtsToSync.length,
     });
-    replaceThoughts(mergeThoughts(
-      cachedAccountThoughts.slice(0, INITIAL_THOUGHT_PAGE_SIZE),
+    replaceThoughts(
       thoughtsToSync.slice(0, INITIAL_THOUGHT_PAGE_SIZE),
-    ), { persist: false });
-    finishCacheHydration('complete', { renderedThoughtCount: thoughts.length });
+      { persist: false },
+    );
+    finishLocalStateHydration('complete', { renderedThoughtCount: thoughts.length });
     updateAccountControl();
 
     const finishTelegram = pageLoadDiagnostics.begin('telegram:status', {
