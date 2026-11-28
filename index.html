@@ -417,29 +417,11 @@
             </header>
             <div class="spatial-inspector-body">
               <p id="spatial-inspector-text"></p>
-              <a
-                class="thought-resource"
-                id="spatial-inspector-resource"
-                target="_blank"
-                rel="noopener noreferrer"
+              <div
+                class="thought-resource-links spatial-inspector-resources"
+                id="spatial-inspector-resources"
                 hidden
-              >
-                <span class="thought-resource-icon" aria-hidden="true">
-                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">
-                    <path d="M10 13a5 5 0 0 0 7.54.54l2-2a5 5 0 0 0-7.07-7.07l-1.15 1.15"></path>
-                    <path d="M14 11a5 5 0 0 0-7.54-.54l-2 2a5 5 0 0 0 7.07 7.07l1.15-1.15"></path>
-                  </svg>
-                </span>
-                <span class="thought-resource-copy">
-                  <strong id="spatial-inspector-resource-title"></strong>
-                  <small id="spatial-inspector-resource-host"></small>
-                </span>
-                <svg class="thought-resource-external" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                  <path d="M14 5h5v5"></path>
-                  <path d="m19 5-9 9"></path>
-                  <path d="M19 14v4a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1h4"></path>
-                </svg>
-              </a>
+              ></div>
               <div class="spatial-inspector-navigation spatial-only">
                 <button
                   id="spatial-back"
@@ -1167,13 +1149,11 @@
         ></button>
         <div class="thought-copy">
           <p class="thought-text"></p>
-          <a
-            class="thought-resource-host"
-            data-thought-resource-link
-            target="_blank"
-            rel="noopener noreferrer"
+          <div
+            class="thought-resource-links"
+            data-thought-resource-links
             hidden
-          ></a>
+          ></div>
         </div>
         <button class="anchor-btn anchor-button" type="button" title="Add to anchors" aria-label="Add to anchors" aria-pressed="false" hidden>
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
@@ -1213,6 +1193,8 @@
 
     <template id="link-fields-template">
       <section class="link-control" data-state="empty">
+        <div class="link-control-list" data-link-list></div>
+
         <button
           class="link-control-trigger"
           type="button"
@@ -1226,30 +1208,8 @@
             <path d="M14 11a5 5 0 0 0-7.54-.54l-2 2a5 5 0 0 0 7.07 7.07l1.15-1.15"></path>
           </svg>
           <span class="link-control-trigger-label" data-link-trigger-label>Add web link</span>
+          <span class="link-control-count" data-link-count hidden></span>
         </button>
-
-        <div class="link-control-preview" data-link-preview hidden>
-          <button
-            class="link-control-preview-summary"
-            type="button"
-            data-link-edit
-            aria-haspopup="dialog"
-            aria-expanded="false"
-          >
-            <span class="link-control-preview-icon" aria-hidden="true">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">
-                <path d="M10 13a5 5 0 0 0 7.54.54l2-2a5 5 0 0 0-7.07-7.07l-1.15 1.15"></path>
-                <path d="M14 11a5 5 0 0 0-7.54-.54l-2 2a5 5 0 0 0 7.07 7.07l1.15-1.15"></path>
-              </svg>
-            </span>
-            <span class="link-control-preview-copy">
-              <strong data-link-preview-title></strong>
-              <span data-link-preview-separator aria-hidden="true">·</span>
-              <small data-link-preview-host></small>
-            </span>
-          </button>
-          <button class="link-control-remove" type="button" data-link-remove aria-label="Remove web link">×</button>
-        </div>
 
         <div class="link-control-popover" data-link-popover role="dialog" aria-label="Web link" hidden>
           <div class="link-control-form" data-link-editor>
@@ -1318,6 +1278,31 @@
           </div>
         </div>
       </section>
+    </template>
+
+    <template id="link-item-template">
+      <div class="link-control-preview" data-link-item>
+        <button
+          class="link-control-preview-summary"
+          type="button"
+          data-link-edit
+          aria-haspopup="dialog"
+          aria-expanded="false"
+        >
+          <span class="link-control-preview-icon" aria-hidden="true">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M10 13a5 5 0 0 0 7.54.54l2-2a5 5 0 0 0-7.07-7.07l-1.15 1.15"></path>
+              <path d="M14 11a5 5 0 0 0-7.54-.54l-2 2a5 5 0 0 0 7.07 7.07l1.15-1.15"></path>
+            </svg>
+          </span>
+          <span class="link-control-preview-copy">
+            <strong data-link-preview-title></strong>
+            <span data-link-preview-separator aria-hidden="true">·</span>
+            <small data-link-preview-host></small>
+          </span>
+        </button>
+        <button class="link-control-remove" type="button" data-link-remove aria-label="Remove web link">×</button>
+      </div>
     </template>
 
     <script type="module" src="./src/main.js"></script>

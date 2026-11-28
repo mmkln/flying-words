@@ -13,7 +13,7 @@ import {
   getConnectionActionState,
   renderConnectionActionButton,
 } from './connection-action-button.js';
-import { renderWebResourceLink } from './web-resource-link.js';
+import { renderWebResourceLinks } from './web-resource-link.js';
 
 const SVG_NAMESPACE = 'http://www.w3.org/2000/svg';
 const CARD_WIDTH = 280;
@@ -47,7 +47,7 @@ function createThoughtCard(
   const icon = document.createElement('button');
   const copy = document.createElement('div');
   const text = document.createElement('span');
-  const resource = document.createElement('a');
+  const resources = document.createElement('div');
   const connectButton = document.createElement('button');
 
   element.className = 'connection-map-card';
@@ -72,9 +72,12 @@ function createThoughtCard(
   text.className = 'connection-map-card-text';
   text.textContent = presentation.primaryText;
   text.title = 'Click again to edit';
-  resource.className = 'connection-map-card-resource';
-  renderWebResourceLink(resource, presentation.resource);
-  copy.append(text, resource);
+  resources.className = 'connection-map-card-resources thought-resource-links';
+  renderWebResourceLinks(resources, presentation.resources, {
+    maxVisible: 1,
+    linkClass: 'connection-map-card-resource',
+  });
+  copy.append(text, resources);
 
   let textWasPressed = false;
   let editArmed = false;

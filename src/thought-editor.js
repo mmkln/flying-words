@@ -46,15 +46,14 @@ export function createThoughtEditor({
   function save() {
     if (!session) return false;
 
-    const link = linkFields?.getValue() || {};
+    const links = linkFields?.getValue() || [];
     const saved = onSave({
       thoughtId: session.thoughtId,
       draft: {
         kind,
         text: textarea.value,
         resolved,
-        linkUrl: link.url || '',
-        linkTitle: link.title || '',
+        links,
       },
     });
 
@@ -72,7 +71,7 @@ export function createThoughtEditor({
 
     session = { thoughtId, origin, originalDraft: structuredClone(draft) };
     textarea.value = draft.text;
-    linkFields?.setValue({ url: draft.linkUrl, title: draft.linkTitle });
+    linkFields?.setValue(draft.links);
     setKind(draft.kind);
     resolved = draft.resolved === true;
     updateCounter();

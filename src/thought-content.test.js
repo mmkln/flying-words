@@ -41,8 +41,11 @@ test('link metadata stays separate from user-authored thought text', () => {
   const draft = {
     kind: KnowledgeKind.LINK,
     text: 'My note about the source',
-    linkUrl: 'https://example.com/article',
-    linkTitle: 'The source title',
+    links: [{
+      id: 'source-link',
+      url: 'https://example.com/article',
+      title: 'The source title',
+    }],
   };
 
   assert.deepEqual(createThoughtContentPatch(draft), {
@@ -50,11 +53,15 @@ test('link metadata stays separate from user-authored thought text', () => {
     meta_patch: {
       knowledge: { version: 1, kind: KnowledgeKind.LINK },
       resolved: null,
-      link: {
+      links: {
         version: 1,
-        url: 'https://example.com/article',
-        title: 'The source title',
+        items: [{
+          id: 'source-link',
+          url: 'https://example.com/article',
+          title: 'The source title',
+        }],
       },
+      link: null,
     },
   });
 });
@@ -72,8 +79,11 @@ test('draft restores link metadata without using the thought text as its title',
     kind: KnowledgeKind.LINK,
     text: 'Personal note',
     resolved: false,
-    linkUrl: 'https://example.com/',
-    linkTitle: 'Example title',
+    links: [{
+      id: 'legacy-link',
+      url: 'https://example.com/',
+      title: 'Example title',
+    }],
   });
 });
 
@@ -85,29 +95,34 @@ test('link attachment validation works independently from the knowledge kind', (
   assert.equal(validateThoughtDraft({
     kind: KnowledgeKind.OBSERVATION,
     text: 'A note',
-    linkUrl: 'https://example.com',
-    linkTitle: '',
+    links: [{ id: 'one', url: 'https://example.com', title: '' }],
   }).valid, true);
 
   assert.equal(validateThoughtDraft({
     kind: KnowledgeKind.QUESTION,
     text: 'A note',
-    linkUrl: 'javascript:alert(1)',
-    linkTitle: '',
+    links: [{ id: 'one', url: 'javascript:alert(1)', title: '' }],
   }).valid, false);
 
   assert.equal(validateThoughtDraft({
     kind: KnowledgeKind.LINK,
     text: 'A link-shaped thought without an attachment',
-    linkUrl: '',
-    linkTitle: '',
+    links: [],
   }).valid, true);
 
   assert.equal(validateThoughtDraft({
     kind: KnowledgeKind.THOUGHT,
     text: 'A note',
-    linkUrl: '',
-    linkTitle: 'Title without a URL',
+    links: [{ id: 'one', url: '', title: 'Title without a URL' }],
+  }).valid, false);
+
+  assert.equal(validateThoughtDraft({
+    kind: KnowledgeKind.THOUGHT,
+    text: 'A note',
+    links: [
+      { id: 'one', url: 'https://example.com', title: '' },
+      { id: 'two', url: 'https://example.com/', title: '' },
+    ],
   }).valid, false);
 });
 
@@ -146,7 +161,7 @@ test('presentation keeps authored text primary for link thoughts', () => {
     kind: KnowledgeKind.LINK,
     primaryText: 'Personal note',
     secondaryText: '',
-    resource: {
+    resources: [{
       href: 'https://www.example.com/article',
       hostname: 'example.com',
       explicitTitle: 'Page title',
@@ -154,7 +169,7 @@ test('presentation keeps authored text primary for link thoughts', () => {
       displaySubtitle: 'example.com',
       cardLabel: 'example.com',
       accessibleLabel: 'Page title, example.com',
-    },
+    }],
   });
 });
 
@@ -162,18 +177,25 @@ test('an attachment is preserved when the knowledge kind changes', () => {
   assert.deepEqual(createThoughtContentPatch({
     kind: KnowledgeKind.QUESTION,
     text: 'What follows from this?',
-    linkUrl: 'https://example.com',
-    linkTitle: 'Preserved resource',
+    links: [{
+      id: 'preserved-link',
+      url: 'https://example.com',
+      title: 'Preserved resource',
+    }],
   }), {
     text: 'What follows from this?',
     meta_patch: {
       knowledge: { version: 1, kind: KnowledgeKind.QUESTION },
       resolved: null,
-      link: {
+      links: {
         version: 1,
-        url: 'https://example.com/',
-        title: 'Preserved resource',
+        items: [{
+          id: 'preserved-link',
+          url: 'https://example.com/',
+          title: 'Preserved resource',
+        }],
       },
+      link: null,
     },
   });
 });
@@ -182,13 +204,13 @@ test('clearing an attachment removes only its metadata namespace', () => {
   assert.deepEqual(createThoughtContentPatch({
     kind: KnowledgeKind.OBSERVATION,
     text: 'Keep this authored observation',
-    linkUrl: '',
-    linkTitle: '',
+    links: [],
   }), {
     text: 'Keep this authored observation',
     meta_patch: {
       knowledge: { version: 1, kind: KnowledgeKind.OBSERVATION },
       resolved: null,
+      links: null,
       link: null,
     },
   });
@@ -205,8 +227,71 @@ test('an attached resource does not replace the authored text of another kind', 
 
   assert.equal(presentation.primaryText, 'Why does this happen?');
   assert.equal(presentation.secondaryText, '');
-  assert.equal(presentation.resource.href, 'https://example.com/');
-  assert.equal(presentation.resource.displayTitle, 'Source title');
+  assert.equal(presentation.resources[0].href, 'https://example.com/');
+  assert.equal(presentation.resources[0].displayTitle, 'Source title');
+});
+
+test('canonical and legacy links are merged once and migrated on save', () => {
+  const thought = {
+    text: 'Sources',
+    meta: {
+      links: {
+        version: 1,
+        items: [
+          { id: 'one', url: 'https://one.example/', title: 'One' },
+          { id: 'two', url: 'https://two.example/', title: 'Two' },
+        ],
+      },
+      link: { version: 1, url: 'https://one.example/', title: 'Duplicate' },
+    },
+  };
+
+  const draft = createThoughtDraft(thought);
+  assert.equal(draft.links.length, 2);
+  assert.deepEqual(
+    createThoughtContentPatch(draft).meta_patch.links.items,
+    draft.links,
+  );
+  assert.equal(createThoughtContentPatch(draft).meta_patch.link, null);
+});
+
+test('normalization keeps link ids unique for reliable editing', () => {
+  const draft = createThoughtDraft({
+    text: 'Sources',
+    meta: {
+      links: {
+        version: 1,
+        items: [
+          { id: 'same', url: 'https://one.example/', title: '' },
+          { id: 'same', url: 'https://two.example/', title: '' },
+        ],
+      },
+    },
+  });
+
+  assert.equal(draft.links[0].id, 'same');
+  assert.equal(draft.links[1].id, 'same-2');
+});
+
+test('presentation and search include every attached resource', () => {
+  const thought = {
+    text: 'Reading list',
+    meta: {
+      links: {
+        version: 1,
+        items: [
+          { id: 'one', url: 'https://one.example/', title: 'First source' },
+          { id: 'two', url: 'https://two.example/', title: 'Second source' },
+        ],
+      },
+    },
+  };
+
+  assert.equal(getThoughtPresentation(thought).resources.length, 2);
+  assert.equal(
+    getThoughtSearchText(thought),
+    'Reading list First source https://one.example/ Second source https://two.example/',
+  );
 });
 
 test('search corpus includes the note, page title, and URL', () => {

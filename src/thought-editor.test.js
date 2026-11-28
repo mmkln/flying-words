@@ -32,7 +32,7 @@ function createEditorHarness({ onSave = () => true, onClose = () => {} } = {}) {
   };
   const counter = { hidden: true, textContent: '' };
   const linkFields = {
-    getValue: () => ({ url: '', title: '' }),
+    getValue: () => [],
     setValue: () => {},
   };
 
@@ -65,7 +65,7 @@ test('one editor keeps its explicit thought and origin for Connections', () => {
     editor.open({
       thoughtId: 'thought-1',
       origin: 'connection-map',
-      draft: { kind: 'question', text: 'Why?', linkUrl: '', linkTitle: '' },
+      draft: { kind: 'question', text: 'Why?', links: [] },
     });
     assert.equal(editor.getThoughtId(), 'thought-1');
     editor.setKind('observation');
@@ -96,8 +96,7 @@ test('resolved changes stay in the draft until the editor is saved', () => {
         kind: 'observation',
         text: 'Settled',
         resolved: false,
-        linkUrl: '',
-        linkTitle: '',
+        links: [],
       },
     });
     editor.resolveButton.dispatchEvent(new Event('click'));
@@ -128,7 +127,7 @@ test('discarding a Connections edit closes without saving', () => {
     editor.open({
       thoughtId: 'thought-2',
       origin: 'connection-map',
-      draft: { kind: 'thought', text: 'Draft', linkUrl: '', linkTitle: '' },
+      draft: { kind: 'thought', text: 'Draft', links: [] },
     });
     editor.resolveButton.dispatchEvent(new Event('click'));
     assert.equal(editor.getResolved(), true);

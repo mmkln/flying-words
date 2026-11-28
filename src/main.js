@@ -27,7 +27,7 @@ import {
 import { createThoughtEditor } from './thought-editor.js';
 import { createLinkFields } from './link-fields.js';
 import { renderThoughtTextLinks } from './thought-text-links.js';
-import { renderWebResourceLink } from './web-resource-link.js';
+import { renderWebResourceLinks } from './web-resource-link.js';
 import {
   createThoughtContentPatch,
   createThoughtDraft,
@@ -338,9 +338,7 @@ const spatialInspector = document.querySelector('#spatial-inspector');
 const spatialInspectorKind = document.querySelector('#spatial-inspector-kind');
 const spatialInspectorKindLabel = document.querySelector('#spatial-inspector-kind-label');
 const spatialInspectorText = document.querySelector('#spatial-inspector-text');
-const spatialInspectorResource = document.querySelector('#spatial-inspector-resource');
-const spatialInspectorResourceTitle = document.querySelector('#spatial-inspector-resource-title');
-const spatialInspectorResourceHost = document.querySelector('#spatial-inspector-resource-host');
+const spatialInspectorResources = document.querySelector('#spatial-inspector-resources');
 const thoughtInspectorConnections = document.querySelector('#thought-inspector-connections');
 const thoughtInspectorConnectionsToggle = document.querySelector('#thought-inspector-connections-toggle');
 const thoughtInspectorConnectionsCount = document.querySelector('#thought-inspector-connections-count');
@@ -477,6 +475,7 @@ const thoughtFocusKind = document.querySelector('#thought-focus-kind');
 const thoughtFocusResolve = document.querySelector('#thought-focus-resolve');
 const thoughtFocusDiscard = document.querySelector('#thought-focus-discard');
 const linkFieldsTemplate = document.querySelector('#link-fields-template');
+const linkItemTemplate = document.querySelector('#link-item-template');
 const composerLinkFieldsRoot = document.querySelector('#composer-link-fields');
 const thoughtFocusLinkFieldsRoot = document.querySelector('#thought-focus-link-fields');
 const connectionMapCreateLinkFieldsRoot = document.querySelector(
@@ -1254,6 +1253,7 @@ function mountLinkFields(host, { variant = 'detail' } = {}) {
   host.append(linkFieldsTemplate.content.cloneNode(true));
   return createLinkFields({
     root: host.firstElementChild,
+    itemTemplate: linkItemTemplate,
     requestPreview: requestLinkPreview,
     variant,
   });
@@ -2724,30 +2724,11 @@ function renderThoughtInspector() {
     spatialInspectorText,
     thought.text,
   );
-  const resource = presentation.resource;
-  const normalizedResourceHref = resource
-    ? normalizeHttpUrl(resource.href)
-    : null;
-  const visibleResource = (
-    normalizedResourceHref
-    && inlineHrefs.has(normalizedResourceHref)
-  )
-    ? null
-    : resource;
-  spatialInspectorResource.hidden = !visibleResource;
-  spatialInspectorResourceTitle.textContent = visibleResource?.displayTitle || '';
-  spatialInspectorResourceHost.textContent = visibleResource?.displaySubtitle || '';
-  spatialInspectorResourceHost.hidden = !visibleResource?.displaySubtitle;
-  if (visibleResource) {
-    spatialInspectorResource.href = visibleResource.href;
-    spatialInspectorResource.setAttribute(
-      'aria-label',
-      `Open web link: ${visibleResource.accessibleLabel}`,
-    );
-  } else {
-    spatialInspectorResource.removeAttribute('href');
-    spatialInspectorResource.removeAttribute('aria-label');
-  }
+  const visibleResources = presentation.resources.filter((resource) => {
+    const normalizedHref = normalizeHttpUrl(resource.href);
+    return !normalizedHref || !inlineHrefs.has(normalizedHref);
+  });
+  renderWebResourceLinks(spatialInspectorResources, visibleResources);
 
   const anchored = hasAnchor(thought);
   const editingConnections = Boolean(connectionEditor);
@@ -3197,11 +3178,9 @@ function createConnectionMapThought(rawText) {
   const text = rawText.trim();
   if (!session || !text) return false;
 
-  const webLink = connectionMapCreateLinkFields.getValue();
   const draft = createThoughtDraft(null, { kind: session.createKind });
   draft.text = text;
-  draft.linkUrl = webLink.url || '';
-  draft.linkTitle = webLink.title || '';
+  draft.links = connectionMapCreateLinkFields.getValue();
   const validation = validateThoughtDraft(draft, {
     maximumTextLength: MAX_THOUGHT_TEXT_LENGTH,
   });
@@ -7782,12 +7761,12 @@ function renderThought(thought) {
   if (!thought.element) return;
   const canvasThought = isCanvasSpace(activeSpaceId);
   const textElement = thought.element.querySelector('.thought-text');
-  const resourceLink = thought.element.querySelector('[data-thought-resource-link]');
+  const resourceLinks = thought.element.querySelector('[data-thought-resource-links]');
   const presentation = getThoughtPresentation(thought);
   textElement.textContent = getThoughtCardPreviewText(
     presentation.primaryText,
   );
-  renderWebResourceLink(resourceLink, presentation.resource);
+  renderWebResourceLinks(resourceLinks, presentation.resources, { maxVisible: 1 });
 
   thought.element.classList.toggle('is-pinned', thought.pinned);
   thought.element.classList.toggle('is-canvas-card', canvasThought);
@@ -10096,12 +10075,10 @@ form.addEventListener('submit', async (event) => {
   const submittedText = input.value;
   if (!submittedText.trim()) return;
   const relationTargetId = composerRelationTargetId;
-  const link = composerLinkFields.getValue();
   const draft = {
     kind: composerKnowledgeKind,
     text: submittedText,
-    linkUrl: link.url,
-    linkTitle: link.title,
+    links: composerLinkFields.getValue(),
   };
 
   handlingThoughtSubmit = true;
